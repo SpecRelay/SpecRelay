@@ -1,0 +1,36 @@
+# project-config.yml — template for a project's .specrelay/config.yml.
+#
+# Copy this file to .specrelay/config.yml in the root of the project you want
+# SpecRelay to inspect, then fill in the real values for that project. This
+# file holds ONLY project-specific configuration/policy — never reusable
+# SpecRelay engine code, never secrets, never machine-specific absolute paths.
+version: 1
+
+project:
+  name: <Project Name>
+
+specs:
+  # Where specification documents live, relative to the project root.
+  root: docs/sdd
+
+tasks:
+  # Where SpecRelay (or an existing workflow) keeps durable task run state,
+  # relative to the project root.
+  runs_root: .ai-runs/tasks
+
+workflow:
+  # A short label for whichever workflow engine is currently authoritative
+  # for this project. "legacy-ai-workflow" describes a pre-existing, in-repo
+  # shell-script workflow being incubated away from; a project with no prior
+  # workflow could use "none" or omit this key.
+  current_engine: legacy-ai-workflow
+  # A short label for the context/retrieval capability this project requires
+  # before automated roles do substantive work (if any).
+  context_capability: none
+
+validation:
+  # The real command used to run this project's test/validation suite.
+  full_test_command: <run your test suite here>
+
+policy:
+  human_final_review_required: true

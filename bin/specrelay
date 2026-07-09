@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# specrelay — incubation CLI entry point (SDD 0083, Phase E).
+#
+# This is an initial, read-only discovery/inspection CLI. It does NOT
+# implement the workflow execution engine: task creation, running an
+# executor/reviewer, or any state-machine transition. Those commands fail
+# clearly (see lib/specrelay/cli.sh) rather than pretending to work.
+#
+# It never modifies .ai/, .ai-runs/, or any task state.
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SELF_DIR/../lib/specrelay"
+
+# shellcheck source=lib/specrelay/output.sh
+. "$LIB_DIR/output.sh"
+# shellcheck source=lib/specrelay/project.sh
+. "$LIB_DIR/project.sh"
+# shellcheck source=lib/specrelay/config.sh
+. "$LIB_DIR/config.sh"
+# shellcheck source=lib/specrelay/discovery.sh
+. "$LIB_DIR/discovery.sh"
+# shellcheck source=lib/specrelay/cli.sh
+. "$LIB_DIR/cli.sh"
+
+specrelay::cli::main "$SELF_DIR" "$@"
