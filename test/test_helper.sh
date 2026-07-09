@@ -44,6 +44,53 @@ specrelay_test::mktemp_project() {
   printf '%s\n' "$dir"
 }
 
+specrelay_test::mktemp_project_with_spec() {
+  local dir spec_dir
+  dir="$(specrelay_test::mktemp_project)"
+  spec_dir="$dir/docs/sdd/$1"
+  mkdir -p "$spec_dir"
+  printf '%s\n' "${2:-# Fixture spec}" > "$spec_dir/spec.md"
+  printf '%s\n' "$dir"
+}
+
+# specrelay_test::mktemp_specrelay_project
+# A fresh git project (see mktemp_project) pre-configured with a
+# .specrelay/config.yml using the deterministic 'fake' executor/reviewer
+# providers and no context-capability requirement, plus a .gitignore for the
+# task-runs root (so the guard tests below reflect this repository's real
+# .ai-runs/ policy rather than a bare-git-repo artifact). Individual tests
+# still commit their own fixture files as needed.
+specrelay_test::mktemp_specrelay_project() {
+  local dir
+  dir="$(specrelay_test::mktemp_project)"
+  mkdir -p "$dir/.specrelay"
+  cat > "$dir/.specrelay/config.yml" <<'YAML'
+version: 1
+project:
+  name: Fixture Project
+specs:
+  root: docs/sdd
+tasks:
+  runs_root: .ai-runs/tasks
+  max_iterations: 3
+roles:
+  executor:
+    provider: fake
+  reviewer:
+    provider: fake
+context:
+  adapter: none
+  required: false
+validation:
+  full_test_command: "echo ok"
+policy:
+  human_final_review_required: true
+YAML
+  printf '.ai-runs/\n' > "$dir/.gitignore"
+  (cd "$dir" && git add -A && git commit -q -m "fixture init")
+  printf '%s\n' "$dir"
+}
+
 specrelay_test::assert_eq() {
   local desc="$1" expected="$2" actual="$3"
   TESTS_RUN=$((TESTS_RUN + 1))

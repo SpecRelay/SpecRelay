@@ -9,8 +9,17 @@ the workflow has a known limitation, that limitation is recorded here rather
 than hidden.
 
 This is the primary deliverable of SDD 0083 (incubate SpecRelay from the
-existing AI workflow). It is written to survive the eventual engine migration
-(future SDD 0084) as the ground truth of "what must keep working."
+existing AI workflow). It served as the ground truth of "what must keep
+working" for SDD 0084 (migrate the workflow engine into SpecRelay); no
+factual correction to this document was needed during that migration — every
+behavior described here was confirmed accurate against the real `.ai/`
+scripts and real task evidence while building the SpecRelay engine. See
+`tools/specrelay/docs/engine-parity.md` for the resulting capability-by-
+capability comparison against the new SpecRelay engine, including how SDD
+0084 addresses this document's section 9 known limitation (the dirty-tree
+guard blocking the automated requeue retry path). This document continues to
+describe the `.ai/` engine's actual behavior, which remains authoritative and
+unchanged by SDD 0084.
 
 Repository layout note: SDD 0082 promoted the Rails app from
 `sprint_insights_app/` to the repository root and removed `rails_app/`

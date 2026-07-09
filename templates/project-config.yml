@@ -17,16 +17,36 @@ tasks:
   # Where SpecRelay (or an existing workflow) keeps durable task run state,
   # relative to the project root.
   runs_root: .ai-runs/tasks
+  # Cap on executor rework rounds a `specrelay run` will attempt before
+  # reporting "maximum iterations reached" instead of pretending success.
+  max_iterations: 3
 
 workflow:
   # A short label for whichever workflow engine is currently authoritative
   # for this project. "legacy-ai-workflow" describes a pre-existing, in-repo
   # shell-script workflow being incubated away from; a project with no prior
   # workflow could use "none" or omit this key.
-  current_engine: legacy-ai-workflow
+  current_engine: none
   # A short label for the context/retrieval capability this project requires
   # before automated roles do substantive work (if any).
   context_capability: none
+
+roles:
+  # Provider adapters for SpecRelay's own executor/reviewer roles (see
+  # tools/specrelay/lib/specrelay/providers/). "manual" for the reviewer
+  # means no automated review decision is made; a human runs
+  # `specrelay task accept` / `specrelay task requeue` directly.
+  executor:
+    provider: claude
+  reviewer:
+    provider: manual
+
+context:
+  # Context-capability adapter (see tools/specrelay/lib/specrelay/context/).
+  # "none" performs no preflight; a project requiring one (e.g. Context Plus)
+  # sets adapter: contextplus and required: true.
+  adapter: none
+  required: false
 
 validation:
   # The real command used to run this project's test/validation suite.

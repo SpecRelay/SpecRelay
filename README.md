@@ -44,23 +44,31 @@ at any stage. A human approves before execution starts, and a human performs
 final review and decides what happens next after a task is accepted. This is
 a hard design boundary, not a missing feature.
 
-## Current incubation status (v0.1)
+## Current status (SDD 0084)
 
 SpecRelay is being incubated **inside** the Sprint Reports repository, which
 already has a working, production AI workflow built directly as shell
 scripts (see `tools/specrelay/docs/current-workflow-contract.md` for its full
-behavioral contract). This incubation:
+behavioral contract). As of SDD 0084, SpecRelay has a **real, executable
+workflow engine**:
 
-- documents that existing workflow's actual behavior and separates what is
-  generic from what is provider-specific or repository-specific
-  (`docs/knowledge-boundaries.md`);
-- provides an initial, **read-only** discovery/inspection CLI;
-- provides a minimal, safe project-configuration format and loader
-  (`.specrelay/config.yml`).
+- a durable task lifecycle (create → approve → executor round → evidence
+  capture → reviewer round → accept/request-changes → requeue → ... →
+  human-review gate), implemented in `tools/specrelay/lib/specrelay/`;
+- executor/reviewer provider adapters (a deterministic `fake` provider for
+  tests, and a real `claude`/`claude-subagent` adapter);
+- a context-capability adapter seam (`none`, `contextplus`);
+- runner-owned transition authorization, task locking, and a dirty-tree/
+  rework-loop guard that fixes a known limitation of the legacy engine (see
+  `docs/engine-parity.md`).
 
-**Workflow execution is explicitly not migrated yet.** The existing
-production workflow remains authoritative; see `docs/architecture.md` for the
-planned migration stages.
+**This is NOT yet the repository's cutover.** The existing `.ai/` workflow
+remains the authoritative engine for real Sprint Reports tasks; no public
+`.ai/scripts/` command has been redirected to SpecRelay, and none of `.ai/`
+or `.ai-runs/` has been touched. See `docs/engine-parity.md` for the detailed
+capability-by-capability comparison and `docs/architecture.md` for the
+planned migration stages (SDD 0085 is the compatibility-shim/dogfooding
+cutover).
 
 ## Quick CLI examples
 
@@ -92,24 +100,43 @@ tools/specrelay/bin/specrelay workflow inspect
 # Detected provider integration locations: ...
 ```
 
-Both `project inspect` and `workflow inspect` are strictly read-only: they
+`project inspect` and `workflow inspect` remain strictly read-only: they
 never create, modify, or delete a task, a config file, or any workflow state.
 
-## Not yet available (v0.1)
-
-Task lifecycle and execution commands are intentionally unimplemented and
-fail clearly rather than pretending to work:
+## Workflow engine examples
 
 ```bash
-tools/specrelay/bin/specrelay run
-# specrelay: command 'run' is not implemented.
-# SpecRelay workflow execution is not available in incubation version 0.1.
-# Use the existing repository workflow for execution.
+# Run a spec through the full lifecycle (create, approve, executor/reviewer
+# rounds, up to the configured maximum iterations):
+tools/specrelay/bin/specrelay run docs/sdd/<task-id>/spec.md
+
+# Inspect one task or every known task:
+tools/specrelay/bin/specrelay show <task-id>
+tools/specrelay/bin/specrelay status
+tools/specrelay/bin/specrelay list
+
+# Resume a task from wherever it is (never restarts from the beginning):
+tools/specrelay/bin/specrelay resume <task-id>
+
+# Lower-level, single-purpose commands (manual recovery / decoupled flows):
+tools/specrelay/bin/specrelay task create <spec-path>
+tools/specrelay/bin/specrelay task approve <task-id>
+tools/specrelay/bin/specrelay task accept <task-id>
+tools/specrelay/bin/specrelay task request-changes <task-id> "<reason>"
+tools/specrelay/bin/specrelay task requeue <task-id>
+tools/specrelay/bin/specrelay task block <task-id> "<reason>"
 ```
 
-The same honest failure applies to `task create`, `review`, and any other
-workflow-execution command. Use the existing repository workflow
-(`.ai/scripts/`) for actual task execution today.
+`<task-id>` also accepts a unique numeric prefix or partial slug (e.g. `show
+0084`); an ambiguous reference fails clearly rather than guessing.
+
+Provider and context-capability adapters are project configuration
+(`.specrelay/config.yml`'s `roles.executor.provider` /
+`roles.reviewer.provider` / `context.adapter`), never hardcoded — see
+`templates/project-config.yml` and `docs/engine-parity.md`.
+
+`review` and any other not-yet-implemented command still fail clearly rather
+than pretending to work.
 
 ## Future direction
 

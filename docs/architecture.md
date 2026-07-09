@@ -16,18 +16,16 @@ tools/specrelay/                 <- reusable engine code lives here (future)
 .specrelay/                      <- this repository's SpecRelay policy/config
 ```
 
-At this stage (SDD 0083), `tools/specrelay/` contains only:
+At SDD 0083, `tools/specrelay/` contained only the behavioral contract docs,
+a read-only discovery CLI, and a project-config loader — no task lifecycle,
+state machine, or executor/reviewer invocation logic (see H4 for that task's
+non-goals).
 
-- the behavioral contract and knowledge-boundary docs that ground everything
-  that comes after (`docs/current-workflow-contract.md`,
-  `docs/knowledge-boundaries.md`);
-- a read-only discovery/inspection CLI (`bin/specrelay`) that can describe a
-  project's SpecRelay configuration and the legacy workflow it finds on disk;
-- a minimal, safe project-config loader.
-
-It does **not** yet contain a task lifecycle, a state machine, or any
-executor/reviewer invocation logic — those still live entirely in `.ai/` and
-are explicitly out of scope for this task (see H4).
+**As of SDD 0084**, `tools/specrelay/` has a real, executable engine (task
+lifecycle, state machine, evidence capture, provider/context adapters — see
+H5 below and `docs/engine-parity.md` for the full capability comparison).
+The existing `.ai/` workflow remains canonical and unchanged; nothing in
+`.ai/scripts/` was redirected, and `.ai/`/`.ai-runs/` were not modified.
 
 ## H2. Core vs adapters vs project configuration
 
@@ -48,50 +46,66 @@ tools/specrelay/lib/specrelay/     tools/specrelay/lib/specrelay/  .specrelay/
                                                                           constraints
 ```
 
-Today's incubation already reflects the shape of this split, even though
-Core is thin:
+This split is now realized (SDD 0084), not just shaped:
 
-- `lib/specrelay/project.sh` and `lib/specrelay/discovery.sh` are Core-shaped:
-  generic, filesystem-driven discovery with no Sprint-Reports-specific
-  literals.
-- `lib/specrelay/config.sh` is Core-shaped: it knows the generic
-  `.specrelay/config.yml` schema, not this repository's specific values.
-- `.specrelay/config.yml` is Project Configuration: the only place the real
-  paths/commands/policy for *this* repository are written down.
-- There are no Provider Adapters yet because there is no execution engine
-  yet; `docs/knowledge-boundaries.md` (C2) records what a Claude adapter
-  would need to encode once one exists.
+- `lib/specrelay/state.sh` + `py/state_lib.py`, `task.sh`, `lock.sh`,
+  `auth.sh`, `transitions.sh`, `git_guard.sh`, `evidence.sh`, `workflow.sh`
+  are Core: the task lifecycle, state machine, evidence capture, locking,
+  and orchestration, with no Claude/Codex/Sprint-Reports-specific literals.
+- `lib/specrelay/providers/{provider,fake,claude}.sh` are Provider Adapters:
+  `provider.sh` is the dispatch seam Core calls; `fake.sh` and `claude.sh`
+  are concrete adapters behind it. Core never assumes "executor == Claude."
+- `lib/specrelay/context/{capability,none,contextplus}.sh` are Capability
+  Adapters: `capability.sh` is the dispatch seam; `none.sh` and
+  `contextplus.sh` are concrete adapters. Core never assumes "context ==
+  Context Plus."
+- `.specrelay/config.yml`'s `roles.executor.provider` /
+  `roles.reviewer.provider` / `context.adapter` / `context.required` /
+  `tasks.max_iterations` select adapters and policy — Project Configuration,
+  not Core.
+- `lib/specrelay/project.sh`, `discovery.sh`, `config.sh` are unchanged from
+  0083 and remain Core-shaped.
 
-## H3. Future migration stages
+## H3. Migration stages
 
-These are roadmap items, not requirements of this task:
-
-- **0084 — migrate workflow engine into SpecRelay.** Port the task lifecycle,
-  state machine, and evidence-capture logic described in
-  `docs/current-workflow-contract.md` into `tools/specrelay/lib/specrelay/`,
-  behind the same Core/Adapter/Config separation, while `.ai/` remains the
-  production path until the port is proven equivalent.
-- **0085 — compatibility shims and dogfooding.** Introduce a way for
-  `.ai/scripts/` to optionally delegate to the SpecRelay engine, and begin
-  running real Sprint Reports tasks through it to validate behavioral parity
-  (including the known dirty-tree/requeue gap recorded in
-  `current-workflow-contract.md` §9, which the migrated engine should fix).
-- **0086 — standalone repository extraction.** Once dogfooded, extract
-  `tools/specrelay/` into its own repository/package with its own
-  versioning, README, and distribution, keeping `.specrelay/`-style
+- **0083 — incubate SpecRelay from the existing AI workflow.** Done. Behavioral
+  contract + read-only discovery CLI + config loader.
+- **0084 — migrate workflow engine into SpecRelay.** Done (this task). A real,
+  executable engine exists behind the Core/Adapter/Config separation above;
+  `.ai/` remains the production path (see `docs/engine-parity.md`).
+- **0085 — compatibility shims and dogfooding.** Not yet started. Introduce a
+  way for `.ai/scripts/` to optionally delegate to the SpecRelay engine, and
+  begin running real Sprint Reports tasks through it to validate behavioral
+  parity end-to-end on real (not fixture) specs.
+- **0086 — standalone repository extraction.** Not yet started. Once
+  dogfooded, extract `tools/specrelay/` into its own repository/package with
+  its own versioning, README, and distribution, keeping `.specrelay/`-style
   project configuration as the integration seam for any consuming project.
 
-## H4. Non-goals of 0083
+## H4. Non-goals of 0083 (historical)
+
+SDD 0083 explicitly did **not**: replace the current `.ai/` workflow;
+redirect any public `.ai/scripts/` command to SpecRelay; delete `.ai/` or
+`.ai-runs/`; run any task-engine execution via SpecRelay; migrate any
+provider integration into SpecRelay; extract SpecRelay into a standalone
+repository; publish a package. SDD 0084 (this task) lifted the
+"no task-engine execution" and "no provider migration" restrictions
+specifically — see H5 — while leaving every other 0083 non-goal in place
+(SpecRelay still does not replace `.ai/`, redirect its commands, delete it,
+extract to a standalone repo, or publish a package).
+
+## H5. Non-goals of 0084
 
 This task explicitly does **not**:
 
-- replace the current `.ai/` workflow;
 - redirect `start-spec-task.sh` (or any other public `.ai/scripts/` command)
-  to SpecRelay;
-- delete `.ai/` or `.ai-runs/`;
-- run any task-engine execution via SpecRelay (`specrelay run` and similar
-  commands intentionally fail with a clear "not available in incubation
-  version 0.1" message — see `README.md`);
-- migrate any provider (Claude, Codex) integration into SpecRelay;
+  to SpecRelay — that is SDD 0085's job;
+- delete `.ai/` or `.ai-runs/`, or alter the current command contract;
+- commit, push, merge, or deploy anything, automatically or otherwise;
 - extract SpecRelay into a standalone repository;
-- publish a package (no Homebrew formula, no npm/pip/gem distribution).
+- publish a package (no Homebrew formula, no npm/pip/gem distribution);
+- migrate the `codex` provider, structured event-stream capture
+  (`stream-json`), or desktop-notification integration (see
+  `docs/engine-parity.md`, "Known gaps");
+- claim full behavioral parity — `docs/engine-parity.md` is explicit about
+  what is equivalent, improved, or still a gap.

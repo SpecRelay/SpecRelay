@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
-# specrelay — incubation CLI entry point (SDD 0083, Phase E).
+# specrelay — CLI entry point.
 #
-# This is an initial, read-only discovery/inspection CLI. It does NOT
-# implement the workflow execution engine: task creation, running an
-# executor/reviewer, or any state-machine transition. Those commands fail
-# clearly (see lib/specrelay/cli.sh) rather than pretending to work.
-#
-# It never modifies .ai/, .ai-runs/, or any task state.
+# Deliberately runs WITHOUT `set -e`: the workflow engine (SDD 0084) is a
+# multi-step, stateful lifecycle where a failing step (executor/reviewer
+# provider non-zero, a blocked guard, ...) is an ordinary, EXPECTED outcome
+# that must still run cleanup (lock release, transition-auth cleanup) and
+# report a clear exit code — not abort the whole process mid-step the moment
+# any single command returns non-zero. Every function below checks and
+# propagates exit codes explicitly (if/else, `|| return 1`, capturing `$?`)
+# rather than relying on errexit; `-u` (unset-variable errors) and
+# `pipefail` (a pipeline's exit status reflects any failing stage) remain
+# enabled as safety nets that do not have this hazard.
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SELF_DIR/../lib/specrelay"
@@ -21,6 +25,34 @@ LIB_DIR="$SELF_DIR/../lib/specrelay"
 . "$LIB_DIR/config.sh"
 # shellcheck source=lib/specrelay/discovery.sh
 . "$LIB_DIR/discovery.sh"
+# shellcheck source=lib/specrelay/state.sh
+. "$LIB_DIR/state.sh"
+# shellcheck source=lib/specrelay/task.sh
+. "$LIB_DIR/task.sh"
+# shellcheck source=lib/specrelay/lock.sh
+. "$LIB_DIR/lock.sh"
+# shellcheck source=lib/specrelay/auth.sh
+. "$LIB_DIR/auth.sh"
+# shellcheck source=lib/specrelay/git_guard.sh
+. "$LIB_DIR/git_guard.sh"
+# shellcheck source=lib/specrelay/evidence.sh
+. "$LIB_DIR/evidence.sh"
+# shellcheck source=lib/specrelay/transitions.sh
+. "$LIB_DIR/transitions.sh"
+# shellcheck source=lib/specrelay/providers/provider.sh
+. "$LIB_DIR/providers/provider.sh"
+# shellcheck source=lib/specrelay/providers/fake.sh
+. "$LIB_DIR/providers/fake.sh"
+# shellcheck source=lib/specrelay/providers/claude.sh
+. "$LIB_DIR/providers/claude.sh"
+# shellcheck source=lib/specrelay/context/capability.sh
+. "$LIB_DIR/context/capability.sh"
+# shellcheck source=lib/specrelay/context/none.sh
+. "$LIB_DIR/context/none.sh"
+# shellcheck source=lib/specrelay/context/contextplus.sh
+. "$LIB_DIR/context/contextplus.sh"
+# shellcheck source=lib/specrelay/workflow.sh
+. "$LIB_DIR/workflow.sh"
 # shellcheck source=lib/specrelay/cli.sh
 . "$LIB_DIR/cli.sh"
 
