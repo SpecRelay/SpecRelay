@@ -175,6 +175,106 @@ def clip(value, limit=MAX_FIELD):
     return value
 
 
+# --- optional ANSI color (terminal-only, never written into evidence) ---------
+# Colors are applied ONLY to the human-readable live lines written to this
+# process's stdout (which the shell wraps to the operator terminal). The raw
+# events file (--raw-events) and the final stdout file (--final-stdout) are
+# NEVER colorized — those are evidence and stay plain text.
+#
+# Mode is chosen by SPECRELAY_COLOR (auto|always|never), defaulting to auto:
+#   - always: emit colors unconditionally;
+#   - never:  never emit colors;
+#   - auto:   emit colors only when stdout is a TTY, and only when NO_COLOR is
+#             unset. NO_COLOR (https://no-color.org) is honored in auto/never but
+#             is overridden by an explicit SPECRELAY_COLOR=always.
+# An unrecognized SPECRELAY_COLOR value is treated as auto (with a stderr
+# warning). CI / non-TTY output therefore stays plain text by default.
+COLOR_ENABLED = False
+
+_RESET = "\033[0m"
+_DIM = "\033[2m"
+_CYAN = "\033[36m"
+_BLUE = "\033[34m"
+_GREEN = "\033[32m"
+_YELLOW = "\033[33m"
+_MAGENTA = "\033[35m"
+_RED = "\033[31m"
+
+
+def resolve_color_mode(raw):
+    """Normalize a raw SPECRELAY_COLOR value to one of auto|always|never.
+
+    Returns (mode, invalid): `mode` is always a valid value (unrecognized or
+    empty input yields "auto"); `invalid` is True only when a non-empty value
+    was supplied that is not one of the three allowed names, so the caller can
+    warn once."""
+    normalized = (raw or "").strip().lower()
+    if not normalized:
+        return "auto", False
+    if normalized in ("auto", "always", "never"):
+        return normalized, False
+    return "auto", True
+
+
+def compute_color_enabled(mode, stream):
+    """Decide whether to emit ANSI colors for `mode` writing to `stream`.
+
+    always -> True; never -> False; auto -> stdout must be a TTY and NO_COLOR
+    must be unset. NO_COLOR (any value, per the spec) disables color in auto and
+    never, but an explicit SPECRELAY_COLOR=always still wins."""
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    if "NO_COLOR" in os.environ:
+        return False
+    try:
+        return bool(stream.isatty())
+    except Exception:
+        return False
+
+
+def configure_color(enabled):
+    """Set the module-level color flag. main() derives the value from the
+    environment; tests may call this directly for deterministic rendering."""
+    global COLOR_ENABLED
+    COLOR_ENABLED = bool(enabled)
+
+
+def _body_color(message):
+    """Map a rendered message to an ANSI color (or "" for no color), keyed on the
+    verb prefix the adapters emit. Colors chosen to read well on dark themes."""
+    if message.startswith("says:"):
+        return _GREEN
+    if message.startswith(("reading:", "globbing:", "searching", "fetching:")):
+        return _BLUE
+    if message.startswith(("writing:", "editing")):
+        return _MAGENTA
+    if message.startswith("command"):
+        return _YELLOW
+    if message.startswith("started"):
+        return _CYAN
+    if message.startswith("result:"):
+        return _RED if "error" in message else _GREEN
+    if message.startswith(("error", "turn failed", "tool finished with an error")):
+        return _RED
+    return ""
+
+
+def format_rendered_line(role, message):
+    """Build one live line: "[role] message", dimming the role prefix and
+    coloring the body by category when COLOR_ENABLED. With color disabled the
+    output is exactly the historical plain-text form."""
+    prefix = "[%s]" % role
+    if not COLOR_ENABLED:
+        return "%s %s" % (prefix, message)
+    prefix = "%s%s%s" % (_DIM, prefix, _RESET)
+    color = _body_color(message)
+    if color:
+        return "%s %s%s%s" % (prefix, color, message, _RESET)
+    return "%s %s" % (prefix, message)
+
+
 class Rendering:
     """Human-readable lines (without the role prefix) plus optional final text."""
 
@@ -474,6 +574,14 @@ def main(argv=None):
         except OSError:
             pass
 
+    color_mode, color_invalid = resolve_color_mode(os.environ.get("SPECRELAY_COLOR"))
+    if color_invalid:
+        warn(
+            "warning: unrecognized SPECRELAY_COLOR=%s (expected auto|always|never); using 'auto'"
+            % os.environ.get("SPECRELAY_COLOR", "")
+        )
+    configure_color(compute_color_enabled(color_mode, sys.stdout))
+
     raw_fh = None
     if args.raw_events:
         try:
@@ -522,7 +630,7 @@ def main(argv=None):
             final_text = rendering.final_text
         for text in rendering.lines:
             try:
-                sys.stdout.write("[%s] %s\n" % (role, text))
+                sys.stdout.write(format_rendered_line(role, text) + "\n")
                 sys.stdout.flush()
             except OSError:
                 # Terminal consumer is gone; keep consuming stdin so the

@@ -318,6 +318,22 @@ Codex adapter to demonstrate neutrality). The shell side is the generic
 | `SPECRELAY_SEMANTIC_EVENTS=0` | Force the generic spec-0003 path even when stream-json is advertised. |
 | `SPECRELAY_PYTHON` | Interpreter used for the renderer (default `python3`). |
 | `SPECRELAY_CLAUDE_BIN` | The Claude binary whose `--help` is inspected and which is run. |
+| `SPECRELAY_COLOR` | Color mode for the rendered semantic live lines: `auto` (default), `always`, or `never`. An unrecognized value is treated as `auto` (with a stderr warning). |
+| `NO_COLOR` | When set (any value, per [no-color.org](https://no-color.org)), disables color unless `SPECRELAY_COLOR=always` overrides it. |
+
+**Optional color.** The rendered semantic live lines can be colorized for the
+operator terminal (dim role prefix; cyan `started`; green `says:`/success
+`result:`; yellow `command:`; blue `reading:`/`globbing:`/`searching:`; magenta
+`writing:`/`editing:`; red errors). Color is controlled by `SPECRELAY_COLOR`:
+
+- `auto` (default) emits ANSI colors **only when stdout is a TTY** and `NO_COLOR`
+  is unset, so CI and other non-TTY output stay plain text automatically;
+- `always` emits colors unconditionally (and overrides `NO_COLOR`);
+- `never` never emits colors.
+
+Colors are **terminal-only** and are **never written into evidence**: the raw
+events files (`19`/`20`), the extracted final-text files (`12`/`15`), and the
+stderr files (`13`/`16`) all stay plain text regardless of color mode.
 
 `specrelay doctor` reports, as an informational line, whether the semantic layer
 is available for the configured Claude provider(s).
