@@ -27,6 +27,26 @@ specrelay::doctor::_warn() {
   printf '\xe2\x9a\xa0 %s\n' "$1"
 }
 
+# specrelay::doctor::_provider_unavailable <message>
+# Report that a CONFIGURED provider's CLI is absent. By default this is a
+# mandatory failure: a project that selected the `claude` provider genuinely
+# needs the Claude CLI, and hiding that would be dishonest. When
+# SPECRELAY_PROVIDER_OPTIONAL=1 the same condition is downgraded to an advisory
+# WARNING instead (spec 0007, section 2): this distinguishes required CORE
+# dependencies (git, project root, config, spec root, task-runtime root — still
+# mandatory here regardless) from OPTIONAL provider availability, so an
+# environment that intentionally does not install the optional provider CLI —
+# notably CI, which must not require a real Claude installation — gets a
+# deterministic, documented, non-failing result. It never ignores exit codes
+# and never affects the core checks, so real core failures are never hidden.
+specrelay::doctor::_provider_unavailable() {
+  if [ "${SPECRELAY_PROVIDER_OPTIONAL:-0}" = "1" ]; then
+    specrelay::doctor::_warn "$1 (optional provider treated as advisory: SPECRELAY_PROVIDER_OPTIONAL=1)"
+  else
+    specrelay::doctor::_fail "$1"
+  fi
+}
+
 # specrelay::doctor::_hook_has_nonascii_shell_punct <hook-file>
 # Returns 0 (true) if the given hook file contains non-ASCII shell punctuation
 # that is DANGEROUS in a shell command (spec 0002): a Unicode en/em dash used
@@ -178,7 +198,7 @@ specrelay::doctor::run() {
       if command -v "$(specrelay::provider::claude::_bin)" >/dev/null 2>&1; then
         specrelay::doctor::_ok "Executor provider: claude ($(command -v "$(specrelay::provider::claude::_bin)"))"
       else
-        specrelay::doctor::_fail "Executor provider: claude — '$(specrelay::provider::claude::_bin)' not found on PATH"
+        specrelay::doctor::_provider_unavailable "Executor provider: claude — '$(specrelay::provider::claude::_bin)' not found on PATH"
       fi
       ;;
     *)
@@ -197,7 +217,7 @@ specrelay::doctor::run() {
       if command -v "$(specrelay::provider::claude::_bin)" >/dev/null 2>&1; then
         specrelay::doctor::_ok "Reviewer provider: $reviewer_provider ($(command -v "$(specrelay::provider::claude::_bin)"))"
       else
-        specrelay::doctor::_fail "Reviewer provider: $reviewer_provider — '$(specrelay::provider::claude::_bin)' not found on PATH"
+        specrelay::doctor::_provider_unavailable "Reviewer provider: $reviewer_provider — '$(specrelay::provider::claude::_bin)' not found on PATH"
       fi
       ;;
     *)

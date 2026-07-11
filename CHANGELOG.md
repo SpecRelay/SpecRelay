@@ -11,6 +11,72 @@ release date.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] — Standalone release-readiness baseline (task 0007)
+
+This entry summarizes the first clean public-release baseline for the standalone
+SpecRelay repository. It captures readiness work only; it does not change
+workflow, provider, or state semantics.
+
+### Baseline summary
+
+The standalone repository now consolidates the following completed work:
+
+- **Standalone repository publication.** SpecRelay lives in its own repository
+  (`git@github.com:SpecRelay/SpecRelay.git`, default branch `main`), extracted
+  from the origin host where it was incubated.
+- **docs/specs convention.** Specs live under `docs/specs/<number>-<slug>/`
+  (task 0001), and public docs were scrubbed of host-only references.
+- **Doctor diagnostics.** `bin/specrelay doctor` reports read-only readiness,
+  including the non-ASCII commit-hook noise diagnostic (task 0002).
+- **Generic live streaming.** Provider stdout/stderr is streamed live to the
+  terminal for any provider (task 0003).
+- **Claude semantic live events.** Structured Claude stream-json rendering is
+  available on top of the generic streaming, with an honest fallback when it is
+  not (task 0006).
+- **Duplicate transition fix.** The duplicate transition warning after a
+  reviewer accept is fixed (task 0004).
+- **State/schema compatibility.** Tasks record `engine_version` and
+  `schema_version`; resume/run refuse unsafe cross-version actions, with a
+  logged per-invocation override (task 0005; see `docs/versioning.md`).
+- **Install/bootstrap verification.** Source install (`install/install.sh`),
+  update (`install/update.sh`), and a fresh-clone smoke check (`scripts/smoke`)
+  verify the repo end to end without any host workflow.
+
+### Added
+
+- `.github/workflows/ci.yml`: a minimal CI gate that runs `scripts/test`,
+  `bin/specrelay doctor`, and `bin/specrelay version` on pull requests and
+  pushes to `main`, on a current GitHub-hosted Ubuntu runner. It does not
+  require a real Claude installation or any Sprint-reports/host path.
+- `SPECRELAY_PROVIDER_OPTIONAL` doctor mode: when set to `1`, an absent
+  **configured** provider CLI (e.g. Claude) is an advisory warning rather than a
+  hard failure, while core dependency checks stay mandatory. CI uses it so
+  verification does not require real Claude; default off, so local diagnostics
+  still fail loudly when a configured provider is missing.
+- `scripts/smoke`: fresh-clone/install smoke verification (version, test suite,
+  doctor result, source install into a temp prefix), independent of any host
+  workflow or archived path.
+- Release/version/tag policy in `docs/versioning.md` (how `VERSION` maps to Git
+  tags; who tags; what must pass before tagging; what to do if CI fails after
+  tagging).
+- Minimum-requirements and environment-variable reference in
+  `docs/installation.md` (Bash 3.2+, git, ruby, python3, macOS/Linux support,
+  Claude CLI optionality, and the `SPECRELAY_*` variables).
+
+### Known limitations
+
+- **Open-source licensing is undecided.** No `LICENSE` is granted; a human must
+  choose one (default proposal MIT). Publication remains blocked until then
+  (see `LICENSE.TODO`).
+- **No release is tagged or published.** This baseline only makes the repo
+  tag-ready; creating the first tag and consuming it from Sprint-reports are
+  explicit human follow-ups.
+- **CI is not proven by remote execution here.** The workflow is verified by
+  local commands and file-level tests; its first real run happens on the
+  hosting provider.
+- **Sprint-reports still holds the archived `tools/specrelay/` snapshot.** It
+  must not be removed until this standalone baseline is reviewed and tagged.
+
 ## [Unreleased] — 0.4.0 — Versioned engine identity (SDD 0087)
 
 ### Added
@@ -28,8 +94,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   rules, schema compatibility, active-task safety).
 - `docs/publication.md`: the future, human-only steps to publish this repository
   to a Git hosting provider. No remote action is performed by this project.
-- `.github/workflows/ci.yml`: standalone CI configuration (runs `scripts/test`
-  on macOS and Linux). Prepared, not executed remotely.
+- `.github/workflows/ci.yml`: standalone CI configuration. See the
+  release-readiness baseline entry above for its current, accurate scope.
 
 ### Notes
 - Still no public repository, remote, tag, or published package (see

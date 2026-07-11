@@ -112,9 +112,12 @@ it isn't. Update an installed copy from a local source with
 `./install/update.sh --from /path/to/specrelay`. Full details:
 [docs/installation.md](docs/installation.md).
 
-**Requirements:** `bash`, `git`, `ruby` (YAML config parsing), and `python3`
-(task state), plus standard POSIX tools. The `claude` provider additionally
-needs the Claude CLI on `PATH`; the `fake` provider needs nothing extra.
+**Requirements:** `bash` (3.2+), `git`, `ruby` (YAML config parsing), and
+`python3` (task state), plus standard POSIX tools; macOS and Linux are
+supported. The `claude` provider additionally needs the Claude CLI on `PATH`;
+the `fake` provider needs nothing extra. Full requirements, supported
+platforms, and the `SPECRELAY_*` environment variables:
+[docs/installation.md](docs/installation.md#requirements).
 
 ## Quick start
 
@@ -203,6 +206,31 @@ detail and the evidence layout: [docs/task-lifecycle.md](docs/task-lifecycle.md)
 
 See [docs/architecture.md](docs/architecture.md) and
 [SECURITY.md](SECURITY.md).
+
+## Verifying & releasing
+
+Baseline local verification (also run by CI on every pull request and push to
+`main` — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+
+```sh
+scripts/test          # standalone test suite
+bin/specrelay doctor  # read-only readiness diagnostics
+bin/specrelay version # reports the VERSION file value
+```
+
+Fresh-clone / install smoke check (version + tests + doctor + a temp-prefix
+source install), which needs nothing outside this repository:
+
+```sh
+scripts/smoke
+```
+
+CI does not require a real Claude installation: Claude is an optional provider,
+and CI runs doctor with `SPECRELAY_PROVIDER_OPTIONAL=1` so an absent Claude CLI
+is a documented advisory warning while core checks stay mandatory. How `VERSION`
+maps to Git tags, who tags, and what must pass before tagging are documented in
+[docs/versioning.md](docs/versioning.md#releases-and-git-tags). No tag or release
+is created automatically.
 
 ## Current project status
 

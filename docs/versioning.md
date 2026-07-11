@@ -92,6 +92,44 @@ are simply absent (`task show` prints them as "none recorded" / implicit
 defaults); only the current `state` field is required for a task to be
 operable.
 
+## Releases and Git tags
+
+`VERSION` is the single source of truth; a Git tag is a *reviewed snapshot* of a
+particular `VERSION`. The policy below answers the release questions raised in
+spec 0007 (section 5).
+
+- **Is the current version releasable as-is?** The engine at `0.4.0` is
+  functionally ready as a baseline: `scripts/test` passes, `bin/specrelay
+  doctor` reports a clear result, and `bin/specrelay version` reports the
+  expected value. **Publication (pushing a release tag) is nonetheless blocked**
+  until the open-source license is chosen and committed (see `LICENSE.TODO` and
+  `docs/publication.md`). Being *tag-ready* is not the same as *published*.
+- **What should the first public tag be?** The recommendation is `v0.4.0`, to
+  match the current `VERSION` — no functional change in this repository
+  justifies a bump, and matching keeps the tag/`VERSION` mapping obvious. Moving
+  to `v0.5.0` is a maintainer's choice if they prefer to reserve `0.4.x` as
+  pre-public; this task does **not** decide it. This is a human decision.
+- **When should `VERSION` be bumped?** Following the semantic-versioning rules
+  above, and *before* tagging a release that contains changes since the last
+  tag: PATCH for backward-compatible fixes, MINOR for backward-compatible
+  features, MAJOR for incompatible engine/state-schema changes. Do not bump
+  `VERSION` for docs-only or CI-only changes that add no engine behavior.
+- **Who creates tags?** A human maintainer, manually, after review. SpecRelay
+  never creates or pushes a Git tag automatically, and this task creates no tag.
+- **What local verification must pass before tagging?** All of:
+  `scripts/test` (exit 0), `bin/specrelay doctor` (passes, or only intentional
+  documented warnings), `bin/specrelay version` (matches `VERSION`), and the
+  fresh-clone/install smoke check `scripts/smoke`.
+- **What if CI fails after tagging?** Treat the tag as *not yet a release*. Do
+  not publish or announce it. Fix forward on `main`, re-run the local
+  verification and CI, then either move the unpublished tag to the corrected
+  commit or delete it and cut a new patch tag. Never publish a release from a
+  commit whose CI is red.
+
+The mechanical push steps a human would later perform (push `main`, push tags
+only after review, enable branch protection) are recorded in
+`docs/publication.md`. Nothing in this repository performs them automatically.
+
 ## For consuming projects
 
 A consuming project pins the exact engine version it expects (for the incubation

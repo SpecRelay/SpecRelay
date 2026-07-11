@@ -12,7 +12,9 @@ package-manager, release-archive, or network install path yet; see
 
 SpecRelay is a Bash CLI built from portable shell and standard POSIX tools:
 
-- **Bash** — the executable and its library are `#!/usr/bin/env bash`.
+- **Bash** — the executable and its library are `#!/usr/bin/env bash`. Written
+  to run on the macOS system Bash (**3.2**) as well as modern Bash 4/5, so no
+  Bash-4+-only features are required.
 - **git** — required at runtime (baseline snapshots, diff/status evidence,
   guarded working-tree checks) and checked by `specrelay doctor`.
 - **Standard POSIX utilities** — `cp`, `mkdir`, `rm`, `ln`, `chmod`, `tr`,
@@ -34,6 +36,38 @@ while the `fake` provider needs nothing beyond the above. `specrelay doctor`
 reports the availability of the pieces a given project actually configures.
 
 No sudo, no root, and no system directories are involved at any point.
+
+### Supported platforms
+
+- **macOS** and **Linux** are supported and exercised (portable constructs
+  only: atomic `mkdir` locks, POSIX `date`, a `stat -f … || stat -c …`
+  fallback, a manual symlink-follow loop instead of `readlink -f`).
+- **Windows** native is not claimed; WSL behaves as Linux.
+
+See `docs/standalone-verification.md` for the portability notes and the
+environments in which the CLI was exercised.
+
+### Claude CLI (optional provider)
+
+The Claude CLI is **optional**. It is required **only** when a project's
+configuration selects a Claude-backed role (`roles.executor.provider: claude`,
+or `roles.reviewer.provider: claude` / `claude-subagent`). Projects using the
+`fake` executor/reviewer or a `manual` reviewer need no Claude CLI at all.
+Continuous integration for this repository intentionally does not install
+Claude; see `SPECRELAY_PROVIDER_OPTIONAL` below.
+
+### Environment variables
+
+These optional variables tune where SpecRelay looks for its parts and how it
+runs; none is required for normal use.
+
+| Variable | Effect |
+|---|---|
+| `SPECRELAY_HOME` | Absolute path to the installed SpecRelay itself (its `lib/`, `templates/`, `VERSION`). Normally derived from the executable's own location; set it to force a specific engine copy. |
+| `SPECRELAY_PYTHON` | Python interpreter used for task `state.json` (default `python3`). |
+| `SPECRELAY_CLAUDE_BIN` | Executable name/path for the Claude CLI (default `claude`), used by the `claude` / `claude-subagent` providers. |
+| `SPECRELAY_SEMANTIC_EVENTS` | Set to `0` to disable Claude semantic live events and fall back to generic stdout/stderr streaming (default on). |
+| `SPECRELAY_PROVIDER_OPTIONAL` | Set to `1` so `specrelay doctor` reports an absent **configured** provider CLI (e.g. Claude) as an advisory warning instead of a hard failure. Core dependency checks stay mandatory. Used by CI (`.github/workflows/ci.yml`) so verification does not require a real Claude; default off, so normal local diagnostics still fail loudly when a configured provider is missing. |
 
 ## Copy-based user installation
 
