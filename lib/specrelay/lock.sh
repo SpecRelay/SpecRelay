@@ -106,3 +106,53 @@ specrelay::lock::is_locked() {
   lock_dir="$(specrelay::lock::_dir "$root" "$task_id")"
   [ -d "$lock_dir" ]
 }
+
+# specrelay::lock::owner_liveness <project-root> <task-id>
+# Read-only classification of the current lock's owning process, used by the
+# SpecRelay-native interrupted-task recovery command (SDD 0085B, section 3.2)
+# to decide whether recovery is safe WITHOUT mutating anything. Prints exactly
+# one of:
+#   none         - no lock directory exists (nothing owns the task)
+#   stale        - lock exists, owner is on THIS host, and its pid is not alive
+#   live-local   - lock exists, owner is on THIS host, and its pid is alive
+#   live-foreign - lock exists, owner is on ANOTHER host (cannot be
+#                  liveness-checked, so it is conservatively treated as live)
+# A recovery command must REFUSE for live-local / live-foreign (never
+# force-remove a live lock), and may safely proceed for none / stale (a stale
+# lock is reclaimed by specrelay::lock::acquire using the same dead-pid check).
+specrelay::lock::owner_liveness() {
+  local root="$1" task_id="$2" lock_dir owner_pid owner_host this_host
+  lock_dir="$(specrelay::lock::_dir "$root" "$task_id")"
+  this_host="$(hostname 2>/dev/null || echo unknown-host)"
+
+  if [ ! -d "$lock_dir" ]; then
+    printf 'none\n'
+    return 0
+  fi
+
+  owner_pid="$(specrelay::lock::_read_owner_pid "$lock_dir" || true)"
+  owner_host="$(specrelay::lock::_read_owner_host "$lock_dir" || true)"
+
+  if [ "$owner_host" = "$this_host" ]; then
+    if specrelay::lock::_pid_alive "$owner_pid"; then
+      printf 'live-local\n'
+    else
+      printf 'stale\n'
+    fi
+  else
+    printf 'live-foreign\n'
+  fi
+  return 0
+}
+
+# specrelay::lock::owner_description <project-root> <task-id>
+# Prints a short human-readable "pid <p> on <host>" description of the current
+# lock owner (best-effort; empty if there is no lock). For messages only.
+specrelay::lock::owner_description() {
+  local root="$1" task_id="$2" lock_dir owner_pid owner_host
+  lock_dir="$(specrelay::lock::_dir "$root" "$task_id")"
+  [ -d "$lock_dir" ] || return 0
+  owner_pid="$(specrelay::lock::_read_owner_pid "$lock_dir" || true)"
+  owner_host="$(specrelay::lock::_read_owner_host "$lock_dir" || true)"
+  printf 'pid %s on %s\n' "${owner_pid:-unknown}" "${owner_host:-unknown-host}"
+}

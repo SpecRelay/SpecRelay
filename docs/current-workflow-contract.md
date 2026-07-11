@@ -37,6 +37,13 @@ table for the shim-by-shim mapping. This document's own provenance and
 factual content are not rewritten or erased by this update (spec section 48:
 "Do not erase provenance").
 
+**SDD 0085B note.** SpecRelay is now the repository's **sole active**
+workflow engine; the legacy `.ai/` engine described here is frozen
+(rollback/reference only — no new features or recovery paths). SDD 0085B also
+adds a SpecRelay-native recovery transition, `EXECUTOR_RUNNING →
+READY_FOR_EXECUTOR` via `specrelay task recover`, for interrupted/orphaned
+executor runs (see §4's state machine and §5's ownership table).
+
 Repository layout note: SDD 0082 promoted the Rails app from
 `sprint_insights_app/` to the repository root and removed `rails_app/`
 entirely. Both no longer exist. Historical task evidence written before 0082
@@ -116,6 +123,9 @@ READY_FOR_REVIEW
 EXECUTOR_RUNNING
   ↓ block-task.sh (intervention path; executor cannot complete)
 BLOCKED
+EXECUTOR_RUNNING
+  ↓ specrelay task recover (SDD 0085B; interrupted/orphaned executor, audited)
+READY_FOR_EXECUTOR
 ```
 
 `READY_FOR_HUMAN_REVIEW` is non-terminal from the workflow's point of view
@@ -139,6 +149,7 @@ is the only implemented "stuck" terminal-ish state. A legacy alias,
 | `READY_FOR_REVIEW` → `CHANGES_REQUESTED` | Reviewer agent/human, via `request-changes.sh` | Requires `09-consultant-review.md` and `11-next-executor-prompt.md` to be non-empty first | This IS the reviewer's job. |
 | `CHANGES_REQUESTED` → `READY_FOR_EXECUTOR` | Orchestrator, via `requeue-task.sh` | Requires `11-next-executor-prompt.md` non-empty; backs up the old `02-executor-prompt.md` (non-destructively, timestamped) and promotes `11-next-executor-prompt.md` to `02-executor-prompt.md`, always re-appending the mandatory ownership-contract footer | Not meaningfully agent-callable in the normal flow; called by `run-workflow.sh` when it dispatches a `CHANGES_REQUESTED` task. |
 | `EXECUTOR_RUNNING` → `BLOCKED` | Human/operator, via `block-task.sh` | None beyond the allowed-source-state check | Intervention path; not part of automated dispatch. |
+| `EXECUTOR_RUNNING` → `READY_FOR_EXECUTOR` | Operator, via `specrelay task recover` (SpecRelay-native, SDD 0085B) | Requires: no live owning process; audited recovery metadata written | No — operator/orchestrator recovery command, not an executor agent action. |
 
 `run-workflow.sh` (the one-step orchestrator used by `run-ai-loop.sh`)
 composes these helpers by state, and is itself the enforcement point that no
@@ -243,6 +254,14 @@ Implemented by `run-reviewer.sh`, gated to run only from `READY_FOR_REVIEW`
   final review — stated identically in `.ai/reviewer.md`,
   `.claude/agents/ai-reviewer.md`, and the wrapped prompt built for
   `claude-subagent`.
+
+**Reviewer execution model (SDD 0085B, section 3.7, option (a)).** Under
+SpecRelay the reviewer runs **synchronously** while the task sits in
+`READY_FOR_REVIEW`; there is no distinct reviewer-running state. An
+interrupted reviewer therefore needs no new state and no recovery command —
+it is simply re-run from `READY_FOR_REVIEW` via `specrelay resume`. This
+reuses the existing state names (Strategy A compatible), so no reviewer
+recovery command is needed.
 
 ## 8. Evidence contract
 

@@ -28,6 +28,9 @@ The existing `.ai/` workflow remains canonical and unchanged; nothing in
 `.ai/scripts/` was redirected, and `.ai/`/`.ai-runs/` were not modified.
 
 **As of SDD 0085, SpecRelay is this repository's ACTIVE workflow engine.**
+**As of SDD 0085B, SpecRelay is the repository's ONLY active workflow engine
+and the legacy `.ai/` engine is frozen (rollback/reference only — see H7 and
+H9).**
 `.specrelay/config.yml`'s `workflow.current_engine: specrelay` is the single,
 machine-detectable source of truth for this (read by
 `specrelay doctor` and by every compatibility shim). The public entry points
@@ -181,7 +184,16 @@ lower-level single-step helper `run-ai-loop.sh`/`daemon.sh` compose) is
 **not** a public shim — it is `KEEP_AS_ROLLBACK_INTERNAL`, reachable only
 through the frozen legacy path.
 
-## H7. Rollback (SDD 0085)
+## H7. Rollback and legacy engine freeze (SDD 0085 / 0085B)
+
+**Legacy engine freeze (SDD 0085B).** As of SDD 0085B the legacy `.ai/`
+engine is FROZEN: no new features are added to it, no new recovery paths are
+built into it (interrupted-task recovery is SpecRelay-native only, via
+`specrelay task recover` — see H9), no new dogfood/test infrastructure is
+built on it, and no new dependencies are taken on it. It remains solely as a
+rollback/reference path until a later removal spec retires it. New work must
+never be started through `.ai/scripts/*`; the only supported active engine is
+SpecRelay.
 
 The legacy engine remains available ONLY as an explicit, temporary rollback:
 
@@ -209,6 +221,48 @@ SPECRELAY_ENGINE=legacy .ai/scripts/start-spec-task.sh <spec>
   `engine_ownership_cases_test.sh`.
 - **Temporary nature:** this directory and mechanism exist only to bridge
   the cutover; see `.ai/scripts/legacy/README.md`.
+
+## H9. Interrupted-task recovery and reviewer execution model (SDD 0085B)
+
+### (a) Interrupted-task recovery: `specrelay task recover`
+
+SpecRelay provides a native command to recover a task that was interrupted
+while `EXECUTOR_RUNNING` (e.g. the executor process died, the host was
+rebooted, or a run was orphaned):
+
+```
+specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]
+```
+
+It moves an interrupted `EXECUTOR_RUNNING` task back to
+`READY_FOR_EXECUTOR` only, under these guarantees:
+
+- **Liveness-first refusal.** It checks liveness before doing anything: if a
+  live process still owns the task, it refuses and never force-removes a live
+  lock.
+- **Safe stale-lock reclaim.** It reclaims a stale lock only when the lock is
+  owned by a same-host, dead pid; it never reclaims a foreign-host lock.
+- **Audited metadata.** It writes audited recovery metadata into the task's
+  state (`recovered_at`, `recovered_by`, `recovered_from_state`,
+  `recovery_reason`).
+- **Evidence preserved.** All existing evidence files are left untouched.
+- **Never a review/ownership shortcut.** It never moves a task to
+  `READY_FOR_HUMAN_REVIEW` and never changes task ownership.
+
+This is the ONLY supported way out of `EXECUTOR_RUNNING`, besides the
+runner-owned `EXECUTOR_RUNNING → READY_FOR_REVIEW` transition (which requires
+evidence) and `EXECUTOR_RUNNING → BLOCKED`. Because recovery is SpecRelay-
+native, no equivalent path is (or will be) added to the frozen legacy engine
+(H7).
+
+### (b) Reviewer execution model (SDD 0085B section 3.7, option (a))
+
+The reviewer runs **synchronously** while the task sits in
+`READY_FOR_REVIEW`. There is NO distinct reviewer-running state. An
+interrupted reviewer therefore needs no new state and no recovery command —
+it is simply re-run from `READY_FOR_REVIEW` via `specrelay resume`. This
+reuses the existing state names (Strategy A compatible); no new state name is
+introduced.
 
 ## H8. Non-goals of 0085
 

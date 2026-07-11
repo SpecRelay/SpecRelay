@@ -299,6 +299,69 @@ specrelay::transitions::requeue() {
     '["claimed_at", "claimed_by"]'
 }
 
+# specrelay::transitions::recover <project-root> <task-id> <target-state> <reason> [recovered-by]
+# SpecRelay-native interrupted-task recovery (SDD 0085B, section 3). Returns an
+# interrupted RUNNING task to a re-runnable state after its owning provider
+# process has exited/been orphaned. This is the ONLY supported way back out of
+# EXECUTOR_RUNNING other than -> READY_FOR_REVIEW (runner-owned, needs valid
+# evidence) or -> BLOCKED.
+#
+# It NEVER: fabricates or overwrites evidence, fakes success, moves a task to
+# READY_FOR_HUMAN_REVIEW, mutates a task owned by another engine (respects
+# _require_owned), or changes a task's engine/ownership. Liveness of the owning
+# process and safe stale-lock reclaim are the caller's responsibility (see
+# specrelay::cli::task_recover, which checks lock owner liveness and reclaims a
+# stale lock via specrelay::lock::acquire before calling this).
+#
+# Supported recoveries (section 3.6 + the section 3.7(a) decision that the
+# reviewer runs synchronously under READY_FOR_REVIEW, so there is no distinct
+# reviewer-running state to recover — an interrupted reviewer is simply re-run
+# from READY_FOR_REVIEW):
+#   EXECUTOR_RUNNING -> READY_FOR_EXECUTOR
+# Any other (source, target) pair is refused.
+#
+# On success it records durable, audited recovery metadata into state.json
+# (recovered_at / recovered_by / recovered_from_state / recovery_reason) and
+# clears the previous claim stamp so the next executor iteration re-claims
+# cleanly. Existing evidence/artifact files are left untouched.
+specrelay::transitions::recover() {
+  local root="$1" task_id="$2" target="${3:?target state required}" reason="${4:?recovery reason required}" \
+    recovered_by="${5:-specrelay-recover}" task_dir state_file current
+  task_dir="$(specrelay::task::dir "$root" "$task_id")"
+  state_file="$(specrelay::state::path "$task_dir")"
+  specrelay::transitions::_require_owned "$task_dir" || return 1
+
+  current="$(specrelay::state::canonical "$state_file")"
+  case "${current}->${target}" in
+    "EXECUTOR_RUNNING->READY_FOR_EXECUTOR")
+      : # the one supported recovery
+      ;;
+    *)
+      specrelay::out::err "refusing to recover task '$task_id': no supported recovery from '$current' to '$target'"
+      specrelay::out::err "supported recoveries: EXECUTOR_RUNNING -> READY_FOR_EXECUTOR"
+      return 1
+      ;;
+  esac
+
+  local set_json
+  set_json="$(RECOVERED_AT="$(specrelay::transitions::_now)" RECOVERED_BY="$recovered_by" \
+    RECOVERED_FROM="$current" RECOVERY_REASON="$reason" python3 -c '
+import json, os
+print(json.dumps({
+    "recovered_at": os.environ["RECOVERED_AT"],
+    "recovered_by": os.environ["RECOVERED_BY"],
+    "recovered_from_state": os.environ["RECOVERED_FROM"],
+    "recovery_reason": os.environ["RECOVERY_REASON"],
+}))
+')"
+
+  # Clear the stale claim stamp (claimed_at/claimed_by) so the re-run executor
+  # iteration re-claims cleanly, exactly as requeue does at an iteration
+  # boundary. Evidence files are never touched here.
+  specrelay::state::transition "$state_file" "EXECUTOR_RUNNING" "$target" "$set_json" \
+    '["claimed_at", "claimed_by"]'
+}
+
 # specrelay::transitions::block <project-root> <task-id> <reason>
 # EXECUTOR_RUNNING -> BLOCKED.
 specrelay::transitions::block() {

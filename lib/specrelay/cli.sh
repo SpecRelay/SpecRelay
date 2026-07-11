@@ -482,6 +482,78 @@ specrelay::cli::task_block() {
   specrelay::transitions::block "$root" "$task_id" "$reason"
 }
 
+# specrelay::cli::task_recover <task-ref> --reason "<reason>" [--to <state>]
+# SpecRelay-native recovery of an interrupted RUNNING task (SDD 0085B,
+# section 3). Refuses if a live process still owns the task; safely reclaims a
+# stale lock otherwise; records audited recovery metadata; never fabricates
+# evidence and never reaches READY_FOR_HUMAN_REVIEW.
+specrelay::cli::task_recover() {
+  local root ref="" reason="" target="READY_FOR_EXECUTOR" task_id liveness rc
+  root="$(specrelay::cli::require_project_root)" || return 1
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ "$#" -ge 2 ] || { specrelay::out::err "--reason requires a value"; return 2; }
+        reason="$2"; shift 2 ;;
+      --to)
+        [ "$#" -ge 2 ] || { specrelay::out::err "--to requires a value"; return 2; }
+        target="$2"; shift 2 ;;
+      -*)
+        specrelay::out::err "unknown option: $1"; return 2 ;;
+      *)
+        if [ -n "$ref" ]; then
+          specrelay::out::err "too many arguments"; return 2
+        fi
+        ref="$1"; shift ;;
+    esac
+  done
+
+  if [ -z "$ref" ]; then
+    specrelay::out::err "usage: specrelay task recover <task-ref> --reason \"<reason>\" [--to READY_FOR_EXECUTOR]"
+    return 2
+  fi
+  if [ -z "${reason//[[:space:]]/}" ]; then
+    specrelay::out::err "a non-empty --reason is required (recovery is always audited, never silent)"
+    return 2
+  fi
+
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+
+  # 3.2 — liveness FIRST: never touch a task a live process still owns.
+  liveness="$(specrelay::lock::owner_liveness "$root" "$task_id")"
+  case "$liveness" in
+    live-local|live-foreign)
+      specrelay::out::err "refusing to recover '$task_id': a live process still owns it ($(specrelay::lock::owner_description "$root" "$task_id"))"
+      specrelay::out::err "wait for it to finish, or stop it, before recovering; nothing was changed"
+      return 1
+      ;;
+  esac
+
+  # 3.3 — reclaim a stale lock safely (acquire refuses a live lock and only
+  # reclaims a same-host dead-pid lock; it never force-removes a live one).
+  if ! specrelay::lock::acquire "$root" "$task_id"; then
+    return 1
+  fi
+
+  specrelay::transitions::recover "$root" "$task_id" "$target" "$reason"
+  rc=$?
+
+  if [ "$rc" -eq 0 ]; then
+    # 3.4 — never silent: print exactly what changed.
+    echo "Recovered task '$task_id':"
+    echo "  recovered_from_state: $(specrelay::state::get "$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")" recovered_from_state)"
+    echo "  new state:            $target"
+    echo "  recovered_at:         $(specrelay::state::get "$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")" recovered_at)"
+    echo "  recovered_by:         $(specrelay::state::get "$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")" recovered_by)"
+    echo "  recovery_reason:      $reason"
+    echo "Existing evidence files were preserved untouched."
+  fi
+
+  specrelay::lock::release "$root" "$task_id"
+  return "$rc"
+}
+
 specrelay::cli::task_authorize_submit() {
   local root ref task_id token rc
   root="$(specrelay::cli::require_project_root)" || return 1
@@ -508,9 +580,10 @@ specrelay::cli::task_dispatch() {
     accept) specrelay::cli::task_accept "$@" ;;
     request-changes) specrelay::cli::task_request_changes "$@" ;;
     block) specrelay::cli::task_block "$@" ;;
+    recover) specrelay::cli::task_recover "$@" ;;
     authorize-submit) specrelay::cli::task_authorize_submit "$@" ;;
     "")
-      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|authorize-submit>"
+      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit>"
       return 2
       ;;
     *)

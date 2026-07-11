@@ -1,10 +1,11 @@
 # SpecRelay Engine Parity (SDD 0084, extended by SDD 0085)
 
 This is the migration parity checklist required by SDD
-`0084-migrate-ai-workflow-engine-into-specrelay`. It compares the still-
-authoritative legacy `.ai/` workflow (documented in
-`current-workflow-contract.md`) against the real, executable SpecRelay
-engine introduced by this task (`tools/specrelay/lib/specrelay/`).
+`0084-migrate-ai-workflow-engine-into-specrelay`. It compares the now-frozen,
+rollback-only legacy `.ai/` workflow (documented in
+`current-workflow-contract.md`; SpecRelay is the sole active engine as of
+SDD 0085B) against the real, executable SpecRelay engine introduced by this
+task (`tools/specrelay/lib/specrelay/`).
 
 **SDD 0085 update:** SpecRelay is now this repository's ACTIVE engine (not
 merely parity-equivalent and coexisting). The table below still documents
@@ -154,6 +155,15 @@ separately review and `specrelay task approve`, matching the decoupled
    mechanism.
 6. **A round's archived `11-next-executor-prompt.md` may be stale** when
    that round's decision was ACCEPT (see "Iteration history" above).
+7. **Interrupted-task recovery — CLOSED by SDD 0085B.** The previously-missing
+   "no supported `EXECUTOR_RUNNING → READY_FOR_EXECUTOR` recovery" gap (neither
+   engine offered a safe, audited way to reclaim an interrupted/orphaned
+   executor run) is now closed by the SpecRelay-native `specrelay task recover`
+   command (liveness-first refusal, safe same-host stale-lock reclaim, audited
+   recovery metadata, evidence preserved, never `READY_FOR_HUMAN_REVIEW`; see
+   `architecture.md` H9 and `current-workflow-contract.md` §4/§5). Because the
+   legacy engine is frozen as of SDD 0085B (rollback/reference only), parity is
+   no longer a moving target — no new recovery path is added to `.ai/`.
 
 ## Real provider smoke evidence
 
