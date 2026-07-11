@@ -18,8 +18,24 @@ scripts and real task evidence while building the SpecRelay engine. See
 capability comparison against the new SpecRelay engine, including how SDD
 0084 addresses this document's section 9 known limitation (the dirty-tree
 guard blocking the automated requeue retry path). This document continues to
-describe the `.ai/` engine's actual behavior, which remains authoritative and
-unchanged by SDD 0084.
+describe the `.ai/` engine's actual behavior, which remained authoritative
+and unchanged through SDD 0084.
+
+**SDD 0085 update — historical source vs. current active execution.**
+Everything below is now a description of the **historical source workflow**:
+the `.ai/` scripts documented here are still real, still work, and this
+document's behavioral description of them remains accurate — but as of SDD
+0085 they are reached through compatibility shims that delegate to SpecRelay
+by default (see `architecture.md`, "H6. Compatibility shims"), and SpecRelay
+(`tools/specrelay/`) is now the repository's **current active execution
+engine**. The legacy engine described in this document is preserved,
+unmodified in its own behavior, ONLY as an explicit rollback path
+(`SPECRELAY_ENGINE=legacy`, or `.ai/scripts/legacy/`) — see
+`tools/specrelay/docs/commands.md` for the rollback invocation and
+`tools/specrelay/docs/engine-parity.md`'s "Compatibility cutover (SDD 0085)"
+table for the shim-by-shim mapping. This document's own provenance and
+factual content are not rewritten or erased by this update (spec section 48:
+"Do not erase provenance").
 
 Repository layout note: SDD 0082 promoted the Rails app from
 `sprint_insights_app/` to the repository root and removed `rails_app/`

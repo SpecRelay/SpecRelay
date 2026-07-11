@@ -23,6 +23,12 @@ Discovery (read-only):
                          SpecRelay configuration.
   workflow inspect       Print a read-only summary of the existing (legacy)
                          AI workflow discovered on disk.
+  doctor                 Read-only readiness diagnostics: git repo, config,
+                         spec root, task runtime root, executor/reviewer
+                         provider availability, context capability, active
+                         engine mode, compatibility shims, rollback engine,
+                         and engine-lock conflicts. Exits non-zero if any
+                         mandatory check fails.
 
 Workflow engine:
   run <spec-path> [--task-id <id>] [--allow-dirty-baseline]
@@ -584,6 +590,9 @@ specrelay::cli::main() {
       ;;
     task)
       specrelay::cli::task_dispatch "$@"
+      ;;
+    doctor)
+      specrelay::doctor::run "$self_dir"
       ;;
     review)
       specrelay::cli::unimplemented "$cmd"

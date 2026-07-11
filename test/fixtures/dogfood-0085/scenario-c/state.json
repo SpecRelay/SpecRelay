@@ -1,0 +1,18 @@
+{
+  "allow_pre_existing_dirty": false,
+  "approved_at": "2026-07-10T00:47:23Z",
+  "approved_by": "human",
+  "base_commit": "0e277355c0ff4171a87528e6933f65ee0935b6ae",
+  "blocked_at": "2026-07-10T00:47:46Z",
+  "blocked_by": "specrelay-orchestrator",
+  "blocked_reason": "recovering from a simulated hard-kill mid-executor-round (SDD 0085 dogfood scenario C)",
+  "claimed_at": "2026-07-10T00:47:24Z",
+  "claimed_by": "specrelay-runner",
+  "created_at": "2026-07-10T00:47:23Z",
+  "engine": "specrelay",
+  "iteration": 1,
+  "requires_human_approval": true,
+  "spec_source": "docs/sdd/9003-dogfood-scenario-c/spec.md",
+  "state": "BLOCKED",
+  "task_id": "9003-dogfood-scenario-c"
+}

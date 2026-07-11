@@ -1,0 +1,21 @@
+{
+  "allow_pre_existing_dirty": false,
+  "approved_at": "2026-07-10T00:46:28Z",
+  "approved_by": "human",
+  "base_commit": "0ae77d35a6a008a0082a42c6996661ee119c624e",
+  "claimed_at": "2026-07-10T00:46:29Z",
+  "claimed_by": "specrelay-runner",
+  "created_at": "2026-07-10T00:46:27Z",
+  "engine": "specrelay",
+  "iteration": 1,
+  "requires_human_approval": true,
+  "review_result": "accepted",
+  "reviewed_at": "2026-07-10T00:46:30Z",
+  "reviewed_by": "reviewer-agent",
+  "reviewer_provider": "fake",
+  "spec_source": "docs/sdd/9001-dogfood-scenario-a/spec.md",
+  "state": "READY_FOR_HUMAN_REVIEW",
+  "submitted_for_review_at": "2026-07-10T00:46:29Z",
+  "submitted_for_review_by": "specrelay-runner",
+  "task_id": "9001-dogfood-scenario-a"
+}

@@ -1,10 +1,16 @@
-# SpecRelay Engine Parity (SDD 0084)
+# SpecRelay Engine Parity (SDD 0084, extended by SDD 0085)
 
 This is the migration parity checklist required by SDD
 `0084-migrate-ai-workflow-engine-into-specrelay`. It compares the still-
 authoritative legacy `.ai/` workflow (documented in
 `current-workflow-contract.md`) against the real, executable SpecRelay
 engine introduced by this task (`tools/specrelay/lib/specrelay/`).
+
+**SDD 0085 update:** SpecRelay is now this repository's ACTIVE engine (not
+merely parity-equivalent and coexisting). The table below still documents
+0084's engine-internals comparison; see "Compatibility cutover (SDD 0085)"
+further down for the shim/rollback/ownership evidence added by that task,
+backed by real dogfood runs (`docs/dogfood-report.md`).
 
 **This is not a claim of "full parity."** `specrelay run` genuinely
 orchestrates a real, multi-round lifecycle — it is not a wrapper that invokes
@@ -35,6 +41,28 @@ dropped.
 | No auto-commit/push/merge/deploy | Never implemented anywhere in `.ai/` | Never implemented anywhere in `tools/specrelay/`; `git` is only ever invoked for `status`/`diff`/`add --intent-to-add`/`reset`/`rev-parse` | Grep of `tools/specrelay/lib` for `git commit`/`git push`: no matches | Equivalent |
 | Task locking / concurrent-mutation safety | Not implemented (no lock file; two `run-executor.sh` invocations against the same task race on `claim-task.sh`'s state check only) | `lock.sh`: `mkdir`-based atomic lock with stale-owner (dead pid) reclaim | `lock_test.sh`; `concurrent_test.sh` (two real backgrounded CLI processes race; exactly one wins) | **New** (not present in the legacy engine) |
 | Cross-engine mutation safety | Not applicable (only one engine exists) | Every SpecRelay-created task records `engine: specrelay`; every mutating transition refuses a task lacking that field | `transitions_test.sh` ("cross-engine..."); `legacy_compat_test.sh` ("refuses a legacy...") | **New** (required because two engines now coexist during migration — spec section 50) |
+
+## Compatibility cutover (SDD 0085)
+
+| Capability | Legacy behavior | SpecRelay behavior | Real evidence | Status |
+|---|---|---|---|---|
+| `start-spec-task.sh` command surface | Runs the legacy engine directly (`run-ai-loop.sh` → `run-workflow.sh` → `run-executor.sh`/`run-reviewer.sh`) | Compatibility shim delegates to `specrelay run <spec>`, translating `--allow-dirty`→`--allow-dirty-baseline`, preserving `--task-id`, exit code, and spec paths with spaces | `compat_shim_test.sh` (18 assertions); real dogfood scenarios A/B (`docs/dogfood-report.md`) ran through this exact code path | PARITY (same lifecycle semantics; superficial banner text differs, per spec section 27) |
+| `show-task.sh` command surface | Reads `.ai-runs/tasks/<exact-id>/*` directly, dumps full file contents | Compatibility shim delegates to `specrelay show <task-ref>` (also accepts numeric prefix / partial slug — legacy required the exact id) | `compat_shim_test.sh` ("numeric-prefix task ref", "never mutates") | IMPROVED (task lookup), PARTIAL (output is a compact summary, not a full multi-file dump — documented difference, not silent) |
+| `approve-task.sh` command surface | Direct `state.json` rewrite (DRAFT/WAITING_FOR_HUMAN → READY_FOR_EXECUTOR) | Compatibility shim delegates to `specrelay task approve <task-ref>` | `rollback_test.sh` (default-engine + rollback comparison) | PARITY |
+| `run-ai-loop.sh` command surface | Loops `run-workflow.sh --once [--reviewer]` up to `--max-rounds` | Compatibility shim loops `specrelay resume <task-id>` up to `--max-rounds`, same per-round reporting shape | Manual smoke (`.ai/scripts/run-ai-loop.sh nonexistent-task-xyz` → clear refusal, no silent abort) | PARITY |
+| `start-ai-task.sh` command surface (freeform, no-spec task creation) | Creates an empty DRAFT task for manual 00/01/02 fill-in | **No safe mapping** — SpecRelay is spec-driven throughout; the shim refuses cleanly under the active engine and points at `start-spec-task.sh` or the explicit rollback | Manual smoke: exits 2 with a clear message, creates nothing | GAP (documented, not faked — spec section 7) |
+| Rollback mechanism | N/A (only one engine existed) | `SPECRELAY_ENGINE=legacy` env var (or `.ai/scripts/legacy/*.sh` directly); unrecognized values are a hard error, never a silent fallback | `rollback_test.sh` (14 assertions) | NEW |
+| Engine ownership (legacy → SpecRelay direction) | N/A | `transitions.sh#_require_owned` refuses to mutate a task without `"engine": "specrelay"` | `legacy_compat_test.sh` (pre-existing, SDD 0084) | PARITY (carried over) |
+| Engine ownership (SpecRelay → legacy direction, Case C) | N/A | `.ai/scripts/internal/{claim-task,requeue-task,accept-review,request-changes,block-task,submit-review,finish-task}.sh` and `.ai/scripts/legacy/approve-task.sh` all refuse a task with `"engine": "specrelay"` | `rollback_test.sh`, `engine_ownership_cases_test.sh` (Case C, 3 assertions) | NEW (this was the actual gap 0084 left for 0085 to close) |
+| Migration marker | N/A | `.specrelay/config.yml`'s `workflow.current_engine: specrelay` (existing config field, not a new file — spec section 54) | `specrelay doctor` ("Current engine mode: specrelay (active)") | NEW |
+| Shim-loop protection | N/A | `.ai/scripts/legacy/` never references `tools/specrelay/bin/specrelay`; each public shim sources the engine-selection helper exactly once | `shim_loop_test.sh` (10 assertions, including a dynamic doctor-detects-a-deliberately-introduced-loop case) | NEW |
+| `specrelay doctor` | N/A (did not exist) | Read-only diagnostics: git repo, project root, config, spec root, task runtime root, executor/reviewer provider availability, context capability, active engine, compatibility shims, rollback engine, conflicting-lock detection; non-zero exit on any failed mandatory check | Manual run against this repository: all 11 checks pass | NEW |
+| Direct-vs-shim parity | N/A | For the same fixture spec, `.ai/scripts/start-spec-task.sh` and `tools/specrelay/bin/specrelay run` produce the identical state machine outcome and evidence shape (only cosmetic banner text differs) | `compat_shim_test.sh` (fixtures 1 and 5 compared) | PARITY |
+| Host repository mutation safety (spec section 66 regression) | N/A | Every fixture/compat/rollback/dogfood test operates only in an isolated temp Git repository, verified via a 6-point guard before any Git-mutating command; `run_all.sh` captures and verifies host HEAD/branch/working-tree-path-set before and after the full suite | `host_repo_safety_test.sh` (16 assertions); `run_all.sh`'s own before/after check | NEW (added specifically because a prior execution attempt of this task violated this) |
+
+Do not read "PARTIAL"/"GAP" rows above as failures: each documents an
+intentional, disclosed scope decision (spec section 7: "do not fake
+compatibility; document the gap"), not a silent omission.
 
 ## State compatibility (Strategy A)
 

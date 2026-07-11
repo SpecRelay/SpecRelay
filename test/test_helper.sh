@@ -91,6 +91,57 @@ YAML
   printf '%s\n' "$dir"
 }
 
+# specrelay_test::safe_fixture_root_or_abort <candidate-path> <host-root>
+#
+# Implements the mandatory host-repository mutation safety check (spec 0085,
+# section 66 — added after a prior execution attempt of this task mutated
+# the HOST repository by renaming real product docs from inside a fixture
+# test that had lost track of its own temp-dir root). Any test helper that is
+# about to run a Git-MUTATING command (add/commit/reset/checkout/switch/
+# clean, or a rename/move of repository files) against a fixture project
+# MUST call this first and abort (return non-zero, print why) unless ALL of:
+#   1. the candidate path is non-empty;
+#   2. it exists;
+#   3. it is a Git repository (has a resolvable `git rev-parse --show-toplevel`);
+#   4. it is NOT equal to the host repository root;
+#   5. it is inside the expected temporary test area ($TMPDIR, canonicalized),
+#      where practical (skipped only if TMPDIR itself can't be resolved).
+# An empty or unresolved candidate is NEVER treated as equivalent to the
+# current directory — this function only ever inspects the exact string it
+# was given.
+specrelay_test::safe_fixture_root_or_abort() {
+  local candidate="$1" host_root="$2"
+
+  if [ -z "$candidate" ]; then
+    echo "specrelay_test: refusing to proceed: fixture root is empty (never falling back to cwd)" >&2
+    return 1
+  fi
+  if [ ! -e "$candidate" ]; then
+    echo "specrelay_test: refusing to proceed: fixture root does not exist: $candidate" >&2
+    return 1
+  fi
+  local resolved
+  if ! resolved="$(cd "$candidate" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" || [ -z "$resolved" ]; then
+    echo "specrelay_test: refusing to proceed: fixture root is not a Git repository: $candidate" >&2
+    return 1
+  fi
+  if [ -n "$host_root" ] && [ "$resolved" = "$host_root" ]; then
+    echo "specrelay_test: refusing to proceed: fixture root equals the HOST repository root ($host_root) — this is exactly the incident this check prevents" >&2
+    return 1
+  fi
+  local tmp_root
+  if tmp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)"; then
+    case "$resolved" in
+      "$tmp_root"/*) : ;;
+      *)
+        echo "specrelay_test: refusing to proceed: fixture root is not inside the expected temp area ($tmp_root): $resolved" >&2
+        return 1
+        ;;
+    esac
+  fi
+  return 0
+}
+
 specrelay_test::assert_eq() {
   local desc="$1" expected="$2" actual="$3"
   TESTS_RUN=$((TESTS_RUN + 1))

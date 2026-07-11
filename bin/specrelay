@@ -53,6 +53,8 @@ LIB_DIR="$SELF_DIR/../lib/specrelay"
 . "$LIB_DIR/context/contextplus.sh"
 # shellcheck source=lib/specrelay/workflow.sh
 . "$LIB_DIR/workflow.sh"
+# shellcheck source=lib/specrelay/doctor.sh
+. "$LIB_DIR/doctor.sh"
 # shellcheck source=lib/specrelay/cli.sh
 . "$LIB_DIR/cli.sh"
 

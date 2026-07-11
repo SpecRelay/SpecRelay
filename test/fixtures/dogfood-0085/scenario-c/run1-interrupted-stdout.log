@@ -1,0 +1,24 @@
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+[specrelay] creating task '9003-dogfood-scenario-c' from spec: docs/sdd/9003-dogfood-scenario-c/spec.md
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+Initialized state: /private/var/folders/c1/zhvzqdhx50sdcmjqv8k5905c0000gr/T/specrelay-dogfood.e8jqKi/.ai-runs/tasks/9003-dogfood-scenario-c/state.json
+Created task: /private/var/folders/c1/zhvzqdhx50sdcmjqv8k5905c0000gr/T/specrelay-dogfood.e8jqKi/.ai-runs/tasks/9003-dogfood-scenario-c
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+[specrelay] approving task '9003-dogfood-scenario-c' (this 'specrelay run' invocation IS the human approval — see docs/engine-parity.md, 'Approval semantics')
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+Transitioned: DRAFT -> READY_FOR_EXECUTOR
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+[executor] task '9003-dogfood-scenario-c': checking working-tree guard
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+[executor] task '9003-dogfood-scenario-c': context-capability preflight (adapter: none)
+[executor] context: adapter 'none' configured; no preflight required
+[executor] task '9003-dogfood-scenario-c': claiming
+ruby: warning: Ruby was built without YJIT support. You may need to install rustc to build Ruby with YJIT.
+Transitioned: READY_FOR_EXECUTOR -> EXECUTOR_RUNNING
+[executor] task '9003-dogfood-scenario-c': running provider 'fake' (round 1)
