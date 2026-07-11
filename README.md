@@ -8,13 +8,14 @@ executor implements the spec, an independent AI reviewer accepts it or requests
 changes, evidence is captured at every step, and a human always gives the final
 review before anything is considered done.
 
-> **Project status:** SpecRelay is being extracted from a real, dogfooded AI
-> development workflow. It currently lives (incubated) inside its origin
-> repository at `tools/specrelay/` and is now **standalone-repository-ready** —
-> it can be copied or Git-extracted into its own repository and still run its
-> tests, install itself, initialize other projects, and drive full workflows.
-> It is **not** yet published to any package manager, and no public repository
-> has been created. See [Current project status](#current-project-status).
+> **Project status:** SpecRelay now lives in its own standalone GitHub
+> repository (`git@github.com:SpecRelay/SpecRelay.git`, default branch `main`,
+> which tracks `origin/main`). It grew out of a real, dogfooded AI development
+> workflow and runs its own tests, installs itself, initializes other projects,
+> and drives full workflows. It is **not** yet published to any package
+> manager, and **open-source licensing is still pending a human decision** (see
+> [`LICENSE.TODO`](LICENSE.TODO)). See
+> [Current project status](#current-project-status).
 
 ---
 
@@ -205,16 +206,20 @@ See [docs/architecture.md](docs/architecture.md) and
 
 ## Current project status
 
-- **Incubation.** SpecRelay's source is currently incubated at
-  `tools/specrelay/` inside its origin repository and is **standalone-
-  repository-ready**: it can be extracted into its own repository (see
-  [docs/extraction.md](docs/extraction.md)) and run independently.
+- **Standalone repository.** SpecRelay now lives in its own GitHub repository
+  (`git@github.com:SpecRelay/SpecRelay.git`); the default branch `main` tracks
+  `origin/main`. Its history was extracted from the origin host repository
+  where it was incubated (see [docs/extraction.md](docs/extraction.md)); that
+  extraction history is recorded honestly, which is why some reference docs
+  still mention the old in-host path.
 - **Providers supported today:** `fake` (deterministic) and `claude` /
   `claude-subagent`; `manual` for human review. Others can be added via the
   provider contract.
-- **Not yet done (on purpose):** no public repository has been created, nothing
-  is pushed to any remote, and no package (Homebrew/npm/gem) is published.
-  Those are later, explicitly-authorized steps.
+- **Not yet done (on purpose):** no package (Homebrew/npm/gem) is published and
+  no release has been tagged. **Open-source licensing is still pending a human
+  decision** — the GitHub repository exists and is visible, but no `LICENSE`
+  has been granted yet (see [`LICENSE.TODO`](LICENSE.TODO)). Those remain later,
+  explicitly-authorized steps.
 
 Standalone readiness is tracked in
 [docs/standalone-verification.md](docs/standalone-verification.md).

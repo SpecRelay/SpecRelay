@@ -151,6 +151,63 @@ The installer and updater **never touch** any consumer project's
 `.specrelay/config.yml` or `.specrelay/` directory. Upgrading the tool leaves
 every project's configuration exactly as it was.
 
+## Responsibilities: `install` vs. `init` vs. `doctor` vs. `run`
+
+Each command has a **bounded** responsibility; no step silently reaches outside
+its own scope:
+
+- **`install`** (`install/install.sh` / `install/update.sh`) installs the
+  SpecRelay CLI and its resources under a prefix you own. It **never** modifies
+  an arbitrary project's `.specrelay/config.yml`, and it **never** touches your
+  Claude MCP configuration. Installing or updating the tool is purely a
+  tool-side operation.
+- **`init`** (`specrelay init`) is a **project-side** operation only. It
+  creates/updates the project-local `.specrelay/config.yml`, the spec root, and
+  a `.gitignore` entry for the runtime evidence directory. It refuses to
+  overwrite an existing config unless you pass `--force`.
+- **`doctor`** (`specrelay doctor`) **reports** readiness — installation,
+  project config, providers, and the configured context adapter — read-only. It
+  does **not** silently fix anything or mutate configuration.
+- **`run`** (`specrelay run`) **fails clearly**, with an actionable message, if
+  a required provider or a required context adapter is missing, rather than
+  proceeding, hanging, or failing obscurely before it can claim a task. (A
+  required-but-unregistered `contextplus` adapter is exactly the failure mode
+  that motivated documenting this boundary — see
+  [context-adapters.md](context-adapters.md).)
+
+## Preparing a repository: use `init`, not a hand-written config
+
+The supported way to prepare a repository to run SpecRelay is `specrelay init`
+(or `bin/specrelay init` from a standalone source checkout). **Hand-writing
+`.specrelay/config.yml` is a temporary bootstrap escape hatch, not the normal
+product path** — a hand-written config that requires a context adapter which is
+not actually available is what caused an early dogfood run to fail before it
+could claim a task.
+
+Current `init` behavior and its known gap:
+
+- `init` writes a **fixed bundled template** (`templates/project/config.yml`):
+  spec root `specs`, executor `claude`, reviewer `manual`, and
+  `context.adapter: none` / `context.required: false`. It substitutes the
+  project name but does **not** yet accept per-project values for the spec
+  root, providers, or context adapter.
+- Values `init` sets **automatically** today: `version`, `project.name` (the
+  project directory's basename), `specs.root: specs`, `tasks.runs_root`,
+  `tasks.max_iterations`, `roles.executor.provider: claude`,
+  `roles.reviewer.provider: manual`, `context.adapter: none`,
+  `context.required: false`, and a placeholder `validation.full_test_command`.
+- Values you must still **adjust by hand** after `init` (until configurability
+  lands) include a non-default spec root (e.g. `docs/specs`), an automated
+  reviewer (e.g. `claude-subagent`), your real `validation.full_test_command`,
+  and any context-adapter policy.
+- Making `init` fully configurable (spec root, providers, context adapter via
+  flags, prompts, or template selection) is a **recorded follow-up** — see
+  `docs/specs/0001-establish-docs-specs-convention-and-scrub-standalone-docs/spec.md`.
+
+Adjust the generated config only by editing the keys documented in
+[configuration.md](configuration.md); do not treat a hand-edited config as the
+intended long-term interface.
+
 ## Updating an installed copy
 
 During incubation the only supported update source is a **local SpecRelay
@@ -195,7 +252,7 @@ Usage: update.sh --from DIR [--prefix DIR] [--allow-downgrade] [-h|--help]
 ## Version ownership
 
 The single source of truth for the version is the **`VERSION` file**. The
-source tree carries it (currently `0.3.0`); the installer copies it to
+source tree carries it (currently `0.4.0`); the installer copies it to
 `<prefix>/share/specrelay/VERSION`, and both the installer and updater read
 those two files to decide "already installed", "reinstall", or "downgrade".
 `specrelay version` prints the installed value.
@@ -211,10 +268,10 @@ specrelay status
 specrelay doctor
 ```
 
-Use `tools/specrelay/bin/specrelay ...` (the in-repo path) only when working
-directly in the source tree; the installed `specrelay` on your `PATH` is the
-supported entry point for day-to-day use. See `commands.md` for the full
-command reference.
+Use `bin/specrelay ...` (the in-repo path from a standalone source checkout)
+only when working directly in the source tree; the installed `specrelay` on
+your `PATH` is the supported entry point for day-to-day use. See `commands.md`
+for the full command reference.
 
 ## Future distribution
 

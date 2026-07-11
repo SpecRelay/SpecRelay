@@ -5,6 +5,13 @@ environments that matter for standalone extraction (SDD 0086, section 65). It
 is evidence-based: a cell is `PASS` only where the capability was actually
 exercised, not merely implemented.
 
+> **Historical record.** This matrix captures the standalone-extraction
+> verification performed for SDD 0086 at SpecRelay **v0.3.0**, run from the
+> origin host's incubated `tools/specrelay/` tree. It is preserved as a
+> point-in-time evidence record; the version numbers and host paths below
+> reflect *that* run and are **not** a live status of the current standalone
+> `0.4.0` repository.
+
 ## Environments
 
 | Column | Meaning |

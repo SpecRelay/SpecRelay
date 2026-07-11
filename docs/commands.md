@@ -6,8 +6,9 @@ legacy `.ai/` engine is **frozen** (rollback/reference only — see
 required by spec section 45.
 
 **Canonical active command set (SDD 0085B, section 2.3).** All new
-operator/developer work uses `tools/specrelay/bin/specrelay ...` directly (never
-`.ai/scripts/*`):
+operator/developer work uses the `specrelay` CLI directly — `bin/specrelay ...`
+from a standalone source checkout, or the installed `specrelay ...` on your
+`PATH` — never `.ai/scripts/*`:
 
 | Command | Purpose | Exit-code semantics |
 |---|---|---|
@@ -23,7 +24,7 @@ operator/developer work uses `tools/specrelay/bin/specrelay ...` directly (never
 | `specrelay task authorize-submit <task-ref>` | Runner-owned `EXECUTOR_RUNNING` → `READY_FOR_REVIEW` | `0` submitted; non-zero refused |
 | `specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]` | SpecRelay-native interrupted-task recovery | `0` recovered; non-zero refused (live owner / wrong state / not owned / no reason) |
 
-## Direct CLI (`tools/specrelay/bin/specrelay`)
+## Direct CLI (`bin/specrelay` / installed `specrelay`)
 
 ```
 specrelay run <spec-path> [--task-id <id>] [--allow-dirty-baseline]
@@ -139,7 +140,8 @@ specrelay help | --help | -h
 
 These public shims survive **only** as deprecated wrappers during the cutover
 window (SDD 0085B, section 2.4). They are **not** the supported path for new
-work — use `tools/specrelay/bin/specrelay ...` directly. Under the default
+work — use the `specrelay` CLI directly (`bin/specrelay ...` from a source
+checkout, or the installed `specrelay ...`). Under the default
 engine selection each shim delegates unambiguously to the direct CLI below and
 propagates its exit code; a shim **never** silently falls back to legacy.
 Selecting legacy requires the explicit, rollback-only opt-in

@@ -1,10 +1,12 @@
 # Publishing SpecRelay (future, human-only)
 
-SpecRelay is currently a **local** standalone repository. It has never been
-pushed to a remote, has no configured remote, and no tag or package has been
-published. This document records the steps a human would take **later**, once a
-license is confirmed, to publish it. Nothing here is executed automatically, and
-no tool in this repository performs any of it.
+SpecRelay now has a configured remote — `origin` points to
+`git@github.com:SpecRelay/SpecRelay.git` and the default branch `main` tracks
+`origin/main`. No tag or package has been published, and **open-source
+licensing is still pending a human decision** (see `LICENSE.TODO`). This
+document records the remaining steps a human would take **later**, once a
+license is confirmed, to publish a release. Nothing here is executed
+automatically, and no tool in this repository performs any of it.
 
 ## Remote readiness metadata
 
@@ -17,11 +19,12 @@ no tool in this repository performs any of it.
 
 1. Confirm and commit a real `LICENSE` (replace `LICENSE.TODO`). Until then,
    **do not publish** — the project is `LICENSE_BLOCKED_PENDING_HUMAN_DECISION`.
-2. Create the repository on the hosting provider (empty, no auto-generated
-   files).
-3. Add the remote:
+2. The repository already exists on the hosting provider (GitHub). Creating it
+   is therefore done; a fresh clone needs no `git remote add`.
+3. The remote is already configured (`origin` →
+   `git@github.com:SpecRelay/SpecRelay.git`); confirm it before publishing:
    ```sh
-   git remote add origin <url>
+   git remote -v
    ```
 4. Verify visibility/permissions on the hosting provider.
 5. Push `main`:

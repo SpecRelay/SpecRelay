@@ -21,6 +21,16 @@ All defaults shipped in the template are **provider-neutral public defaults**.
 Editing this file is how you point SpecRelay at your own spec layout, choose
 executor/reviewer providers, and declare your validation command.
 
+> **Generate this file with `specrelay init`, then edit it.** Creating
+> `.specrelay/config.yml` by hand is a temporary bootstrap escape hatch, not the
+> normal product path — a hand-written config that requires an unavailable
+> context adapter is what caused an early dogfood run to fail before it could
+> claim a task. `init` today writes a fixed template (it does not yet accept
+> per-project spec root / providers / context adapter — a recorded follow-up),
+> so some keys still need adjusting by hand afterward; see
+> [installation.md](installation.md), "Preparing a repository: use `init`, not a
+> hand-written config."
+
 ## Schema version
 
 ```yaml

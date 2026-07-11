@@ -12,10 +12,12 @@ only — there is no legacy equivalent, and you never edit `state.json` by hand 
 reference) and `architecture.md` (section "H9. Interrupted-task recovery and
 reviewer execution model").
 
-All commands below assume you run them from the repository root:
+All commands below use the `specrelay` CLI. From a standalone source checkout,
+run `bin/specrelay <command> …` at the repository root; with SpecRelay installed
+on your `PATH`, run `specrelay <command> …` from anywhere:
 
 ```
-tools/specrelay/bin/specrelay <command> …
+bin/specrelay <command> …
 ```
 
 ## 1. How to tell a task is interrupted
@@ -28,7 +30,7 @@ An interrupted task has **two** properties at once:
 Check the state (read-only, never mutates anything):
 
 ```
-tools/specrelay/bin/specrelay show <task-ref>
+bin/specrelay show <task-ref>
 # State: EXECUTOR_RUNNING
 ```
 
@@ -74,7 +76,7 @@ refuses when the owner is live (see section 2).
 ## 2. The recovery command
 
 ```
-tools/specrelay/bin/specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]
+bin/specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]
 ```
 
 `--reason` is **required** — recovery is always audited, never silent. Omitting
@@ -119,7 +121,7 @@ lock owner:
 Example of a successful recovery:
 
 ```
-$ tools/specrelay/bin/specrelay task recover 9202b --reason "executor process was orphaned"
+$ bin/specrelay task recover 9202b --reason "executor process was orphaned"
 Recovered task '9202b-scenario-b-operator-recovery-doc':
   recovered_from_state: EXECUTOR_RUNNING
   new state:            READY_FOR_EXECUTOR
@@ -159,7 +161,7 @@ interrupted, no state was left half-changed and no recovery command is needed �
 simply re-run it from `READY_FOR_REVIEW`:
 
 ```
-tools/specrelay/bin/specrelay resume <task-ref>
+bin/specrelay resume <task-ref>
 ```
 
 This is exactly why `specrelay task recover --to` supports only
@@ -175,7 +177,7 @@ requirement, a dependency that will not be resolved — do not loop recovery.
 Move the task to `BLOCKED` with a reason:
 
 ```
-tools/specrelay/bin/specrelay task block <task-ref> "<reason>"
+bin/specrelay task block <task-ref> "<reason>"
 ```
 
 This transitions `EXECUTOR_RUNNING → BLOCKED` and records why, so a human can

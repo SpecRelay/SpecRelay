@@ -174,6 +174,63 @@ on `context.adapter` / `context.required`:
   unknown adapter '<name>'`.
 
 `doctor` inspects configuration only; it does not run the adapter's preflight.
+It therefore reports the **configured** adapter and the `required` flag, not a
+live MCP registration check — the live "server not registered/connected"
+detection happens in the `contextplus` preflight at `run` time (see below).
+
+## MCP setup policy (ContextPlus)
+
+ContextPlus is an **optional** adapter. From the core product's perspective the
+defaults are `context.adapter: none` and `context.required: false`; a project
+opts in explicitly. Two policies are non-negotiable:
+
+- **Generic `install` / `init` must never silently mutate your Claude MCP
+  configuration.** Installing SpecRelay or initializing a project does not
+  register, unregister, or edit any MCP server. Any MCP/provider-specific setup
+  must be **explicit, user-approved, and provider-specific**.
+- **A required-but-missing adapter fails loudly, not silently.** If a project
+  sets `context.adapter: contextplus` and `context.required: true` but the
+  `contextplus` MCP server is not registered/connected, the `contextplus`
+  preflight fails its `claude mcp list` health check and `run` refuses to launch
+  the role with an actionable error — it does not proceed as if context were
+  available. This is the bootstrap failure this policy exists to prevent.
+
+There is **no** built-in command today that registers the ContextPlus MCP
+server for you. A future explicit, user-approved command such as
+`specrelay setup contextplus` or `specrelay doctor --fix-contextplus` may be
+added, but none exists yet. Until then, register the server manually.
+
+### Manual ContextPlus MCP setup
+
+To make the `contextplus` preflight's health check pass, register a
+`contextplus` MCP server in your own Claude MCP configuration, then verify it:
+
+1. Register the server under the name the adapter looks for (default
+   `contextplus`, overridable with `SPECRELAY_CONTEXTPLUS_SERVER_NAME`) using
+   the Claude CLI, e.g.:
+
+   ```sh
+   claude mcp add contextplus <server-launch-command>
+   ```
+
+2. Confirm it is listed **and connected**:
+
+   ```sh
+   claude mcp list
+   # contextplus … ✔ Connected
+   ```
+
+   The adapter fails if the server is missing, listed but not connected, or if
+   `claude mcp list` produces no output.
+
+3. Only then set `context.adapter: contextplus` (and, if a missing capability
+   should block work, `context.required: true`) in your project's
+   `.specrelay/config.yml`.
+
+If you cannot or do not want to register ContextPlus, keep the default
+`context.adapter: none` — SpecRelay then requires no context capability at all.
+Requiring the adapter without registering the server is the misconfiguration
+that blocks a run before it can claim a task.
 
 ## Testing adapters
 
