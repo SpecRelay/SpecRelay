@@ -21,10 +21,24 @@ specrelay_test::assert_true "host repository root was discovered" "$([ -n "$HOST
 
 AI_SCRIPTS="$HOST_ROOT/.ai/scripts"
 
+# SDD 0087: the shims now resolve an INSTALLED, versioned SpecRelay (not the
+# in-repo tools/specrelay/ tree). Install the host vendor ONCE into a shared
+# temp prefix, and point every fixture shim run at it via SPECRELAY_PREFIX. The
+# fixture also carries a matching .specrelay/version pin. tools/specrelay/ is
+# still copied into each fixture only as the transitional install SOURCE and to
+# exercise the direct `bin/specrelay` command — never as the shim runtime path.
+SHIM_PREFIX="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-shim-prefix.XXXXXX")"
+env -u SPECRELAY_HOME bash "$HOST_ROOT/tools/specrelay/install/install.sh" --prefix "$SHIM_PREFIX" >/dev/null 2>&1
+PIN_VER="$(tr -d '[:space:]' < "$HOST_ROOT/tools/specrelay/VERSION")"
+export SPECRELAY_PREFIX="$SHIM_PREFIX"
+specrelay_test::assert_true "installed a versioned specrelay for the shim tests" \
+  "$([ -x "$SHIM_PREFIX/bin/specrelay" ] && echo 0 || echo 1)"
+
 # specrelay_test::_install_shims_into <fixture-root>
 # Copies the REAL .ai/scripts/ tree (shims + legacy/ + internal/ helpers) and
-# the REAL tools/specrelay/ tree into an isolated fixture so the shims run
-# against fixture data only, never the host's .ai-runs/.
+# the REAL tools/specrelay/ tree into an isolated fixture, and writes the
+# version pin the shims require, so the shims run against fixture data only
+# (never the host's .ai-runs/) and resolve the shared installed copy.
 _install_shims_into() {
   local fixture="$1"
   specrelay_test::safe_fixture_root_or_abort "$fixture" "$HOST_ROOT" || return 1
@@ -32,11 +46,13 @@ _install_shims_into() {
   cp -R "$AI_SCRIPTS" "$fixture/.ai/scripts"
   mkdir -p "$fixture/tools"
   cp -R "$HOST_ROOT/tools/specrelay" "$fixture/tools/specrelay"
+  mkdir -p "$fixture/.specrelay"
+  printf '%s\n' "$PIN_VER" > "$fixture/.specrelay/version"
   # Commit the copied tooling so the dirty-tree guard sees a clean baseline
   # (these are the fixture's OWN tooling files, not "unrelated dirt" — this
   # mirrors how the real repository already has .ai/ and tools/specrelay/
   # committed before any task is created).
-  (cd "$fixture" && git add -A .ai tools && git commit -q -m "install shims + specrelay for fixture")
+  (cd "$fixture" && git add -A .ai tools .specrelay && git commit -q -m "install shims + specrelay for fixture")
 }
 
 # --- fixture 1: start-spec-task.sh delegates to specrelay run --------------

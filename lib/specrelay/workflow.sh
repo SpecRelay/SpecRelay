@@ -347,6 +347,62 @@ specrelay::workflow::run_once() {
   esac
 }
 
+# specrelay::workflow::assert_engine_compat <state-file>
+# Resume/version safety (SDD 0087, sections 30/32/33). Compares the engine
+# version recorded in a task's state.json with the engine version now trying
+# to act on it, and refuses an UNSAFE cross-version action rather than
+# silently resuming old task state with an incompatible engine.
+#
+# Compatibility policy (see docs/versioning.md):
+#   * No recorded engine_version (historical task) -> allowed (nothing to
+#     compare against).
+#   * Same MAJOR version -> compatible (minor/patch are backward compatible).
+#   * Different MAJOR version -> UNSAFE; refuse.
+#   * A task recorded with a NEWER engine than the one running now -> UNSAFE
+#     (a downgraded engine cannot safely resume newer task state); refuse.
+# An explicit, per-invocation override (SPECRELAY_ALLOW_ENGINE_MISMATCH=1)
+# exists for deliberate human recovery; it is never the default and always
+# logs that it was used.
+specrelay::workflow::assert_engine_compat() {
+  local state_file="$1" task_ev cur_ev
+  [ -f "$state_file" ] || return 0
+  task_ev="$(specrelay::state::get "$state_file" "engine_version" 2>/dev/null || true)"
+  if [ -z "$task_ev" ] || [ "$task_ev" = "null" ]; then
+    return 0
+  fi
+  cur_ev=""
+  if [ -n "${SPECRELAY_HOME:-}" ] && [ -f "$SPECRELAY_HOME/VERSION" ]; then
+    cur_ev="$(tr -d '[:space:]' < "$SPECRELAY_HOME/VERSION")"
+  fi
+  [ -n "$cur_ev" ] || return 0
+  [ "$task_ev" = "$cur_ev" ] && return 0
+
+  local task_major cur_major smaller unsafe=0 reason=""
+  task_major="${task_ev%%.*}"
+  cur_major="${cur_ev%%.*}"
+  if [ "$task_major" != "$cur_major" ]; then
+    unsafe=1; reason="different major version"
+  else
+    smaller="$(printf '%s\n%s\n' "$task_ev" "$cur_ev" | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)"
+    if [ "$smaller" = "$cur_ev" ]; then
+      unsafe=1; reason="task was created by a NEWER engine ($task_ev) than the one running now ($cur_ev)"
+    fi
+  fi
+
+  if [ "$unsafe" -eq 1 ]; then
+    if [ "${SPECRELAY_ALLOW_ENGINE_MISMATCH:-}" = "1" ]; then
+      specrelay::out::err "[specrelay] WARNING: resuming across incompatible engine versions ($reason) because SPECRELAY_ALLOW_ENGINE_MISMATCH=1 was set."
+      return 0
+    fi
+    specrelay::out::err "[specrelay] refusing to resume task: incompatible engine version ($reason)."
+    specrelay::out::err "  task engine_version: $task_ev"
+    specrelay::out::err "  running engine:      $cur_ev"
+    specrelay::out::err "  Install the matching engine version, or set SPECRELAY_ALLOW_ENGINE_MISMATCH=1 to override deliberately."
+    return 1
+  fi
+  return 0
+}
+
 # --- resume (spec section 39) -----------------------------------------------
 
 # specrelay::workflow::resume <project-root> <task-id>
@@ -358,6 +414,9 @@ specrelay::workflow::resume() {
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
   if [ ! -d "$task_dir" ]; then
     specrelay::out::err "task not found: $task_dir"
+    return 1
+  fi
+  if ! specrelay::workflow::assert_engine_compat "$(specrelay::state::path "$task_dir")"; then
     return 1
   fi
   if ! specrelay::lock::acquire "$root" "$task_id"; then
@@ -412,6 +471,10 @@ specrelay::workflow::run() {
     specrelay::workflow::seed_task_from_spec "$root" "$task_id" "$spec_abs"
   else
     echo "[specrelay] resuming existing task '$task_id'"
+    if ! specrelay::workflow::assert_engine_compat "$(specrelay::state::path "$task_dir")"; then
+      specrelay::lock::release "$root" "$task_id"
+      return 1
+    fi
   fi
 
   local state_file current

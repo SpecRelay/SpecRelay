@@ -320,11 +320,13 @@ specrelay::cli::task_show() {
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
   state_file="$(specrelay::state::path "$task_dir")"
 
-  local state iteration spec_source created updated last_decision human_status
+  local state iteration spec_source created updated last_decision human_status engine engine_version
   state="$(specrelay::state::canonical "$state_file")"
   iteration="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null)"
   spec_source="$(specrelay::state::get "$state_file" "spec_source" 2>/dev/null)"
   created="$(specrelay::state::get "$state_file" "created_at" 2>/dev/null)"
+  engine="$(specrelay::state::get "$state_file" "engine" 2>/dev/null)"
+  engine_version="$(specrelay::state::get "$state_file" "engine_version" 2>/dev/null)"
 
   updated=""
   local field
@@ -355,6 +357,8 @@ specrelay::cli::task_show() {
   echo "State: ${state:-(unknown)}"
   echo "Iteration: ${iteration:-(none)}"
   echo "Spec: ${spec_source:-(none recorded)}"
+  echo "Engine: ${engine:-(none recorded)}"
+  echo "Engine version: ${engine_version:-(none recorded)}"
   echo "Executor provider: $(specrelay::workflow::executor_provider "$root")"
   echo "Reviewer provider: $(specrelay::workflow::reviewer_provider "$root")"
   echo "Created: ${created:-(unknown)}"

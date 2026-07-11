@@ -191,8 +191,14 @@ specrelay::doctor::run() {
   fi
 
   # --- Compatibility shims installed ----------------------------------------
-  local expected_bin shim_missing=0 f
-  expected_bin="$root/tools/specrelay/bin/specrelay"
+  # The shims resolve an INSTALLED, versioned executable via specrelay-shim.sh
+  # (they do NOT target the in-repo tools/specrelay/ tree). Report the actual
+  # resolved target when it is available, rather than a hardcoded path.
+  local resolved_bin shim_missing=0 f
+  resolved_bin=""
+  if command -v specrelay_shim::bin >/dev/null 2>&1; then
+    resolved_bin="$(specrelay_shim::bin "$root" 2>/dev/null || true)"
+  fi
   for f in start-spec-task.sh start-ai-task.sh approve-task.sh run-ai-loop.sh show-task.sh; do
     local shim_file="$root/.ai/scripts/$f"
     if [ ! -f "$shim_file" ]; then
@@ -204,7 +210,11 @@ specrelay::doctor::run() {
     fi
   done
   if [ "$shim_missing" -eq 0 ]; then
-    specrelay::doctor::_ok "Compatibility shims installed (targeting $expected_bin)"
+    if [ -n "$resolved_bin" ]; then
+      specrelay::doctor::_ok "Compatibility shims installed (resolve the installed executable: $resolved_bin)"
+    else
+      specrelay::doctor::_ok "Compatibility shims installed (resolve an installed, version-pinned executable)"
+    fi
   else
     specrelay::doctor::_fail "Compatibility shims: one or more of .ai/scripts/{start-spec-task,start-ai-task,approve-task,run-ai-loop,show-task}.sh is missing or not wired to specrelay-shim.sh"
   fi

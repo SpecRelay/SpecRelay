@@ -11,7 +11,32 @@ release date.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased] — 0.3.0 — Standalone readiness (SDD 0086)
+## [Unreleased] — 0.4.0 — Versioned engine identity (SDD 0087)
+
+### Added
+- Task metadata now records `engine_version` (the running engine's `VERSION`)
+  alongside the existing `engine` field, so upgrade diagnostics and resume
+  safety can compare the engine that created a task with the engine resuming
+  it.
+- Resume/version safety: `specrelay run` (on an existing task) and
+  `specrelay resume` refuse to act across incompatible engine versions
+  (different major version, or a task created by a newer engine than the one
+  running). An explicit, per-invocation `SPECRELAY_ALLOW_ENGINE_MISMATCH=1`
+  override exists for deliberate human recovery and always logs that it was
+  used. See `docs/versioning.md`.
+- `docs/versioning.md`: the version-compatibility policy (semantic-version
+  rules, schema compatibility, active-task safety).
+- `docs/publication.md`: the future, human-only steps to publish this repository
+  to a Git hosting provider. No remote action is performed by this project.
+- `.github/workflows/ci.yml`: standalone CI configuration (runs `scripts/test`
+  on macOS and Linux). Prepared, not executed remotely.
+
+### Notes
+- Still no public repository, remote, tag, or published package (see
+  `docs/publication.md`). This milestone only adds versioned engine identity so
+  a consuming project can pin and verify an exact engine version.
+
+## 0.3.0 — Standalone readiness (SDD 0086)
 
 ### Added
 - Standalone-ready source layout under `tools/specrelay/` (bin, lib, docs,

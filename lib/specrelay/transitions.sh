@@ -81,7 +81,17 @@ specrelay::transitions::create() {
   mkdir -p "$task_dir"
   base_commit="$(cd "$root" && git rev-parse HEAD 2>/dev/null || echo "")"
 
-  SPEC_REL="$spec_rel" TASK_ID="$task_id" BASE_COMMIT="$base_commit" CREATED_AT="$(specrelay::transitions::_now)" ALLOW_DIRTY="$allow_dirty" \
+  # The engine version stamped into new task metadata (spec 0087, section 31)
+  # comes from the running engine's own VERSION file, so upgrade diagnostics
+  # and resume-safety (section 32) can compare a task's origin engine version
+  # with the engine that later tries to resume it. SPECRELAY_HOME is exported
+  # by bin/specrelay for every invocation.
+  local engine_version=""
+  if [ -n "${SPECRELAY_HOME:-}" ] && [ -f "$SPECRELAY_HOME/VERSION" ]; then
+    engine_version="$(tr -d '[:space:]' < "$SPECRELAY_HOME/VERSION")"
+  fi
+
+  SPEC_REL="$spec_rel" TASK_ID="$task_id" BASE_COMMIT="$base_commit" CREATED_AT="$(specrelay::transitions::_now)" ALLOW_DIRTY="$allow_dirty" ENGINE_VERSION="$engine_version" \
   python3 -c '
 import json, os
 fields = {
@@ -94,6 +104,8 @@ fields = {
     "iteration": 1,
     "allow_pre_existing_dirty": os.environ.get("ALLOW_DIRTY") == "1",
 }
+if os.environ.get("ENGINE_VERSION"):
+    fields["engine_version"] = os.environ["ENGINE_VERSION"]
 if os.environ.get("SPEC_REL"):
     fields["spec_source"] = os.environ["SPEC_REL"]
 print(json.dumps(fields))
