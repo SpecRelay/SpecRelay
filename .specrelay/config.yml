@@ -17,8 +17,8 @@ roles:
     provider: claude-subagent
 
 context:
-  adapter: contextplus
-  required: true
+  adapter: none
+  required: false
 
 validation:
   full_test_command: scripts/test
