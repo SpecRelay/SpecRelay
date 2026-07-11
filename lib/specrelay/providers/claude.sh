@@ -23,7 +23,7 @@ specrelay::provider::claude::_bin() {
 }
 
 specrelay::provider::claude::executor_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" bin prompt rc
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:claude}" bin prompt rc
   bin="$(specrelay::provider::claude::_bin)"
 
   if ! command -v "$bin" >/dev/null 2>&1; then
@@ -32,8 +32,11 @@ specrelay::provider::claude::executor_run() {
   fi
 
   prompt="$(cat "$prompt_file")"
-  ( cd "$root" && "$bin" --print --dangerously-skip-permissions "$prompt" ) \
-    > "$task_dir/12-executor-stdout.txt" 2> "$task_dir/13-executor-stderr.txt"
+  # Stream live to the terminal (prefixed) AND capture the raw streams to the
+  # evidence files. run_streamed returns claude's REAL exit code (spec 0003).
+  specrelay::provider::run_streamed "$label" \
+    "$task_dir/12-executor-stdout.txt" "$task_dir/13-executor-stderr.txt" "$root" -- \
+    "$bin" --print --dangerously-skip-permissions "$prompt"
   rc=$?
   return "$rc"
 }
@@ -44,7 +47,7 @@ specrelay::provider::claude::executor_run() {
 # mirroring the legacy tiered-detection principle ("chosen by inspecting
 # claude --help, never by guessing flags") without reimplementing every tier.
 specrelay::provider::claude::reviewer_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" bin prompt rc out
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:claude}" bin prompt rc out
   bin="$(specrelay::provider::claude::_bin)"
 
   if ! command -v "$bin" >/dev/null 2>&1; then
@@ -58,8 +61,14 @@ specrelay::provider::claude::reviewer_run() {
     args=(--agent ai-reviewer --print --dangerously-skip-permissions)
   fi
 
-  ( cd "$root" && "$bin" "${args[@]}" "$prompt" ) \
-    > "$task_dir/15-reviewer-stdout.txt" 2> "$task_dir/16-reviewer-stderr.txt"
+  # Stream live to the terminal (fd 2, prefixed) AND capture raw streams to the
+  # evidence files. Live output goes to fd 2 so this function's OWN stdout
+  # stays reserved for the machine-readable decision below, which the lifecycle
+  # reads via command substitution (spec 0003). run_streamed waits for the
+  # readers, so 15-reviewer-stdout.txt is fully written before we grep it.
+  specrelay::provider::run_streamed "$label" \
+    "$task_dir/15-reviewer-stdout.txt" "$task_dir/16-reviewer-stderr.txt" "$root" -- \
+    "$bin" "${args[@]}" "$prompt"
   rc=$?
   if [ "$rc" -ne 0 ]; then
     return "$rc"

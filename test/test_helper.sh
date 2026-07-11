@@ -15,6 +15,18 @@ SPECRELAY_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPECRELAY_ROOT="$(cd "$SPECRELAY_TEST_DIR/.." && pwd)"
 SPECRELAY_BIN="$SPECRELAY_ROOT/bin/specrelay"
 
+# Pin SpecRelay's home to THIS source tree for the whole suite. bin/specrelay
+# honors an ambient SPECRELAY_HOME override before deriving home from its own
+# location, so a developer (or CI) that happens to have SPECRELAY_HOME pointing
+# at a separately-installed copy would otherwise have every test silently
+# exercise that INSTALLED engine instead of the code under test in this
+# repository — making the suite validate the wrong thing (this bit spec 0003:
+# the installed copy predated the live-streaming change). Pinning it here makes
+# `scripts/test` deterministically test the in-repo libs regardless of the
+# ambient environment. Individual tests that must install a fresh copy override
+# this per-invocation (e.g. `env -u SPECRELAY_HOME`).
+export SPECRELAY_HOME="$SPECRELAY_ROOT"
+
 TESTS_RUN=0
 TESTS_FAILED=0
 

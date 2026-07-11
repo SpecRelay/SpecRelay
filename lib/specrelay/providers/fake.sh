@@ -34,8 +34,20 @@ specrelay::provider::fake::_field() {
   printf '%s' "${val:-$default}"
 }
 
+# Emitted THROUGH specrelay::provider::run_streamed so the fake provider
+# exercises the exact same live-streaming + capture path as a real provider
+# (spec 0003): its lines appear live on the terminal (prefixed) and are
+# captured raw to 12-executor-stdout.txt. Deliberately small and deterministic
+# so the test suite stays non-flaky and non-noisy.
+specrelay::provider::fake::_executor_emit() {
+  local round="$1" prompt_file="$2" exit_code="$3" outputs="$4" touch_flag="$5"
+  echo "[fake-executor] round $round"
+  echo "[fake-executor] prompt file: $prompt_file"
+  echo "[fake-executor] plan: exit=$exit_code outputs=$outputs touch=$touch_flag"
+}
+
 specrelay::provider::fake::executor_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4"
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:fake}"
   local plan_line exit_code outputs touch_flag impl_file
 
   plan_line="$(specrelay::provider::fake::_plan_line "${SPECRELAY_FAKE_EXECUTOR_PLAN:-}" "$round")"
@@ -50,12 +62,9 @@ specrelay::provider::fake::executor_run() {
     sleep "$SPECRELAY_FAKE_EXECUTOR_SLEEP"
   fi
 
-  {
-    echo "[fake-executor] round $round"
-    echo "[fake-executor] prompt file: $prompt_file"
-    echo "[fake-executor] plan: exit=$exit_code outputs=$outputs touch=$touch_flag"
-  } > "$task_dir/12-executor-stdout.txt"
-  : > "$task_dir/13-executor-stderr.txt"
+  specrelay::provider::run_streamed "$label" \
+    "$task_dir/12-executor-stdout.txt" "$task_dir/13-executor-stderr.txt" "$root" -- \
+    specrelay::provider::fake::_executor_emit "$round" "$prompt_file" "$exit_code" "$outputs" "$touch_flag"
 
   if [ "$touch_flag" = "1" ]; then
     impl_file="${SPECRELAY_FAKE_IMPL_FILE:-$root/specrelay-fake-impl.txt}"
@@ -71,20 +80,28 @@ specrelay::provider::fake::executor_run() {
   return "$exit_code"
 }
 
+specrelay::provider::fake::_reviewer_emit() {
+  local round="$1" prompt_file="$2" exit_code="$3" decision="$4"
+  echo "[fake-reviewer] round $round"
+  echo "[fake-reviewer] prompt file: $prompt_file"
+  echo "[fake-reviewer] plan: exit=$exit_code decision=$decision"
+}
+
 specrelay::provider::fake::reviewer_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4"
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:fake}"
   local plan_line exit_code decision
 
   plan_line="$(specrelay::provider::fake::_plan_line "${SPECRELAY_FAKE_REVIEWER_PLAN:-}" "$round")"
   exit_code="$(specrelay::provider::fake::_field "$plan_line" exit "0")"
   decision="$(specrelay::provider::fake::_field "$plan_line" decision "accept")"
 
-  {
-    echo "[fake-reviewer] round $round"
-    echo "[fake-reviewer] prompt file: $prompt_file"
-    echo "[fake-reviewer] plan: exit=$exit_code decision=$decision"
-  } > "$task_dir/15-reviewer-stdout.txt"
-  : > "$task_dir/16-reviewer-stderr.txt"
+  # Stream the reviewer's log lines live to fd 2 and capture them raw to
+  # 15-reviewer-stdout.txt. The ACCEPT/REQUEST_CHANGES decision below is
+  # printed to this function's OWN stdout (fd 1), which the lifecycle reads via
+  # command substitution — kept strictly separate from the streamed copy.
+  specrelay::provider::run_streamed "$label" \
+    "$task_dir/15-reviewer-stdout.txt" "$task_dir/16-reviewer-stderr.txt" "$root" -- \
+    specrelay::provider::fake::_reviewer_emit "$round" "$prompt_file" "$exit_code" "$decision"
 
   if [ "$exit_code" != "0" ]; then
     return "$exit_code"

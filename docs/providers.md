@@ -64,13 +64,18 @@ summarized below. To add an adapter you implement exactly these two entry
 points:
 
 ```
-<adapter>::executor_run <project-root> <task-dir> <round> <prompt-file>
-<adapter>::reviewer_run <project-root> <task-dir> <round> <prompt-file>
+<adapter>::executor_run <project-root> <task-dir> <round> <prompt-file> [label]
+<adapter>::reviewer_run <project-root> <task-dir> <round> <prompt-file> [label]
 ```
 
 Both receive the absolute project root, the task's on-disk directory, the
 1-based round number, and the path to the already-rendered prompt file for
-that role. The contract for each concern:
+that role. The optional final `label` (e.g. `executor:claude`) is supplied by
+the dispatch functions and is the role/provider scope used to prefix live
+terminal output — adapters pass it straight through to
+`specrelay::provider::run_streamed` (see
+[Live provider output streaming](#live-provider-output-streaming-spec-0003)).
+The contract for each concern:
 
 ### Availability check
 
@@ -127,6 +132,13 @@ reviewer's machine-readable decision travels on the adapter function's *own*
 stdout, which the lifecycle reads via command substitution — deliberately
 distinct from the redirected `15-reviewer-stdout.txt` capture file.
 
+Adapters do not redirect the provider's streams straight into those files
+themselves. Instead they run the underlying command through the shared
+`specrelay::provider::run_streamed` helper (in `provider.sh`), which
+simultaneously (a) writes the raw, unprefixed stream to the numbered capture
+file and (b) streams a live, role/provider-prefixed copy to the operator's
+terminal — see [Live provider output streaming](#live-provider-output-streaming-spec-0003).
+
 ### Exit-code semantics
 
 Both functions must return the *real* success/failure of the work:
@@ -156,13 +168,62 @@ each adapter below).
 
 ### Structured-event / streaming capability
 
-The contract does **not** require any structured live-event stream (e.g.
-streaming JSON). It is an optional capability. Neither adapter shipped today
-emits a structured event stream: `fake` produces fixed text, and the `claude`
-adapter intentionally does not thread live semantic event streaming (this is a
-known, documented gap in the Claude adapter's header comment). Adapters
-communicate results purely through the numbered files and the final decision
-line.
+The contract does **not** require any *structured* live-event stream (e.g.
+streaming JSON). That remains an optional capability, and neither adapter
+shipped today emits one: `fake` produces fixed text, and the `claude` adapter
+intentionally does not thread live *semantic* event streaming (this is a known,
+documented gap in the Claude adapter's header comment). Adapters communicate
+their *results* purely through the numbered files and the final decision line.
+
+This is distinct from the **raw** live output streaming every adapter now gets
+for free — see the next section. Raw streaming replays the provider's plain
+stdout/stderr text to the terminal as it is produced; it is an operator
+visibility layer, not a structured protocol, and it never changes how a result
+or decision is communicated.
+
+## Live provider output streaming (spec 0003)
+
+Provider runs used to be silent at the terminal: an adapter redirected the real
+CLI's stdout/stderr straight into its numbered capture files, so the operator
+saw the phase banners and then nothing — sometimes for several minutes — while
+a real provider such as `claude` or `claude-subagent` worked. SpecRelay now
+**streams provider output live** so the operator can tell whether the provider
+is progressing, waiting, erroring, or hung.
+
+- **On by default.** Live streaming is always on; there is no flag to enable it
+  (the spec 0003 human decision was "show live output by default").
+- **Scoped, plain-text prefixes.** Each streamed line is prefixed with its
+  role and provider — `[executor:claude]`, `[reviewer:claude-subagent]`,
+  `[executor:fake]`, etc. — so executor and reviewer output are never
+  ambiguous. The prefix is plain text; no color or escape codes are emitted.
+- **Evidence is still the source of truth.** The live copy goes to the
+  terminal; the raw, *unprefixed* stream is still written in full to the
+  numbered capture files (`12`/`13` for the executor, `15`/`16` for the
+  reviewer). Live terminal output is an operator-UX layer and is **not** a
+  substitute for reviewing the durable evidence files.
+- **Streamed on stderr (fd 2).** Live copies are written to fd 2, which keeps
+  the adapter function's own stdout (fd 1) — the reviewer's machine-readable
+  `ACCEPT`/`REQUEST_CHANGES` decision channel — completely clean.
+- **No TTY required.** Streaming targets fd 2 and the capture files are written
+  regardless, so redirected and CI runs keep complete evidence. Nothing depends
+  on a terminal being attached.
+
+How it works: every adapter runs the underlying command through
+`specrelay::provider::run_streamed <label> <stdout-file> <stderr-file> <run-dir> -- cmd…`
+(defined once in `provider.sh`, so the behavior is identical for every provider
+and nothing is hardcoded for a single one). The helper:
+
+- runs the command with its stdout/stderr connected to FIFOs, so the wrapped
+  command's **real exit code** is returned — there is no `tee`/pipeline in the
+  exit path that could let a failing provider look successful;
+- has a line-buffered reader copy each line raw to the capture file and a
+  prefixed copy to fd 2, and **waits** for both readers before returning, so
+  the capture files are fully flushed before the lifecycle reads them (e.g. the
+  reviewer decision grep) — no buffering race, no flakiness.
+
+The `<label>` is supplied by the dispatch functions in `provider.sh`
+(`executor:<provider>` / `reviewer:<provider>`) and passed to the adapter as an
+optional final argument.
 
 ## The `fake` adapter
 
@@ -230,16 +291,20 @@ claude --print --dangerously-skip-permissions "<prompt>"
 
 `--print` is non-interactive; `--dangerously-skip-permissions` is required
 because a `--print` run cannot answer an interactive permission prompt. Stdout
-and stderr are redirected to `12-executor-stdout.txt` / `13-executor-stderr.txt`
-and the CLI's real exit code is returned.
+and stderr are streamed live (prefixed `[executor:claude]`) and captured raw to
+`12-executor-stdout.txt` / `13-executor-stderr.txt` via
+`specrelay::provider::run_streamed`, and the CLI's real exit code is returned
+(see [Live provider output streaming](#live-provider-output-streaming-spec-0003)).
 
 **Reviewer usage.** Always a **fresh** `claude` process. If the repository
 defines a reviewer sub-agent (`.claude/agents/ai-reviewer.md` is present) **and**
 `claude --help` advertises `--agent`, it runs with
 `--agent ai-reviewer --print --dangerously-skip-permissions`; otherwise it runs
 with `--print --dangerously-skip-permissions`. This flag choice is made by
-*inspecting* `claude --help`, never by guessing. Output is captured to
-`15-reviewer-stdout.txt` / `16-reviewer-stderr.txt`.
+*inspecting* `claude --help`, never by guessing. Output is streamed live
+(prefixed `[reviewer:claude-subagent]`, or `[reviewer:claude]`) and captured
+raw to `15-reviewer-stdout.txt` / `16-reviewer-stderr.txt`; because the live
+copy goes to fd 2, this adapter's own stdout stays reserved for the decision.
 
 **Reviewer decision extraction.** After a successful (exit 0) reviewer run, the
 adapter reads `15-reviewer-stdout.txt` and looks for an explicit marker,

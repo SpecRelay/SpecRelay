@@ -38,6 +38,14 @@ codes: `0` success, `1` usage/config/lookup error, `2` reviewer is `manual`
 (human action required), `3` `BLOCKED`, `4` provider failure, `5` maximum
 iterations reached.
 
+While the executor and reviewer providers run, their output is **streamed live
+to the terminal**, prefixed by role and provider (e.g. `[executor:claude]`,
+`[reviewer:claude-subagent]`), so you can see progress instead of a silent
+wait. The live output is an operator-visibility layer only — the durable
+evidence files under the task directory remain the source of truth and still
+contain the complete provider output. See `docs/providers.md` →
+"Live provider output streaming".
+
 ```
 specrelay resume <task-ref>
 ```
