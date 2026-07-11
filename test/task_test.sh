@@ -67,10 +67,14 @@ rm -f /tmp/specrelay-outside.$$
 rm -rf "$outside"
 
 # --- resolve_ref: exact / unique prefix / ambiguous / not found -----------
-mkdir -p "$proj/.ai-runs/tasks/0084-migrate-ai-workflow-engine-into-specrelay"
-: > "$proj/.ai-runs/tasks/0084-migrate-ai-workflow-engine-into-specrelay/state.json"
-mkdir -p "$proj/.ai-runs/tasks/0090-something-else"
-: > "$proj/.ai-runs/tasks/0090-something-else/state.json"
+# NOTE: $proj has no .specrelay/config.yml, so runs_root resolves to the
+# GENERIC standalone default (.specrelay-runs/tasks), not the host's
+# .ai-runs/tasks. Using the generic default here keeps this standalone test
+# free of host-repository path coupling (spec 0086, section 21).
+mkdir -p "$proj/.specrelay-runs/tasks/0084-migrate-ai-workflow-engine-into-specrelay"
+: > "$proj/.specrelay-runs/tasks/0084-migrate-ai-workflow-engine-into-specrelay/state.json"
+mkdir -p "$proj/.specrelay-runs/tasks/0090-something-else"
+: > "$proj/.specrelay-runs/tasks/0090-something-else/state.json"
 
 specrelay_test::assert_eq "resolve_ref matches an exact task id" \
   "0084-migrate-ai-workflow-engine-into-specrelay" \
@@ -85,10 +89,10 @@ rc=$?
 specrelay_test::assert_true "resolve_ref fails clearly when nothing matches" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
 rm -f /tmp/specrelay-noref.$$
 
-mkdir -p "$proj/.ai-runs/tasks/00-ambi-a"
-: > "$proj/.ai-runs/tasks/00-ambi-a/state.json"
-mkdir -p "$proj/.ai-runs/tasks/00-ambi-b"
-: > "$proj/.ai-runs/tasks/00-ambi-b/state.json"
+mkdir -p "$proj/.specrelay-runs/tasks/00-ambi-a"
+: > "$proj/.specrelay-runs/tasks/00-ambi-a/state.json"
+mkdir -p "$proj/.specrelay-runs/tasks/00-ambi-b"
+: > "$proj/.specrelay-runs/tasks/00-ambi-b/state.json"
 specrelay::task::resolve_ref "$proj" "00" >/tmp/specrelay-ambi.$$ 2>&1
 rc=$?
 specrelay_test::assert_true "resolve_ref refuses an ambiguous reference rather than guessing" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"

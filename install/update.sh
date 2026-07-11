@@ -85,7 +85,10 @@ main() {
   # Delegate the actual file replacement to the SOURCE's install.sh --force,
   # which only ever writes tool-owned files under <prefix> (spec section 12:
   # "update only tool-owned files"). Consumer project configs are untouched.
-  "$from/install/install.sh" --prefix "$prefix" --force || return 1
+  # Invoke through `bash` rather than executing directly, so the update still
+  # works if the source tree lost install.sh's exec bit (e.g. an archive or a
+  # checkout on a filesystem that dropped it).
+  bash "$from/install/install.sh" --prefix "$prefix" --force || return 1
   echo "Update complete: $installed -> $source_ver"
   return 0
 }

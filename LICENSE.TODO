@@ -1,0 +1,31 @@
+SpecRelay — LICENSE STATUS: UNDECIDED (this is NOT a license grant)
+
+This file is a deliberate placeholder. It is NOT a software license and grants
+NO rights. No open-source license has been chosen for SpecRelay yet.
+
+Why there is no LICENSE file
+----------------------------
+Choosing a license is a decision that requires explicit human authority. The
+SDD 0086 task that prepared SpecRelay for standalone extraction is not permitted
+to select a license on the project's behalf or to invent legal authority. Since
+no explicit human license decision exists in the repository or task inputs, a
+final `LICENSE` file cannot be added yet, and this placeholder records the gap
+honestly instead of guessing.
+
+Candidate licenses (options only — NOT applied)
+-----------------------------------------------
+A maintainer may later choose one of the following. Recording them here as
+candidates does not apply any of them:
+
+  - Apache-2.0
+  - MIT
+
+What a maintainer should do
+---------------------------
+1. Make an explicit license decision.
+2. Add the corresponding `LICENSE` file with the full license text.
+3. Update the "License" section of README.md accordingly.
+4. Delete this LICENSE.TODO file.
+
+Until those steps are done, do not assume any usage, distribution, or
+modification rights beyond viewing the source.

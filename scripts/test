@@ -27,6 +27,7 @@ shim_loop_test.sh
 shim_deprecation_test.sh
 engine_ownership_cases_test.sh
 dogfood_orchestration_test.sh
+host_repo_safety_test.sh
 "
 
 is_host_integration() {

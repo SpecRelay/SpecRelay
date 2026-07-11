@@ -1,147 +1,235 @@
 # SpecRelay
 
-SpecRelay is a file-based workflow for turning an approved specification into
-a reviewed, evidence-backed code change with two cooperating AI roles — an
-**executor** and a **reviewer** — and a human who stays in control at every
-gate.
+From spec to reviewed change.
 
-## The problem it solves
+SpecRelay is a small, dependency-light command-line tool that runs a
+specification through an **executor → reviewer → human** workflow: an AI
+executor implements the spec, an independent AI reviewer accepts it or requests
+changes, evidence is captured at every step, and a human always gives the final
+review before anything is considered done.
 
-Handing a specification to an AI agent and trusting its own summary of what
-it did does not scale: agents can drift from scope, skip verification, or
-quietly approve their own work. SpecRelay's answer is a durable, file-based
-task record that is **restartable from disk only** (never from session
-memory), a strict separation between the agent that *implements* a task and
-the agent that *reviews* it, and a set of state transitions where the
-highest-risk step — an executor moving its own task to "ready for review" —
-is authorized out-of-band rather than trusted to the agent's good behavior.
+> **Project status:** SpecRelay is being extracted from a real, dogfooded AI
+> development workflow. It currently lives (incubated) inside its origin
+> repository at `tools/specrelay/` and is now **standalone-repository-ready** —
+> it can be copied or Git-extracted into its own repository and still run its
+> tests, install itself, initialize other projects, and drive full workflows.
+> It is **not** yet published to any package manager, and no public repository
+> has been created. See [Current project status](#current-project-status).
 
-## Executor / reviewer concept
+---
 
-- **Executor** — implements one approved task, writes an implementation log,
-  tests, and a summary. Never creates the next task, never continues
-  automatically, and never decides that its own work is done.
-- **Reviewer** — a fresh, isolated context (never a continuation of the
-  executor) that verifies the executor's evidence against the real working
-  tree and the original task, then decides exactly one of: accept, or
-  request changes.
-- **Role vs. provider** are distinct: which concrete tool plays the executor
-  or reviewer role is swappable configuration, not something baked into the
-  task lifecycle.
+## What is SpecRelay?
 
-## Evidence-driven review
+SpecRelay turns a written spec into a reviewed change through a disciplined,
+evidence-producing loop:
 
-Every task accumulates a durable evidence packet — git status/diff
-snapshots, the executor's log/tests/summary, the reviewer's notes — captured
-independently of whichever provider produced the work. The reviewer is
-expected to verify against the real working tree and evidence, not just trust
-a narrative summary.
+1. You write a spec (`specs/0001-add-login/spec.md`).
+2. `specrelay run <spec>` creates a task, has the **executor** provider
+   implement it, captures the diff and evidence, then hands the result to an
+   **independent reviewer** provider.
+3. The reviewer either **accepts** (→ the task reaches
+   `READY_FOR_HUMAN_REVIEW`) or **requests changes** (→ the executor does
+   another round, up to a configured maximum).
+4. A **human** performs the final review and accepts or rejects. SpecRelay
+   never marks a task done on the AI's word alone.
+
+Every step is recorded as durable, versionable evidence, so a task's history is
+auditable long after it ran.
+
+## Why it exists
+
+AI coding agents are good at producing changes and bad at policing their own
+work. SpecRelay adds the missing structure around them:
+
+- **Separation of roles.** The thing that writes the change is never the thing
+  that approves it. The reviewer runs in its own isolated context.
+- **Evidence over vibes.** Decisions are backed by captured diffs, logs, and
+  test output — not by a chat message that says "done."
+- **A human gate that cannot be skipped.** The automated loop stops *before*
+  the final decision; a person makes it.
+- **Provider-neutral.** SpecRelay is not tied to one AI vendor. Providers are
+  adapters; a deterministic `fake` provider makes the whole workflow testable
+  without any AI at all.
+
+## Workflow overview
+
+```
+spec ─▶ specrelay run
+          │
+          ▼
+     ┌──────────┐     accept      ┌───────────────────────┐  human   ┌──────┐
+     │ EXECUTOR │ ─▶ REVIEWER ─▶  │ READY_FOR_HUMAN_REVIEW │ ─review▶ │ done │
+     └──────────┘                 └───────────────────────┘          └──────┘
+          ▲     request changes         │
+          └─────────────────────────────┘   (up to tasks.max_iterations rounds)
+```
+
+See [docs/task-lifecycle.md](docs/task-lifecycle.md) for the exact state
+machine.
+
+## Executor vs Reviewer
+
+- **Executor** — the provider that implements the spec, produces the change,
+  and writes evidence (executor log, tests output, executor summary).
+- **Reviewer** — an *independent* provider that judges the executor's work
+  against the spec, in a fresh context, and returns `accept` or
+  `request_changes`. Because it does not share the executor's context, it is
+  not primed to agree.
+
+Both roles are selected in configuration and can be any adapter (`claude`,
+`fake`, or a future one). See [docs/providers.md](docs/providers.md).
+
+## Evidence-driven development
+
+Each round writes durable artifacts (executor log, captured tests, executor
+summary, Git diff/status snapshots). When the reviewer requests changes, the
+prior round is **archived** (never overwritten) under `iterations/round-N/`,
+so the full history of a task survives. Evidence is plain files you can read,
+diff, and keep in version control.
 
 ## Human final gate
 
-Nothing in SpecRelay commits, pushes, merges, publishes, or deploys anything,
-at any stage. A human approves before execution starts, and a human performs
-final review and decides what happens next after a task is accepted. This is
-a hard design boundary, not a missing feature.
+`policy.human_final_review_required: true` keeps a human in the loop by design.
+The automated loop can only *reach* `READY_FOR_HUMAN_REVIEW`; it can never
+perform the final accept. A person runs the final review. This is enforced by
+the workflow engine, not just documented.
 
-## Current status (SDD 0084)
+## Installation
 
-SpecRelay is being incubated **inside** the Sprint Reports repository, which
-already has a working, production AI workflow built directly as shell
-scripts (see `tools/specrelay/docs/current-workflow-contract.md` for its full
-behavioral contract). As of SDD 0084, SpecRelay has a **real, executable
-workflow engine**:
+No sudo, no system directories. Copy-based user installation into a prefix
+(default `~/.local`):
 
-- a durable task lifecycle (create → approve → executor round → evidence
-  capture → reviewer round → accept/request-changes → requeue → ... →
-  human-review gate), implemented in `tools/specrelay/lib/specrelay/`;
-- executor/reviewer provider adapters (a deterministic `fake` provider for
-  tests, and a real `claude`/`claude-subagent` adapter);
-- a context-capability adapter seam (`none`, `contextplus`);
-- runner-owned transition authorization, task locking, and a dirty-tree/
-  rework-loop guard that fixes a known limitation of the legacy engine (see
-  `docs/engine-parity.md`).
-
-**This is NOT yet the repository's cutover.** The existing `.ai/` workflow
-remains the authoritative engine for real Sprint Reports tasks; no public
-`.ai/scripts/` command has been redirected to SpecRelay, and none of `.ai/`
-or `.ai-runs/` has been touched. See `docs/engine-parity.md` for the detailed
-capability-by-capability comparison and `docs/architecture.md` for the
-planned migration stages (SDD 0085 is the compatibility-shim/dogfooding
-cutover).
-
-## Quick CLI examples
-
-```bash
-tools/specrelay/bin/specrelay version
-# specrelay 0.1.0
-
-tools/specrelay/bin/specrelay help
-
-tools/specrelay/bin/specrelay project root
-# /path/to/your/project
-
-tools/specrelay/bin/specrelay project inspect
-# Project root: /path/to/your/project
-# Config file (.specrelay/config.yml): present
-# Project name: ...
-# Configured spec root: ...
-# Configured task-run root: ...
-# Configured validation command: ...
-# Detected legacy/current AI workflow location: ...
-
-tools/specrelay/bin/specrelay workflow inspect
-# Legacy/current AI workflow root: ...
-# Public workflow entry points: ...
-# Internal helper root: ...
-# Protocol file: ...
-# Reviewer contract file: ...
-# Task run root: ...
-# Detected provider integration locations: ...
+```sh
+./install/install.sh                 # installs to ~/.local
+./install/install.sh --prefix "$HOME/.local"
 ```
 
-`project inspect` and `workflow inspect` remain strictly read-only: they
-never create, modify, or delete a task, a config file, or any workflow state.
+This installs `<prefix>/bin/specrelay` (the CLI) and
+`<prefix>/share/specrelay/` (its library, templates, and version). Add
+`<prefix>/bin` to your `PATH` if it isn't already — the installer tells you if
+it isn't. Update an installed copy from a local source with
+`./install/update.sh --from /path/to/specrelay`. Full details:
+[docs/installation.md](docs/installation.md).
 
-## Workflow engine examples
+**Requirements:** `bash`, `git`, `ruby` (YAML config parsing), and `python3`
+(task state), plus standard POSIX tools. The `claude` provider additionally
+needs the Claude CLI on `PATH`; the `fake` provider needs nothing extra.
 
-```bash
-# Run a spec through the full lifecycle (create, approve, executor/reviewer
-# rounds, up to the configured maximum iterations):
-tools/specrelay/bin/specrelay run docs/sdd/<task-id>/spec.md
+## Quick start
 
-# Inspect one task or every known task:
-tools/specrelay/bin/specrelay show <task-id>
-tools/specrelay/bin/specrelay status
-tools/specrelay/bin/specrelay list
-
-# Resume a task from wherever it is (never restarts from the beginning):
-tools/specrelay/bin/specrelay resume <task-id>
-
-# Lower-level, single-purpose commands (manual recovery / decoupled flows):
-tools/specrelay/bin/specrelay task create <spec-path>
-tools/specrelay/bin/specrelay task approve <task-id>
-tools/specrelay/bin/specrelay task accept <task-id>
-tools/specrelay/bin/specrelay task request-changes <task-id> "<reason>"
-tools/specrelay/bin/specrelay task requeue <task-id>
-tools/specrelay/bin/specrelay task block <task-id> "<reason>"
+```sh
+./install/install.sh
+cd my-project
+specrelay init
+specrelay run specs/0001-add-login/spec.md
 ```
 
-`<task-id>` also accepts a unique numeric prefix or partial slug (e.g. `show
-0084`); an ambiguous reference fails clearly rather than guessing.
+`specrelay init` creates `.specrelay/config.yml` from the built-in template,
+creates the spec root, and adds a safe `.gitignore` entry for runtime
+evidence. Edit the config to choose your providers, then run a spec.
 
-Provider and context-capability adapters are project configuration
-(`.specrelay/config.yml`'s `roles.executor.provider` /
-`roles.reviewer.provider` / `context.adapter`), never hardcoded — see
-`templates/project-config.yml` and `docs/engine-parity.md`.
+## Configuration
 
-`review` and any other not-yet-implemented command still fail clearly rather
-than pretending to work.
+Project configuration lives in `.specrelay/config.yml` (created by
+`specrelay init`). The public defaults are minimal and provider-neutral:
 
-## Future direction
+```yaml
+version: 1
+project:
+  name: my-project
+specs:
+  root: specs
+tasks:
+  runs_root: .specrelay-runs/tasks
+  max_iterations: 3
+roles:
+  executor:
+    provider: claude
+  reviewer:
+    provider: manual
+context:
+  adapter: none
+  required: false
+validation:
+  full_test_command: "echo 'set validation.full_test_command'"
+policy:
+  human_final_review_required: true
+```
 
-See `docs/architecture.md` for the full picture: migrating the task
-lifecycle/state machine/evidence engine into SpecRelay behind a
-core/adapter/project-configuration split, dogfooding it on real tasks
-alongside the existing workflow, and eventually extracting it into a
-standalone repository with its own distribution.
+Config holds only project policy — never secrets, credentials, or
+machine-specific absolute paths. Every key is documented in
+[docs/configuration.md](docs/configuration.md).
+
+## Providers
+
+Providers are adapters that implement the executor and reviewer roles:
+
+- **`fake`** — deterministic, scriptable; used for testing the workflow with no
+  AI involved.
+- **`claude`** / **`claude-subagent`** — drive the Claude CLI. SpecRelay
+  detects availability and never stores credentials in config.
+- **`manual`** (reviewer only) — no automated decision; a human runs
+  `specrelay task accept` / `specrelay task request-changes`.
+- **your own** — implement the provider contract.
+
+See [docs/providers.md](docs/providers.md).
+
+## Context adapters
+
+Before a role does substantive work, an optional **context capability**
+preflight can run (e.g. to prove a code-context retriever is available). The
+default adapter is `none`. `contextplus` is an optional, configured adapter.
+See [docs/context-adapters.md](docs/context-adapters.md).
+
+## Task lifecycle
+
+`DRAFT → READY_FOR_EXECUTOR → EXECUTOR_RUNNING → READY_FOR_REVIEW →`
+(`READY_FOR_HUMAN_REVIEW` on accept, or `CHANGES_REQUESTED →
+READY_FOR_EXECUTOR` on request-changes, up to `tasks.max_iterations`). Full
+detail and the evidence layout: [docs/task-lifecycle.md](docs/task-lifecycle.md).
+
+## Safety model
+
+- The executor cannot self-approve; the review submission requires a separate,
+  short-lived authorization the executor process cannot obtain.
+- A human always performs the final review.
+- Task state (`state.json`) is only written through audited transitions, never
+  by hand.
+- Task IDs and runtime paths are validated; path traversal is refused.
+- No credentials are stored in config; provider logs are not designed to carry
+  secrets.
+- Installing/updating the tool never rewrites a consumer project's config.
+
+See [docs/architecture.md](docs/architecture.md) and
+[SECURITY.md](SECURITY.md).
+
+## Current project status
+
+- **Incubation.** SpecRelay's source is currently incubated at
+  `tools/specrelay/` inside its origin repository and is **standalone-
+  repository-ready**: it can be extracted into its own repository (see
+  [docs/extraction.md](docs/extraction.md)) and run independently.
+- **Providers supported today:** `fake` (deterministic) and `claude` /
+  `claude-subagent`; `manual` for human review. Others can be added via the
+  provider contract.
+- **Not yet done (on purpose):** no public repository has been created, nothing
+  is pushed to any remote, and no package (Homebrew/npm/gem) is published.
+  Those are later, explicitly-authorized steps.
+
+Standalone readiness is tracked in
+[docs/standalone-verification.md](docs/standalone-verification.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the test command
+(`scripts/test`), the architecture boundaries, and how to add provider or
+context adapters.
+
+## License
+
+**Undecided.** No open-source license has been granted yet, so this project
+does not include a `LICENSE` file. Candidate licenses under consideration
+(recorded as options only, not applied) are **Apache-2.0** and **MIT**; a
+maintainer must make the explicit decision. Until then, see
+[`LICENSE.TODO`](LICENSE.TODO). Do not assume any usage rights beyond viewing
+the source until a license is chosen.
