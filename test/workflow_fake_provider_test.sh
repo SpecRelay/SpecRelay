@@ -115,5 +115,97 @@ specrelay_test::assert_not_contains "scenario E: final state.json is not READY_F
 specrelay_test::assert_contains "scenario E: all 3 rounds' evidence is archived" \
   "$(ls "$task_dir_e/iterations" 2>/dev/null)" "round-3"
 
+# =============================================================================
+# Scenario F — spec 0004 regression: an accepted reviewer that ENACTS its own
+#   accept transition (as a real `claude --print --dangerously-skip-permissions`
+#   reviewer agent can, since accept is not runner-owned) must NOT cause the
+#   runner to attempt a second, invalid transition out of READY_FOR_HUMAN_REVIEW.
+#   The run must stop cleanly: exit 0, final state READY_FOR_HUMAN_REVIEW, and
+#   NO "Refusing to transition task in state 'READY_FOR_HUMAN_REVIEW'" warning.
+#   (Under the pre-fix behavior this run emitted that warning and exited 4.)
+# =============================================================================
+proj_f="$(specrelay_test::mktemp_specrelay_project)"
+mkdir -p "$proj_f/docs/sdd/0006-scenario-f"
+echo "# Scenario F spec" > "$proj_f/docs/sdd/0006-scenario-f/spec.md"
+
+out_f="$(SPECRELAY_FAKE_REVIEWER_SELF_TRANSITION=1 specrelay_test::run "$proj_f" "docs/sdd/0006-scenario-f/spec.md" 2>&1)"
+rc_f=$?
+specrelay_test::assert_eq "scenario F: accepted (self-enacted) run exits 0" "0" "$rc_f"
+specrelay_test::assert_not_contains "scenario F: no duplicate-transition warning" \
+  "$out_f" "Refusing to transition task in state 'READY_FOR_HUMAN_REVIEW'"
+specrelay_test::assert_contains "scenario F: reaches READY_FOR_HUMAN_REVIEW cleanly" \
+  "$out_f" "reached READY_FOR_HUMAN_REVIEW"
+state_f="$proj_f/.ai-runs/tasks/0006-scenario-f/state.json"
+specrelay_test::assert_contains "scenario F: final state.json is READY_FOR_HUMAN_REVIEW" \
+  "$(cat "$state_f")" "READY_FOR_HUMAN_REVIEW"
+
+# =============================================================================
+# Scenario G — spec 0004 regression, request-changes side: a reviewer that
+#   ENACTS its own request-changes transition in round 1 must still requeue and
+#   run a real round 2 (accepted) cleanly, with no duplicate-transition warning.
+# =============================================================================
+proj_g="$(specrelay_test::mktemp_specrelay_project)"
+mkdir -p "$proj_g/docs/sdd/0007-scenario-g"
+echo "# Scenario G spec" > "$proj_g/docs/sdd/0007-scenario-g/spec.md"
+plan_dir_g="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-plan.XXXXXX")"
+cat > "$plan_dir_g/reviewer-plan.txt" <<'EOF'
+decision=request_changes
+decision=accept
+EOF
+
+out_g="$(SPECRELAY_FAKE_REVIEWER_SELF_TRANSITION=1 SPECRELAY_FAKE_REVIEWER_PLAN="$plan_dir_g/reviewer-plan.txt" specrelay_test::run "$proj_g" "docs/sdd/0007-scenario-g/spec.md" 2>&1)"
+rc_g=$?
+specrelay_test::assert_eq "scenario G: self-enacted request-changes then accept exits 0" "0" "$rc_g"
+specrelay_test::assert_not_contains "scenario G: no duplicate-transition warning (either state)" \
+  "$out_g" "Refusing to transition task in state"
+specrelay_test::assert_contains "scenario G: requests changes in round 1" "$out_g" "CHANGES_REQUESTED"
+specrelay_test::assert_contains "scenario G: runs a second executor round" "$out_g" "round 2"
+specrelay_test::assert_contains "scenario G: reaches READY_FOR_HUMAN_REVIEW" "$out_g" "READY_FOR_HUMAN_REVIEW"
+
+# =============================================================================
+# Scenario H — manual reviewer is unaffected: with a 'manual' reviewer provider
+#   the automated loop stops at READY_FOR_REVIEW (exit 2), makes no transition,
+#   and emits no duplicate-transition warning. (Confirms the 0004 fix did not
+#   change the manual path.)
+# =============================================================================
+proj_h="$(specrelay_test::mktemp_specrelay_project)"
+# Reconfigure this fixture's reviewer provider to 'manual'.
+cat > "$proj_h/.specrelay/config.yml" <<'YAML'
+version: 1
+project:
+  name: Fixture Project
+specs:
+  root: docs/sdd
+tasks:
+  runs_root: .ai-runs/tasks
+  max_iterations: 3
+roles:
+  executor:
+    provider: fake
+  reviewer:
+    provider: manual
+context:
+  adapter: none
+  required: false
+validation:
+  full_test_command: "echo ok"
+policy:
+  human_final_review_required: true
+YAML
+(cd "$proj_h" && git add -A && git commit -q -m "manual reviewer config")
+mkdir -p "$proj_h/docs/sdd/0008-scenario-h"
+echo "# Scenario H spec" > "$proj_h/docs/sdd/0008-scenario-h/spec.md"
+
+out_h="$(specrelay_test::run "$proj_h" "docs/sdd/0008-scenario-h/spec.md" 2>&1)"
+rc_h=$?
+specrelay_test::assert_eq "scenario H: manual reviewer stops the automated loop (exit 2)" "2" "$rc_h"
+specrelay_test::assert_not_contains "scenario H: no duplicate-transition warning" \
+  "$out_h" "Refusing to transition task in state"
+specrelay_test::assert_contains "scenario H: reports manual reviewer handoff" \
+  "$out_h" "reviewer provider is 'manual'"
+state_h="$proj_h/.ai-runs/tasks/0008-scenario-h/state.json"
+specrelay_test::assert_contains "scenario H: task stays READY_FOR_REVIEW for a human" \
+  "$(cat "$state_h")" "READY_FOR_REVIEW"
+
 specrelay_test::summary
 exit $?

@@ -196,6 +196,18 @@ From `READY_FOR_REVIEW` the reviewer decides exactly one of:
   line: `ACCEPT` drives `accept` (→ `READY_FOR_HUMAN_REVIEW`),
   `REQUEST_CHANGES` drives `request_changes` (→ `CHANGES_REQUESTED`). Any
   unrecognized decision is refused and the task stays `READY_FOR_REVIEW`.
+- **State-aware, single transition.** The runner applies the decision's
+  transition **only when the task is still `READY_FOR_REVIEW`**. A real reviewer
+  agent runs under `claude --print --dangerously-skip-permissions` and can
+  itself enact `accept` / `request_changes` (neither is runner-owned), so the
+  task may already be in the decision's target state by the time control returns
+  to the runner. In that case the runner recognizes the enacted transition and
+  **stops cleanly** — it never attempts a second, invalid transition out of an
+  already-final state. The transition guards are unchanged: `transitions.sh`
+  still refuses genuinely invalid transitions; the runner simply does not make
+  the redundant call. So an accepted review reaches `READY_FOR_HUMAN_REVIEW`
+  exactly once, and `run` exits `0` with no `Refusing to transition task in
+  state 'READY_FOR_HUMAN_REVIEW'` warning.
 
 The reviewer runs **synchronously** while the task sits in `READY_FOR_REVIEW`;
 there is no distinct reviewer-running state. An interrupted reviewer is simply

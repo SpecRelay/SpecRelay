@@ -18,6 +18,17 @@
 #   SPECRELAY_FAKE_REVIEWER_PLAN   path to the reviewer plan file (optional)
 #   SPECRELAY_FAKE_IMPL_FILE       fixture file the executor "implements"
 #                                  into (default: <project-root>/specrelay-fake-impl.txt)
+#   SPECRELAY_FAKE_REVIEWER_SELF_TRANSITION
+#                                  when =1, the reviewer ALSO enacts its own
+#                                  decision transition (accept/request-changes)
+#                                  before emitting its DECISION line — exactly
+#                                  what a real reviewer agent running under
+#                                  `claude --print --dangerously-skip-permissions`
+#                                  can do, since accept/request-changes are NOT
+#                                  runner-owned. This deterministically
+#                                  reproduces the spec 0004 duplicate-transition
+#                                  bug (a runner that then transitions AGAIN out
+#                                  of an already-final state).
 # Missing a plan file (or a line past its end) falls back to the defaults
 # above, so a scenario that only cares about round 1 need not specify later
 # rounds explicitly.
@@ -110,9 +121,22 @@ specrelay::provider::fake::reviewer_run() {
   printf 'Fake reviewer notes for round %s.\n' "$round" > "$task_dir/09-consultant-review.md"
   if [ "$decision" = "accept" ]; then
     printf 'Fake business summary for round %s.\n' "$round" > "$task_dir/10-business-summary.md"
+    # Simulate a real reviewer agent that enacts its own decision (accept is
+    # NOT runner-owned, so an agent with CLI access can run it directly). Its
+    # output goes to the reviewer stdout capture, never to the decision stream
+    # the runner reads from this function's own stdout (spec 0004 repro).
+    if [ "${SPECRELAY_FAKE_REVIEWER_SELF_TRANSITION:-}" = "1" ]; then
+      specrelay::transitions::accept "$root" "$(basename "$task_dir")" fake \
+        >> "$task_dir/15-reviewer-stdout.txt" 2>&1 || true
+    fi
     echo "ACCEPT"
   else
     printf 'Fake next executor prompt for round %s.\n' "$round" > "$task_dir/11-next-executor-prompt.md"
+    if [ "${SPECRELAY_FAKE_REVIEWER_SELF_TRANSITION:-}" = "1" ]; then
+      specrelay::transitions::request_changes "$root" "$(basename "$task_dir")" \
+        "fake reviewer self-enacted request-changes" fake \
+        >> "$task_dir/15-reviewer-stdout.txt" 2>&1 || true
+    fi
     echo "REQUEST_CHANGES"
   fi
   return 0

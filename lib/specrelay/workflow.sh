@@ -288,17 +288,52 @@ specrelay::workflow::reviewer_iteration() {
   fi
 
   decision="$(printf '%s\n' "$decision" | tail -n1 | tr -d '[:space:]')"
+
+  # Re-read the canonical state AFTER the reviewer provider ran. A real
+  # reviewer agent runs under `claude --print --dangerously-skip-permissions`
+  # and CAN itself enact the accept/request-changes transition (neither is
+  # runner-owned), so by the time control returns here the task may already be
+  # in the decision's target state. Own the transition state-aware: apply it
+  # only when the task is still READY_FOR_REVIEW, and otherwise stop cleanly
+  # instead of attempting a second, invalid transition out of an already-final
+  # state (spec 0004). This does NOT weaken any guard — transitions.sh still
+  # refuses genuinely invalid transitions; the runner simply stops making the
+  # redundant call that produced the confusing "Refusing to transition task in
+  # state 'READY_FOR_HUMAN_REVIEW'" warning.
+  current="$(specrelay::state::canonical "$state_file")"
   case "$decision" in
     ACCEPT)
-      specrelay::transitions::accept "$root" "$task_id" "$provider" || return 1
-      echo "[reviewer] task '$task_id': accepted -> READY_FOR_HUMAN_REVIEW"
+      case "$current" in
+        READY_FOR_REVIEW)
+          specrelay::transitions::accept "$root" "$task_id" "$provider" || return 1
+          echo "[reviewer] task '$task_id': accepted -> READY_FOR_HUMAN_REVIEW"
+          ;;
+        READY_FOR_HUMAN_REVIEW)
+          echo "[reviewer] task '$task_id': already accepted -> READY_FOR_HUMAN_REVIEW (reviewer enacted the transition; runner stops cleanly)"
+          ;;
+        *)
+          specrelay::out::err "[reviewer] task '$task_id': reviewer decided ACCEPT but task is in unexpected state '$current'; refusing to transition"
+          return 1
+          ;;
+      esac
       ;;
     REQUEST_CHANGES)
-      local reason
-      reason="$(head -c 500 "$task_dir/09-consultant-review.md" 2>/dev/null)"
-      [ -n "$reason" ] || reason="changes requested"
-      specrelay::transitions::request_changes "$root" "$task_id" "$reason" "$provider" || return 1
-      echo "[reviewer] task '$task_id': changes requested -> CHANGES_REQUESTED"
+      case "$current" in
+        READY_FOR_REVIEW)
+          local reason
+          reason="$(head -c 500 "$task_dir/09-consultant-review.md" 2>/dev/null)"
+          [ -n "$reason" ] || reason="changes requested"
+          specrelay::transitions::request_changes "$root" "$task_id" "$reason" "$provider" || return 1
+          echo "[reviewer] task '$task_id': changes requested -> CHANGES_REQUESTED"
+          ;;
+        CHANGES_REQUESTED)
+          echo "[reviewer] task '$task_id': changes already requested -> CHANGES_REQUESTED (reviewer enacted the transition; runner stops cleanly)"
+          ;;
+        *)
+          specrelay::out::err "[reviewer] task '$task_id': reviewer decided REQUEST_CHANGES but task is in unexpected state '$current'; refusing to transition"
+          return 1
+          ;;
+      esac
       ;;
     *)
       specrelay::out::err "[reviewer] task '$task_id': unrecognized decision '$decision'; refusing to transition"
