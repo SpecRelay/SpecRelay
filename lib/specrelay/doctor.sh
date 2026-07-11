@@ -20,6 +20,46 @@ specrelay::doctor::_info() {
   printf '\xe2\x9c\x93 %s\n' "$1"
 }
 
+# Advisory warning: printed with a warning glyph but does NOT set
+# DOCTOR_FAILED, so it never turns a passing `doctor` run non-zero (spec 0002
+# acceptance criterion 3: "reports only intentional, documented warnings").
+specrelay::doctor::_warn() {
+  printf '\xe2\x9a\xa0 %s\n' "$1"
+}
+
+# specrelay::doctor::_hook_has_nonascii_shell_punct <hook-file>
+# Returns 0 (true) if the given hook file contains non-ASCII shell punctuation
+# that is DANGEROUS in a shell command (spec 0002): a Unicode en/em dash used
+# as an option prefix (e.g. `git rev-parse ‑abbrev-ref`), or a smart quote
+# adjacent to a shell command (sed/grep/git/awk) — the exact classes that
+# produce the `fatal: ambiguous argument` / `grep: illegal byte sequence` /
+# `sed: invalid command code` noise. Deliberately narrow (dangerous patterns
+# only, not any non-ASCII) so legitimate prose — em/en dashes and quotes in a
+# hook's comments — does not trigger a false positive (see the "Scope of the
+# doctor check" human decision in spec 0002). LC_ALL=C makes grep operate on
+# raw bytes and avoids the illegal-byte-sequence failure itself; matching is
+# done with portable ERE (no `grep -P`, which BSD/macOS grep lacks).
+specrelay::doctor::_hook_has_nonascii_shell_punct() {
+  local hook="$1"
+  [ -f "$hook" ] || return 1
+  local endash emdash ldq rdq lsq rsq
+  endash="$(printf '\xe2\x80\x93')"   # U+2013 en dash
+  emdash="$(printf '\xe2\x80\x94')"   # U+2014 em dash
+  ldq="$(printf '\xe2\x80\x9c')"      # U+201C left double quote
+  rdq="$(printf '\xe2\x80\x9d')"      # U+201D right double quote
+  lsq="$(printf '\xe2\x80\x98')"      # U+2018 left single quote
+  rsq="$(printf '\xe2\x80\x99')"      # U+2019 right single quote
+  # Dash-as-option-prefix: en/em dash immediately followed by a letter.
+  if LC_ALL=C grep -Eq "(${endash}|${emdash})[A-Za-z]" "$hook" 2>/dev/null; then
+    return 0
+  fi
+  # Smart quote within a short span of a shell command word.
+  if LC_ALL=C grep -Eq "(sed|grep|git|awk).{0,40}(${ldq}|${rdq}|${lsq}|${rsq})" "$hook" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 # specrelay::doctor::run <self-dir>
 specrelay::doctor::run() {
   local self_dir="$1"
@@ -31,6 +71,41 @@ specrelay::doctor::run() {
     specrelay::doctor::_ok "Git repository ($git_root)"
   else
     specrelay::doctor::_fail "Git repository: not inside a git working tree"
+  fi
+
+  # --- Active Git commit hooks free of non-ASCII shell punctuation (advisory) -
+  # The commit noise investigated in spec 0002 (`fatal: ambiguous argument
+  # '‑abbrev-ref'`, `grep: illegal byte sequence`, `sed: invalid command
+  # code`) originates in an ACTIVE Git commit hook — often a developer-global
+  # one injected via `core.hooksPath` — that uses non-ASCII shell punctuation
+  # (an en/em dash where `--` is required, or smart quotes around a sed/grep
+  # script). Such a hook fires on every commit in every repo, so we surface it
+  # here as an actionable WARNING (never a hard failure): SpecRelay does not
+  # silently rewrite the developer's own hook, but it does point at the file
+  # and the ASCII fix so a human can repair it.
+  if [ -n "$git_root" ]; then
+    local hooks_dir="" candidate_hook h
+    hooks_dir="$(git config --get core.hooksPath 2>/dev/null || true)"
+    if [ -z "$hooks_dir" ]; then
+      hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null || true)"
+    fi
+    local bad_hooks=""
+    if [ -n "$hooks_dir" ] && [ -d "$hooks_dir" ]; then
+      for h in prepare-commit-msg commit-msg pre-commit post-commit; do
+        candidate_hook="$hooks_dir/$h"
+        # Skip Git's shipped *.sample templates (never executed).
+        case "$candidate_hook" in *.sample) continue ;; esac
+        if specrelay::doctor::_hook_has_nonascii_shell_punct "$candidate_hook"; then
+          bad_hooks="$bad_hooks $candidate_hook"
+        fi
+      done
+    fi
+    if [ -n "$bad_hooks" ]; then
+      specrelay::doctor::_warn "Active Git commit hook contains non-ASCII shell punctuation (breaks commits with 'ambiguous argument' / 'illegal byte sequence' / 'invalid command code'):$bad_hooks"
+      specrelay::doctor::_warn "  Fix: replace Unicode en/em dashes used as option prefixes with ASCII '--', and smart quotes (\xe2\x80\x9c \xe2\x80\x9d \xe2\x80\x98 \xe2\x80\x99) with ASCII \" or ' in the file(s) above."
+    else
+      specrelay::doctor::_ok "Active Git commit hooks: no non-ASCII shell punctuation detected"
+    fi
   fi
 
   # --- Project root --------------------------------------------------------

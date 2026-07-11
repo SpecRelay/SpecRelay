@@ -40,7 +40,18 @@ specrelay_test::mktemp_project() {
   # compare against `specrelay project root`, which resolves the same way.
   dir="$(cd "$dir" && pwd -P)"
   SPECRELAY_TEST_TMP_DIRS+=("$dir")
-  (cd "$dir" && git init -q)
+  # Make every fixture repo HERMETIC with respect to developer-global Git hooks
+  # (spec 0002). A developer-global `core.hooksPath` fires on EVERY commit in
+  # EVERY repo, including the throwaway fixtures these tests commit into — so a
+  # hostile or malformed global hook (e.g. one with non-ASCII shell punctuation)
+  # leaks its `fatal: ... / grep: illegal byte sequence / sed: invalid command
+  # code` noise into `scripts/test`. Pointing this repo's local `core.hooksPath`
+  # at a nonexistent path (`/dev/null`) overrides the global setting so NO
+  # developer hook runs for fixture commits. This is isolation only: it changes
+  # nothing about what the tests commit, just that they do not execute arbitrary
+  # developer hooks, so the suite is deterministic regardless of the developer's
+  # environment.
+  (cd "$dir" && git init -q && git config core.hooksPath /dev/null)
   printf '%s\n' "$dir"
 }
 
