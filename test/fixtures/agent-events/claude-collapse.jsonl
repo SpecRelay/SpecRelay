@@ -1,0 +1,12 @@
+{"type":"system","subtype":"init","model":"claude-fixture"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"lib/specrelay/config.sh"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"lib/specrelay/providers/provider.sh"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"lib/specrelay/providers/claude.sh"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"git status --short"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"lib/specrelay/output.sh"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"lib/specrelay/edit-one.sh"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"lib/specrelay/edit-two.sh"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"lib/specrelay/write-one.sh"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"lib/specrelay/write-two.sh"}}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Done applying the changes."}]}}
+{"type":"result","subtype":"success","duration_ms":1000,"num_turns":1,"result":"Collapse fixture final text."}

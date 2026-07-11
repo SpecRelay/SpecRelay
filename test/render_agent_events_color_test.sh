@@ -108,8 +108,8 @@ specrelay_test::assert_contains "5b: reviewer DECISION marker survives intact fo
   "$(cat "$rfinal")" "DECISION: ACCEPT"
 
 # =============================================================================
-# 5c — a long Bash command wraps onto an indented, role-prefixed continuation
-#      line (Claude-Code-like layout) in color mode
+# 5c — a long Bash command wraps onto a continuation line whose role prefix is
+#      BLANKED to spaces (not repeated), the body aligned under the 'Bash' label
 # =============================================================================
 long_cmd="git log --oneline --graph --decorate --all --since=2020-01-01 --author=someone-with-a-long-name"
 long_event="$(printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"%s"}}]}}\n' "$long_cmd")"
@@ -117,8 +117,12 @@ out_long="$(printf '%s' "$long_event" | env SPECRELAY_COLOR=always python3 "$REN
   --role executor --provider claude 2>/dev/null)"
 specrelay_test::assert_contains "5c: long command renders a 'Bash' label line" \
   "$out_long" "${ESC}[33mBash ${ESC}[0m"
-specrelay_test::assert_contains "5c: long command body wraps onto an indented continuation line" \
-  "$out_long" "${ESC}[2m[executor]${ESC}[0m       git log --oneline"
+# "[executor] " is 11 visible columns; the wrapped body aligns under 'Bash' at
+# column 11 with a blank (space-only) prefix — no repeated, dimmed role prefix.
+specrelay_test::assert_contains "5c: long command body wraps onto a blank-prefixed continuation line" \
+  "$out_long" "           git log --oneline"
+specrelay_test::assert_not_contains "5c: the wrapped continuation line does NOT repeat the role prefix" \
+  "$out_long" "${ESC}[2m[executor]${ESC}[0m       git log"
 
 # =============================================================================
 # 6 — an invalid SPECRELAY_COLOR value falls back to auto (plain to non-TTY)

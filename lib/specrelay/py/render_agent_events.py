@@ -200,22 +200,53 @@ def clip(value, limit=MAX_FIELD):
 # aligned, colored tool label followed by the (plain, readable) argument; long
 # Bash commands wrap onto an indented continuation line; result/started lines
 # get a "●" marker. When color is DISABLED the output is byte-for-byte the
-# historical plain form, so evidence, greps, and existing tests are unaffected.
+# historical plain form for the FIRST line of every event group, so evidence,
+# greps, and existing tests are unaffected.
 COLOR_ENABLED = False
 
-# Aligned tool rows: plain-message prefix -> (label, color). The label is padded
-# to _LABEL_WIDTH so successive rows line up like Claude Code's tool list.
+# --- terminal collapse/continuation state (terminal-only, never evidence) -----
+# To reduce visual noise, two purely-visual behaviors are layered on top of the
+# per-event lines. They affect ONLY the human-facing stdout stream (both color
+# and no-color); the raw events file and the final-stdout file are produced from
+# separate data and are never touched:
+#
+#   1. Continuation lines of a single event (e.g. a long Bash command that wraps)
+#      drop the role prefix, replacing it with spaces of the same width so the
+#      body stays aligned.
+#   2. Immediately-repeated file/search actions (Read/Write/Edit/Grep/Glob/Fetch)
+#      collapse: the first line keeps its role prefix + action label; each
+#      following line of the SAME action blanks both, keeping only the aligned
+#      argument. Semantic boundary events (says / Bash / result / started /
+#      errors) are never collapsed and reset the run so the next action's first
+#      line is fully labeled again.
+#
+# _LAST_ACTION is the collapsible action key ("Read", ...) of the previous
+# rendered semantic line, or None after a boundary/non-collapsible line.
+# _LAST_BODY_COLUMN is the visible column where that group's argument starts, so
+# every continuation line indents to exactly the same column (spaces, not tabs).
+_LAST_ACTION = None
+_LAST_BODY_COLUMN = 0
+
+# Aligned tool rows: (plain-message keyword, aligned label, color attr name,
+# collapsible?). The label is padded to _LABEL_WIDTH so successive rows line up
+# like Claude Code's tool list. "searching web: " MUST precede "searching: " so
+# the WebSearch row is matched first. This table is color-independent (the color
+# attr is resolved lazily) so the collapse logic works in no-color mode too.
 _LABEL_WIDTH = 5
 _BASH_INLINE_MAX = 60
+_TOOL_ROW_SPECS = (
+    ("reading: ", "Read", "BLUE", True),
+    ("writing: ", "Write", "MAGENTA", True),
+    ("editing: ", "Edit", "MAGENTA", True),
+    ("searching web: ", "Web", "BLUE", False),
+    ("searching: ", "Grep", "BLUE", True),
+    ("globbing: ", "Glob", "BLUE", True),
+    ("fetching: ", "Fetch", "BLUE", True),
+)
+
 if _color is not None:
-    _TOOL_ROWS = (
-        ("reading: ", "Read", _color.BLUE),
-        ("writing: ", "Write", _color.MAGENTA),
-        ("editing: ", "Edit", _color.MAGENTA),
-        ("searching web: ", "Web", _color.BLUE),
-        ("searching: ", "Grep", _color.BLUE),
-        ("globbing: ", "Glob", _color.BLUE),
-        ("fetching: ", "Fetch", _color.BLUE),
+    _TOOL_ROWS = tuple(
+        (kw, label, getattr(_color, attr)) for kw, label, attr, _c in _TOOL_ROW_SPECS
     )
 else:  # pragma: no cover - color module unavailable
     _TOOL_ROWS = ()
@@ -228,6 +259,25 @@ def configure_color(enabled):
     COLOR_ENABLED = bool(enabled) and _color is not None
 
 
+def reset_render_state():
+    """Clear the terminal collapse/continuation state. main() calls this once
+    before the stdin loop; tests call it between independent fixtures so a run
+    never inherits collapse state from a previous one."""
+    global _LAST_ACTION, _LAST_BODY_COLUMN
+    _LAST_ACTION = None
+    _LAST_BODY_COLUMN = 0
+
+
+def _collapsible_row(message):
+    """If `message` is a collapsible file/search tool line, return
+    (keyword, label, color_attr_name); otherwise None (unknown line, or a
+    non-collapsible tool row such as WebSearch)."""
+    for kw, label, attr, collapsible in _TOOL_ROW_SPECS:
+        if message.startswith(kw):
+            return (kw, label, attr) if collapsible else None
+    return None
+
+
 def _label(name, code):
     """A colored, width-padded tool label, e.g. a yellow 'Bash '."""
     return _color.paint(name.ljust(_LABEL_WIDTH), code, True)
@@ -236,31 +286,67 @@ def _label(name, code):
 def format_rendered_line(role, message):
     """Build the physical output for one rendered event.
 
-    With color disabled: exactly "[role] message" (the historical plain form).
-    With color enabled: a dimmed "[role]" prefix plus a scannable, colored
-    layout. May return multiple physical lines (each role-prefixed) when a long
-    Bash command wraps."""
+    With color disabled: "[role] message" for the FIRST line of each event
+    group (the historical plain form). With color enabled: a dimmed "[role]"
+    prefix plus a scannable, colored layout.
+
+    In BOTH modes, immediately-repeated collapsible actions (Read/Write/Edit/
+    Grep/Glob/Fetch) blank the role prefix AND the action label on every line
+    after the first, keeping the argument aligned; long Bash commands wrap onto
+    a continuation line whose role prefix is likewise blanked. This is a
+    terminal-only visual behavior — evidence files are produced elsewhere and
+    are never affected. May return multiple physical lines."""
+    global _LAST_ACTION, _LAST_BODY_COLUMN
     plain_prefix = "[%s]" % role
+    prefix_w = len(plain_prefix)
+
+    # Collapsible file/search rows: keep the first line's prefix + label, then
+    # blank both for each immediate repeat of the SAME action.
+    row = _collapsible_row(message)
+    if row is not None:
+        kw, label, attr = row
+        body = message[len(kw):]
+        if _LAST_ACTION == label:
+            # Continuation of an immediately-repeated action: blank the prefix
+            # and label with spaces (never tabs) so the argument column holds.
+            return " " * _LAST_BODY_COLUMN + body
+        # First line of a new collapsible group: render it in full and remember
+        # where its argument column is for any following repeats.
+        _LAST_ACTION = label
+        if COLOR_ENABLED:
+            _LAST_BODY_COLUMN = prefix_w + 1 + _LABEL_WIDTH + 1
+            prefix = _color.paint(plain_prefix, _color.DIM, True)
+            return "%s %s %s" % (prefix, _label(label, getattr(_color, attr)), body)
+        _LAST_BODY_COLUMN = prefix_w + 1 + len(kw)
+        return "%s %s" % (plain_prefix, message)
+
+    # Any non-collapsible line is a semantic boundary (says / Bash / result /
+    # started / errors / other): it always renders in full and resets the run
+    # so the next collapsible action starts a fresh, fully-labeled group.
+    _LAST_ACTION = None
+
     if not COLOR_ENABLED:
         return "%s %s" % (plain_prefix, message)
 
     prefix = _color.paint(plain_prefix, _color.DIM, True)
 
     # Bash: a distinct 'Bash' label; short commands inline, long ones on an
-    # indented continuation line (still role-prefixed so every line greps).
+    # aligned continuation line whose role prefix is blanked to spaces (the
+    # body lines up under the 'Bash' label).
     if message.startswith("command: "):
         detail = message[len("command: "):]
         label = _label("Bash", _color.YELLOW)
         if len(detail) <= _BASH_INLINE_MAX:
             return "%s %s %s" % (prefix, label, detail)
-        indent = " " * (_LABEL_WIDTH + 1)
-        return "%s %s\n%s %s%s" % (prefix, label, prefix, indent, detail)
+        indent = " " * (prefix_w + 1)
+        return "%s %s\n%s%s" % (prefix, label, indent, detail)
 
     # Other command lines ("command finished: exit N", "running a command").
     if message.startswith("command"):
         return "%s %s" % (prefix, _color.paint(message, _color.YELLOW, True))
 
-    # Aligned file/search tool rows: colored label + plain argument.
+    # Aligned file/search tool rows: colored label + plain argument. Reached
+    # only for non-collapsible rows (WebSearch); collapsible rows return above.
     for kw, name, code in _TOOL_ROWS:
         if message.startswith(kw):
             return "%s %s %s" % (prefix, _label(name, code), message[len(kw):])
@@ -593,6 +679,9 @@ def main(argv=None):
                 % os.environ.get("SPECRELAY_COLOR", "")
             )
         configure_color(color_on)
+
+    # Start every run with a clean collapse/continuation slate.
+    reset_render_state()
 
     raw_fh = None
     if args.raw_events:
