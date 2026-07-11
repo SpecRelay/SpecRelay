@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","model":"claude-fixture"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"git diff --stat"}}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"The evidence matches the working tree."}]}}
+{"type":"result","subtype":"success","duration_ms":3100,"num_turns":2,"result":"I reviewed the change and it satisfies the spec.\n\nDECISION: ACCEPT"}

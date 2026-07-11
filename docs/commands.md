@@ -41,10 +41,18 @@ iterations reached.
 While the executor and reviewer providers run, their output is **streamed live
 to the terminal**, prefixed by role and provider (e.g. `[executor:claude]`,
 `[reviewer:claude-subagent]`), so you can see progress instead of a silent
-wait. The live output is an operator-visibility layer only — the durable
-evidence files under the task directory remain the source of truth and still
-contain the complete provider output. See `docs/providers.md` →
-"Live provider output streaming".
+wait. Two layers exist: **generic** raw stdout/stderr streaming for every
+provider (spec 0003), and — for the `claude` adapter when the installed CLI
+advertises `--output-format stream-json` — **semantic live event rendering**
+(spec 0006) that shows concise per-step activity such as
+`[executor:claude] reading: …` / `command: …` / `result: success`. Semantic
+mode also persists the raw event stream to `19`/`20-*-events.jsonl` and extracts
+the final assistant text into the numbered stdout files; it falls back honestly
+to generic streaming when unavailable (or when `SPECRELAY_SEMANTIC_EVENTS=0`).
+The live output is an operator-visibility layer only — the durable evidence
+files under the task directory remain the source of truth. See
+`docs/providers.md` → "Live provider output streaming" and "Semantic Claude
+live event rendering".
 
 ```
 specrelay resume <task-ref>

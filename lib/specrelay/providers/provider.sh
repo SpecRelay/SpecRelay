@@ -105,6 +105,105 @@ specrelay::provider::run_streamed() {
   return "$rc"
 }
 
+# --- semantic live agent events (spec 0006) ---------------------------------
+#
+# The generic run_streamed transport above shows a provider's PLAIN stdout/stderr
+# live. That is enough for the fake provider and any provider that prints line
+# output, but a real `claude --print` run emits (almost) nothing while it works,
+# so run_streamed shows a silent terminal for minutes. Claude Code DOES have a
+# structured mode — `--verbose --output-format stream-json` — that emits a JSONL
+# event stream describing each step (tool call, file read, command, final
+# result). run_agent_events is the SEMANTIC layer that renders those events into
+# concise human-readable activity lines live, while preserving durable evidence.
+#
+# It is intentionally a SEPARATE helper from run_streamed (which stays the
+# generic transport and honest fallback), and it is generic over the provider:
+# the caller passes the provider name that selects the renderer's adapter, so
+# nothing here is hardcoded to a single CLI.
+#
+# Evidence layout (differs from run_streamed on purpose):
+#   <events-file>  raw JSONL event stream, exactly as the provider emitted it
+#                  (19-executor-events.jsonl / 20-reviewer-events.jsonl);
+#   <final-file>   the EXTRACTED final assistant text (12-executor-stdout.txt /
+#                  15-reviewer-stdout.txt), so the numbered stdout capture files
+#                  keep working AND the reviewer decision marker
+#                  ("DECISION: ACCEPT|REQUEST_CHANGES") stays parseable — the
+#                  machine-readable decision channel is NEVER polluted by the
+#                  rendered live lines;
+#   <stderr-file>  the provider's raw stderr (13/16), streamed live too.
+# The rendered human-readable lines are terminal-only (fd 2).
+#
+# Risks addressed (mirroring run_streamed):
+#   * Exit code: the pipeline's PIPESTATUS[0] is the PROVIDER's real exit code,
+#     captured independently of the renderer's — a renderer failure never makes
+#     a failing provider look successful, and never fails a valid provider run.
+#   * Buffering race: the renderer writes <final-file> at EOF and we WAIT for the
+#     stderr reader before returning, so both files are fully flushed before a
+#     caller reads them (e.g. the reviewer decision grep).
+#   * Reviewer decision channel: rendered lines and stderr both go to fd 2; the
+#     adapter's own stdout (fd 1) stays clean for the ACCEPT/REQUEST_CHANGES line.
+
+# Resolved once at source time (mirrors py/state_lib.py resolution in state.sh),
+# so it works from the source tree, an install prefix, or a PATH symlink without
+# relying on SPECRELAY_HOME being exported.
+SPECRELAY_RENDER_AGENT_EVENTS_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../py/render_agent_events.py"
+
+# specrelay::provider::render_events_available
+# True when the semantic layer can run at all: a python3 interpreter is on PATH
+# and the standalone renderer exists. Never guesses provider flags — that check
+# is the provider adapter's job (help-driven).
+specrelay::provider::render_events_available() {
+  command -v "${SPECRELAY_PYTHON:-python3}" >/dev/null 2>&1 \
+    && [ -f "$SPECRELAY_RENDER_AGENT_EVENTS_PY" ]
+}
+
+# specrelay::provider::run_agent_events <label> <provider> <events-file> \
+#     <final-file> <stderr-file> <run-dir> [--] cmd [args...]
+# Runs `cmd` (which must emit a JSONL event stream on stdout) with its working
+# directory set to <run-dir>, piping that stream through the renderer to show
+# live human-readable activity on fd 2, persisting the raw events to
+# <events-file>, extracting the final agent text to <final-file>, and capturing
+# raw stderr (also streamed live) to <stderr-file>. Returns the command's REAL
+# exit code.
+specrelay::provider::run_agent_events() {
+  local label="$1" provider="$2" events_file="$3" final_file="$4" err_file="$5" run_dir="$6"
+  shift 6
+  [ "${1:-}" = "--" ] && shift
+
+  local python_bin dir err_fifo err_pid codes rc render_rc
+  python_bin="${SPECRELAY_PYTHON:-python3}"
+
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-events.XXXXXX")"
+  err_fifo="$dir/err"
+  mkfifo "$err_fifo"
+
+  # stderr reader first: raw copy -> <stderr-file>, prefixed copy -> fd 2.
+  specrelay::provider::_stream_reader "$label" "$err_file" < "$err_fifo" >&2 &
+  err_pid=$!
+
+  # provider stdout (JSONL) -> renderer. The renderer's own stdout (rendered
+  # lines) is redirected to fd 2 so this function writes NOTHING to fd 1, keeping
+  # the reviewer decision channel clean. PIPESTATUS captures both real codes.
+  ( cd "$run_dir" && "$@" ) 2> "$err_fifo" \
+    | "$python_bin" "$SPECRELAY_RENDER_AGENT_EVENTS_PY" \
+        --role "$label" --provider "$provider" --repo-root "$run_dir" \
+        --raw-events "$events_file" --final-stdout "$final_file" >&2
+  codes=("${PIPESTATUS[@]}")
+  rc="${codes[0]}"
+  render_rc="${codes[1]:-0}"
+
+  wait "$err_pid" 2>/dev/null || true
+  rm -rf "$dir"
+
+  # A renderer failure must never fail a valid provider run: warn, point at the
+  # raw events, and keep the provider exit code authoritative.
+  if [ "$render_rc" -ne 0 ]; then
+    printf '[%s] warning: semantic event renderer exited %s; raw events (if captured) are in %s. The provider exit code is authoritative.\n' \
+      "$label" "$render_rc" "$events_file" >&2
+  fi
+  return "$rc"
+}
+
 specrelay::provider::executor_run() {
   local provider="$1" root="$2" task_dir="$3" round="$4" prompt_file="$5"
   local label="executor:$provider"
