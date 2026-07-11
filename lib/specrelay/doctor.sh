@@ -205,6 +205,23 @@ specrelay::doctor::run() {
       ;;
   esac
 
+  # --- Claude semantic live events availability (spec 0006) -----------------
+  # Informational only: when either role uses a Claude provider, report whether
+  # the semantic live-event layer (structured stream-json rendering) can run.
+  # It is never mandatory — the generic stdout/stderr streaming from spec 0003
+  # is the honest fallback — so this is an _info line, never a failing check.
+  case "$executor_provider:$reviewer_provider" in
+    *claude*)
+      if [ "${SPECRELAY_SEMANTIC_EVENTS:-1}" = "0" ]; then
+        specrelay::doctor::_info "Claude semantic live events: disabled (SPECRELAY_SEMANTIC_EVENTS=0); using generic stdout/stderr streaming"
+      elif specrelay::provider::render_events_available; then
+        specrelay::doctor::_info "Claude semantic live events: available (python3 + renderer present; used when 'claude --help' advertises stream-json)"
+      else
+        specrelay::doctor::_info "Claude semantic live events: unavailable (python3 or renderer missing); will use generic stdout/stderr streaming"
+      fi
+      ;;
+  esac
+
   # --- Context capability adapter available ---------------------------------
   local context_adapter context_required
   context_adapter="$(specrelay::workflow::context_adapter "$root")"

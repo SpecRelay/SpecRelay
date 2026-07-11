@@ -169,17 +169,25 @@ each adapter below).
 ### Structured-event / streaming capability
 
 The contract does **not** require any *structured* live-event stream (e.g.
-streaming JSON). That remains an optional capability, and neither adapter
-shipped today emits one: `fake` produces fixed text, and the `claude` adapter
-intentionally does not thread live *semantic* event streaming (this is a known,
-documented gap in the Claude adapter's header comment). Adapters communicate
+streaming JSON). It remains an optional, provider-specific capability. `fake`
+produces fixed text and emits no structured stream. The `claude` adapter **does**
+support one when the installed CLI advertises it — Claude Code's
+`--verbose --output-format stream-json` mode — and renders those events into
+human-readable live activity lines (spec 0006). See
+[Semantic Claude live event rendering](#semantic-claude-live-event-rendering-spec-0006).
+Regardless of whether structured events are used, adapters still communicate
 their *results* purely through the numbered files and the final decision line.
 
-This is distinct from the **raw** live output streaming every adapter now gets
-for free — see the next section. Raw streaming replays the provider's plain
-stdout/stderr text to the terminal as it is produced; it is an operator
-visibility layer, not a structured protocol, and it never changes how a result
-or decision is communicated.
+There are therefore **two** live-output layers, and they are independent:
+
+- **Generic raw streaming** (spec 0003, every adapter, next section): replays
+  the provider's plain stdout/stderr text to the terminal as it is produced.
+- **Semantic event rendering** (spec 0006, `claude` when available): parses the
+  provider's structured event stream and prints concise per-step activity.
+
+Both are operator-visibility layers only; neither changes how a result or
+decision is communicated, and the semantic layer falls back to the generic one
+whenever structured events are unavailable — semantic events are never faked.
 
 ## Live provider output streaming (spec 0003)
 
@@ -225,6 +233,100 @@ The `<label>` is supplied by the dispatch functions in `provider.sh`
 (`executor:<provider>` / `reviewer:<provider>`) and passed to the adapter as an
 optional final argument.
 
+## Semantic Claude live event rendering (spec 0006)
+
+Generic raw streaming (above) shows whatever plain text a provider prints. That
+is enough for `fake` and for any provider that emits line output, but a real
+`claude --print` run emits almost nothing while it works — so the generic layer
+would show a silent terminal for minutes. This is the regression spec 0006
+restores: **semantic live event rendering** for the `claude` adapter, ported
+from the original workflow.
+
+**How it is chosen.** For a Claude executor or reviewer run, the adapter uses
+the structured mode **only** when all of the following hold; otherwise it falls
+back to generic raw streaming (spec 0003) and says so — semantic events are
+never faked:
+
+1. semantic events are not disabled (`SPECRELAY_SEMANTIC_EVENTS` is not `0`);
+2. `python3` (or `$SPECRELAY_PYTHON`) is on `PATH` and the renderer
+   `lib/specrelay/py/render_agent_events.py` exists;
+3. the installed `claude --help` advertises `--output-format` **and**
+   `stream-json` (the flag set is read from help, never guessed; `--verbose` is
+   added only when help advertises it, as the CLI requires it for `stream-json`
+   with `--print`).
+
+**What it does.** The provider is run with
+`--verbose --output-format stream-json`, which makes Claude Code emit a JSONL
+event stream (one JSON object per line: `system/init`, `assistant`
+tool-use/text blocks, `user` tool results, and a final `result`). That stream
+is piped through the standalone renderer, which:
+
+- prints one concise, plain-text line per meaningful event to the operator
+  terminal (fd 2), scoped by the same role/provider label — e.g.
+  `[executor:claude] reading: docs/providers.md`,
+  `[executor:claude] command: git status --short`,
+  `[executor:claude] result: success (4s, 3 turns)`;
+- **never renders private reasoning** (Claude `thinking` /
+  `redacted_thinking` blocks are dropped) and truncates large fields;
+- persists the **raw** JSONL stream verbatim to the events evidence file
+  (`19-executor-events.jsonl` / `20-reviewer-events.jsonl`);
+- extracts the **final assistant text** and writes it to the numbered stdout
+  capture file (`12-executor-stdout.txt` / `15-reviewer-stdout.txt`), so the
+  workflow's required-output checks and the reviewer `DECISION:` grep keep
+  working unchanged.
+
+**Evidence layout differs from generic mode on purpose.** In generic mode the
+`12`/`15` files hold the provider's raw stdout; in semantic mode they hold the
+*extracted final text* (human-readable, never raw JSON) and the raw stream lives
+in the `19`/`20` events files. The stderr files (`13`/`16`) hold raw stderr in
+both modes.
+
+**Guarantees preserved.** The rendering runs in a pipeline whose
+`PIPESTATUS[0]` is the provider's real exit code, captured independently of the
+renderer — a renderer failure never fails a valid provider run, and never lets a
+failing provider look successful. The helper waits for its readers and the
+renderer writes the extracted final text at EOF, so `15-reviewer-stdout.txt` is
+fully flushed before the reviewer decision grep reads it (no buffering race).
+Rendered lines and stderr both go to fd 2, so the reviewer's machine-readable
+`ACCEPT`/`REQUEST_CHANGES` decision channel (fd 1) is never polluted.
+
+**Fallback is pre-launch only; no automatic retry after launch.** The choice
+between semantic and generic mode is made **before** Claude is launched, from
+the three checks above (`claude --help` is inspected, flags are never guessed).
+Once a semantic Claude process has launched, its exit code is authoritative:
+SpecRelay does **not** automatically re-run a failed semantic invocation as a
+generic run. Retrying a launched provider could duplicate provider side effects
+or rerun a partially completed agent task, so a non-zero semantic run is
+reported as a failure exactly like any other provider failure (the executor
+round is not submitted; the reviewer makes no decision and state is unchanged).
+A *renderer* failure is different and non-fatal — it may warn on fd 2 but never
+masks or overrides the provider's exit code, and the raw events remain in the
+`19`/`20` file. Generic `run_streamed` remains the fallback path only for
+known-unavailable semantic mode, never as a post-failure retry.
+
+**Where it lives.** The renderer is a standalone SpecRelay runtime resource at
+`lib/specrelay/py/render_agent_events.py` (next to `state_lib.py`); it references
+no host paths and is provider-neutral (a Claude adapter today, with a retained
+Codex adapter to demonstrate neutrality). The shell side is the generic
+`specrelay::provider::run_agent_events` helper in `provider.sh` — parallel to
+`run_streamed`, not a replacement for it.
+
+**Controls.**
+
+| Variable | Effect |
+|---|---|
+| `SPECRELAY_SEMANTIC_EVENTS=0` | Force the generic spec-0003 path even when stream-json is advertised. |
+| `SPECRELAY_PYTHON` | Interpreter used for the renderer (default `python3`). |
+| `SPECRELAY_CLAUDE_BIN` | The Claude binary whose `--help` is inspected and which is run. |
+
+`specrelay doctor` reports, as an informational line, whether the semantic layer
+is available for the configured Claude provider(s).
+
+> A heartbeat/idle-tick fallback (periodic "still working…" output when a
+> provider is genuinely silent) is a possible **future** addition, but is not
+> implemented here: the goal of spec 0006 is restoring the real semantic events,
+> not synthesizing activity.
+
 ## The `fake` adapter
 
 Source: `lib/specrelay/providers/fake.sh`.
@@ -269,10 +371,13 @@ patch the `claude` adapter.
 Source: `lib/specrelay/providers/claude.sh`.
 
 This adapter drives the **Claude Code CLI** in non-interactive mode. It
-preserves a deliberately small, proven invocation surface and is intentionally
-simpler than a full-featured integration (no live event streaming, no
-multi-tier flag negotiation beyond the one `--agent` check below); the omitted
-behaviors are recorded as a known gap, not hidden.
+preserves a deliberately small, proven invocation surface with one
+multi-tier flag negotiation (the `--agent` check below) and, when the installed
+CLI advertises it, **semantic live event streaming** via
+`--verbose --output-format stream-json` (spec 0006 — see
+[Semantic Claude live event rendering](#semantic-claude-live-event-rendering-spec-0006)).
+When the structured mode is unavailable it falls back honestly to the generic
+raw streaming from spec 0003.
 
 **Required executable.** The `claude` CLI, resolved by
 `specrelay::provider::claude::_bin` as `${SPECRELAY_CLAUDE_BIN:-claude}`. Set
@@ -290,25 +395,43 @@ claude --print --dangerously-skip-permissions "<prompt>"
 ```
 
 `--print` is non-interactive; `--dangerously-skip-permissions` is required
-because a `--print` run cannot answer an interactive permission prompt. Stdout
-and stderr are streamed live (prefixed `[executor:claude]`) and captured raw to
-`12-executor-stdout.txt` / `13-executor-stderr.txt` via
-`specrelay::provider::run_streamed`, and the CLI's real exit code is returned
-(see [Live provider output streaming](#live-provider-output-streaming-spec-0003)).
+because a `--print` run cannot answer an interactive permission prompt. In the
+generic (fallback) path, stdout and stderr are streamed live (prefixed
+`[executor:claude]`) and captured raw to `12-executor-stdout.txt` /
+`13-executor-stderr.txt` via `specrelay::provider::run_streamed`, and the CLI's
+real exit code is returned (see
+[Live provider output streaming](#live-provider-output-streaming-spec-0003)).
+
+When semantic events are available the invocation instead becomes:
+
+```
+claude --print --verbose --output-format stream-json --dangerously-skip-permissions "<prompt>"
+```
+
+and the raw JSONL event stream is persisted to `19-executor-events.jsonl` while
+the extracted final assistant text is written to `12-executor-stdout.txt` —
+see [Semantic Claude live event rendering](#semantic-claude-live-event-rendering-spec-0006).
 
 **Reviewer usage.** Always a **fresh** `claude` process. If the repository
 defines a reviewer sub-agent (`.claude/agents/ai-reviewer.md` is present) **and**
 `claude --help` advertises `--agent`, it runs with
 `--agent ai-reviewer --print --dangerously-skip-permissions`; otherwise it runs
 with `--print --dangerously-skip-permissions`. This flag choice is made by
-*inspecting* `claude --help`, never by guessing. Output is streamed live
-(prefixed `[reviewer:claude-subagent]`, or `[reviewer:claude]`) and captured
-raw to `15-reviewer-stdout.txt` / `16-reviewer-stderr.txt`; because the live
-copy goes to fd 2, this adapter's own stdout stays reserved for the decision.
+*inspecting* `claude --help`, never by guessing. When semantic events are
+available, the same `--verbose --output-format stream-json` flags are added
+(e.g.
+`claude --agent ai-reviewer --print --verbose --output-format stream-json --dangerously-skip-permissions "<prompt>"`),
+raw events are persisted to `20-reviewer-events.jsonl`, and the extracted final
+text is written to `15-reviewer-stdout.txt`. In both modes the live copy goes to
+fd 2, so this adapter's own stdout stays reserved for the decision.
 
 **Reviewer decision extraction.** After a successful (exit 0) reviewer run, the
 adapter reads `15-reviewer-stdout.txt` and looks for an explicit marker,
-anchored at end of line:
+anchored at end of line. This works identically in both modes because
+`15-reviewer-stdout.txt` always holds human-readable text (the raw provider
+stream in generic mode, the extracted final assistant text in semantic mode) —
+**never** raw JSON, so the machine-readable decision channel is never polluted
+by the live event rendering:
 
 - `DECISION: ACCEPT` → prints `ACCEPT`
 - `DECISION: REQUEST_CHANGES` → prints `REQUEST_CHANGES`
@@ -347,6 +470,11 @@ provider's availability read-only, mutating nothing:
 - any other configured value → reported as an unsupported provider (failing
   check).
 
+When either role uses a Claude provider, `doctor` also prints an informational
+line reporting whether **semantic live events** are available (python3 +
+renderer present, or disabled via `SPECRELAY_SEMANTIC_EVENTS=0`). This is never
+a failing check — the generic streaming fallback always works.
+
 Failing mandatory checks make `doctor` exit non-zero.
 
 ## Adapter capability summary (section 30)
@@ -354,7 +482,7 @@ Failing mandatory checks make `doctor` exit non-zero.
 | Adapter | Required executable | Detection method | Invocation contract | Output handling | Structured-event capability | Failure semantics |
 |---|---|---|---|---|---|---|
 | `fake` | none | always available | scripted per round via optional plan files (`SPECRELAY_FAKE_EXECUTOR_PLAN` / `SPECRELAY_FAKE_REVIEWER_PLAN`); no real process | writes required numbered task files + `12`/`13` (exec) or `09`/`10`/`11` + `15`/`16` (review); reviewer prints `ACCEPT`/`REQUEST_CHANGES` per plan `decision` | none (fixed text) | plan `exit=N` returns that code; reviewer non-zero = no decision, state unchanged |
-| `claude` | `claude` CLI (`${SPECRELAY_CLAUDE_BIN:-claude}`) | `command -v "$bin"` on `PATH`; `doctor` reports the same | executor: `claude --print --dangerously-skip-permissions`; reviewer: fresh process, `--agent ai-reviewer` when advertised + repo agent present, else `--print --dangerously-skip-permissions` | streams captured to `12`/`13` (exec) or `15`/`16` (review); required task files written; decision from `DECISION: ACCEPT`/`DECISION: REQUEST_CHANGES` marker in reviewer stdout | none today (live event streaming intentionally omitted; known gap) | missing binary or CLI non-zero → return non-zero; reviewer with no `DECISION:` marker → non-zero, no decision inferred |
+| `claude` | `claude` CLI (`${SPECRELAY_CLAUDE_BIN:-claude}`) | `command -v "$bin"` on `PATH`; `doctor` reports the same | executor: `claude --print [--verbose --output-format stream-json] --dangerously-skip-permissions`; reviewer: fresh process, `--agent ai-reviewer` when advertised + repo agent present, same optional stream-json flags | generic mode: raw streams captured to `12`/`13` (exec) or `15`/`16` (review); semantic mode: raw events to `19`/`20`, extracted final text to `12`/`15`; required task files written; decision from `DECISION: ACCEPT`/`DECISION: REQUEST_CHANGES` marker in the extracted reviewer text | semantic live events via `--output-format stream-json` when the CLI advertises it (spec 0006), rendered by `py/render_agent_events.py`; honest fallback to generic streaming otherwise | missing binary or CLI non-zero → return non-zero; reviewer with no `DECISION:` marker → non-zero, no decision inferred |
 | `claude-subagent` (reviewer only) | same as `claude` | same as `claude` | routes to the `claude` reviewer implementation | same as `claude` reviewer | same as `claude` | same as `claude` reviewer |
 
 ## Adding a new adapter

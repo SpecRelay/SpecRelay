@@ -54,3 +54,4 @@ contributors know where SpecRelay's design specs live.
 | Number | Spec                                                                                                   | Status |
 | ------ | ------------------------------------------------------------------------------------------------------ | ------ |
 | 0001   | [Establish `docs/specs/` convention and scrub standalone docs](0001-establish-docs-specs-convention-and-scrub-standalone-docs/spec.md) | Draft  |
+| 0006   | [Restore Claude semantic live events](0006-restore-claude-semantic-live-events/spec.md) | Draft  |
