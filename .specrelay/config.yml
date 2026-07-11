@@ -1,0 +1,27 @@
+version: 1
+
+project:
+  name: specrelay
+
+specs:
+  root: docs/specs
+
+tasks:
+  runs_root: .specrelay-runs/tasks
+  max_iterations: 3
+
+roles:
+  executor:
+    provider: claude
+  reviewer:
+    provider: claude-subagent
+
+context:
+  adapter: contextplus
+  required: true
+
+validation:
+  full_test_command: scripts/test
+
+policy:
+  human_final_review_required: true
