@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# scripts/test — run SpecRelay's STANDALONE test suite (spec 0086, sections
+# 20-21). This runs every test that operates purely on isolated temporary git
+# fixtures and needs NEITHER the host Rails application NOR a pre-existing
+# `.ai/` workflow. It therefore passes both in the incubation host and in a
+# freshly extracted standalone repository.
+#
+# Host-integration tests (which need the host's `.ai/scripts/` shims, rollback
+# engine, CLAUDE.md, or host spec history) are EXPLICITLY excluded here and
+# are run by test/run_all.sh in the host repository instead.
+#
+#   scripts/test            # run the standalone suite
+#
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEST_DIR="$ROOT/test"
+
+# Test files that depend on host-only artifacts (see run_all.sh for the full
+# host suite). Kept as an explicit, auditable list.
+HOST_INTEGRATION_TESTS="
+compat_shim_test.sh
+rollback_test.sh
+legacy_freeze_test.sh
+shim_loop_test.sh
+shim_deprecation_test.sh
+engine_ownership_cases_test.sh
+dogfood_orchestration_test.sh
+"
+
+is_host_integration() {
+  local name="$1" t
+  for t in $HOST_INTEGRATION_TESTS; do
+    [ "$name" = "$t" ] && return 0
+  done
+  return 1
+}
+
+FILES_RUN=0
+FILES_FAILED=0
+FAILED_NAMES=""
+SKIPPED=""
+
+for f in "$TEST_DIR"/*_test.sh; do
+  [ -f "$f" ] || continue
+  name="$(basename "$f")"
+  if is_host_integration "$name"; then
+    SKIPPED="$SKIPPED $name"
+    continue
+  fi
+  echo "=== $name ==="
+  if "$f"; then
+    echo
+  else
+    FILES_FAILED=$((FILES_FAILED + 1))
+    FAILED_NAMES="$FAILED_NAMES $name"
+    echo
+  fi
+  FILES_RUN=$((FILES_RUN + 1))
+done
+
+echo "========================================"
+echo "STANDALONE SUITE: $FILES_RUN test file(s) run, $FILES_FAILED failed"
+[ -n "$SKIPPED" ] && echo "Skipped (host-integration; run via test/run_all.sh):$SKIPPED"
+if [ "$FILES_FAILED" -gt 0 ]; then
+  echo "Failed:$FAILED_NAMES"
+  exit 1
+fi
+echo "All standalone tests passed."
+exit 0

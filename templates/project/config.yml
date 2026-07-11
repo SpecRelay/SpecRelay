@@ -1,0 +1,55 @@
+# .specrelay/config.yml — SpecRelay project configuration.
+#
+# Written by `specrelay init`. This file holds ONLY project-specific
+# configuration and policy — never reusable engine code, never secrets or
+# provider credentials, and never machine-specific absolute paths.
+#
+# The defaults below are the provider-neutral public defaults. Edit them for
+# your project. See the bundled docs/configuration.md for every key.
+version: 1
+
+project:
+  name: __SPECRELAY_PROJECT_NAME__
+
+specs:
+  # Where specification documents live, relative to the project root.
+  # Convention: <root>/<task-id>/spec.md
+  root: specs
+
+tasks:
+  # Where SpecRelay keeps durable per-task run state and evidence, relative to
+  # the project root.
+  runs_root: .specrelay-runs/tasks
+  # Cap on executor rework rounds `specrelay run` attempts before reporting
+  # "maximum iterations reached" instead of pretending success.
+  max_iterations: 3
+
+roles:
+  # Provider adapters for SpecRelay's executor/reviewer roles.
+  #   executor: the adapter that implements the task (e.g. "claude", or
+  #             "fake" for deterministic testing).
+  #   reviewer: "manual" means no automated decision — a human runs
+  #             `specrelay task accept` / `specrelay task request-changes`.
+  #             Set an automated reviewer adapter (e.g. "claude") to run the
+  #             review step inside `specrelay run`.
+  executor:
+    provider: claude
+  reviewer:
+    provider: manual
+
+context:
+  # Optional context-retrieval capability required before roles do
+  # substantive work. "none" performs no preflight. See
+  # docs/context-adapters.md.
+  adapter: none
+  required: false
+
+validation:
+  # The command SpecRelay reports as this project's full test/validation
+  # suite. Set it to whatever your project actually supports.
+  full_test_command: "echo 'set validation.full_test_command in .specrelay/config.yml'"
+
+policy:
+  # A human must always give the final review after the automated loop
+  # reaches READY_FOR_HUMAN_REVIEW. Keep this true.
+  human_final_review_required: true

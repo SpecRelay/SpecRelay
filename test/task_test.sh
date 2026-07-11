@@ -43,10 +43,10 @@ tasks:
 YAML
 specrelay_test::assert_eq "runs_root reads tasks.runs_root from config" \
   "$proj2/custom/runs/root" "$(specrelay::task::runs_root "$proj2")"
-specrelay_test::assert_eq "runs_root defaults to .ai-runs/tasks with no config" \
-  "$proj/.ai-runs/tasks" "$(specrelay::task::runs_root "$proj")"
+specrelay_test::assert_eq "runs_root defaults to the generic .specrelay-runs/tasks with no config" \
+  "$proj/.specrelay-runs/tasks" "$(specrelay::task::runs_root "$proj")"
 specrelay_test::assert_eq "dir composes runs_root and the task id" \
-  "$proj/.ai-runs/tasks/0084-x" "$(specrelay::task::dir "$proj" "0084-x")"
+  "$proj/.specrelay-runs/tasks/0084-x" "$(specrelay::task::dir "$proj" "0084-x")"
 
 # --- resolve_spec_path safety ------------------------------------------------
 resolved="$(specrelay::task::resolve_spec_path "$proj" "docs/sdd/0084-migrate-ai-workflow-engine-into-specrelay/spec.md")"

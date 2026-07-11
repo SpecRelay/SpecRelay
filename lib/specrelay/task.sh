@@ -23,8 +23,9 @@ specrelay::task::valid_id() {
 }
 
 # specrelay::task::id_from_spec_path <spec-path>
-# Derives a task id from a spec file's PARENT directory name (the SDD
-# convention: docs/sdd/<task-id>/spec.md), sanitized to a safe path segment.
+# Derives a task id from a spec file's PARENT directory name (the one-dir-per-
+# spec convention, e.g. <specs-root>/<task-id>/spec.md), sanitized to a safe
+# path segment.
 specrelay::task::id_from_spec_path() {
   local spec_path="$1" spec_dir parent
   spec_dir="$(cd "$(dirname "$spec_path")" && pwd -P)" || return 1
@@ -34,13 +35,16 @@ specrelay::task::id_from_spec_path() {
 
 # specrelay::task::runs_root <project-root>
 # Prints the absolute configured task-runtime root (never hardcoded; read
-# from .specrelay/config.yml, default .ai-runs/tasks — matching this
-# repository's existing runtime root, per spec section 48).
+# from .specrelay/config.yml). The generic default when no project config
+# sets it is `.specrelay-runs/tasks` (SpecRelay's provider-neutral public
+# default — see docs/configuration.md). A consumer project that keeps its
+# runtime evidence elsewhere (e.g. a repository migrating from a pre-existing
+# `.ai-runs/tasks` workflow) sets `tasks.runs_root` explicitly in its config.
 specrelay::task::runs_root() {
   local root="$1" configured="tasks.runs_root"
-  local value=".ai-runs/tasks"
+  local value=".specrelay-runs/tasks"
   if specrelay::config::exists "$root"; then
-    value="$(specrelay::config::get "$root" "$configured" ".ai-runs/tasks")"
+    value="$(specrelay::config::get "$root" "$configured" ".specrelay-runs/tasks")"
   fi
   printf '%s/%s\n' "$root" "$value"
 }
@@ -53,11 +57,14 @@ specrelay::task::dir() {
 }
 
 # specrelay::task::spec_root <project-root>
+# The generic default when no project config sets it is `specs` (SpecRelay's
+# provider-neutral public default). A consumer project that keeps its specs
+# elsewhere sets `specs.root` explicitly in its config.
 specrelay::task::spec_root() {
   local root="$1"
-  local value="docs/sdd"
+  local value="specs"
   if specrelay::config::exists "$root"; then
-    value="$(specrelay::config::get "$root" "specs.root" "docs/sdd")"
+    value="$(specrelay::config::get "$root" "specs.root" "specs")"
   fi
   printf '%s/%s\n' "$root" "$value"
 }

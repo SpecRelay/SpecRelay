@@ -72,15 +72,19 @@ specrelay::doctor::run() {
   if [ -d "$runs_root" ] && [ -r "$runs_root" ] && [ -w "$runs_root" ]; then
     specrelay::doctor::_ok "Task runtime root ($runs_root)"
   elif [ ! -e "$runs_root" ]; then
-    # A fresh project may not have run anything yet; the parent being
-    # writable is what actually matters (the directory itself is created
-    # lazily on first task creation).
-    local parent
-    parent="$(dirname "$runs_root")"
-    if [ -d "$parent" ] && [ -w "$parent" ]; then
-      specrelay::doctor::_ok "Task runtime root ($runs_root; not yet created, parent is writable)"
+    # A fresh project may not have run anything yet, and neither the runs root
+    # NOR its immediate parent need exist — they are created lazily (mkdir -p)
+    # on first task creation. What actually matters is that the nearest
+    # EXISTING ancestor is a writable directory. Walk up to find it.
+    local ancestor
+    ancestor="$(dirname "$runs_root")"
+    while [ -n "$ancestor" ] && [ "$ancestor" != "/" ] && [ ! -e "$ancestor" ]; do
+      ancestor="$(dirname "$ancestor")"
+    done
+    if [ -d "$ancestor" ] && [ -w "$ancestor" ]; then
+      specrelay::doctor::_ok "Task runtime root ($runs_root; not yet created, will be created under writable $ancestor)"
     else
-      specrelay::doctor::_fail "Task runtime root: $runs_root does not exist and cannot be created"
+      specrelay::doctor::_fail "Task runtime root: $runs_root does not exist and cannot be created (nearest existing ancestor $ancestor is not writable)"
     fi
   else
     specrelay::doctor::_fail "Task runtime root: $runs_root exists but is not readable/writable"
@@ -141,6 +145,31 @@ specrelay::doctor::run() {
       specrelay::doctor::_fail "Context capability: unknown adapter '$context_adapter'"
       ;;
   esac
+
+  # --- SpecRelay installation (tool) root -----------------------------------
+  # Report WHERE SpecRelay itself is installed, kept explicitly distinct from
+  # the project root above (spec 0086, sections 7-8). Derived from the
+  # executable's own location, never from the consumer project.
+  local specrelay_home="$self_dir"
+  specrelay::doctor::_info "SpecRelay home ($specrelay_home)"
+
+  # --- Legacy-workflow / host-integration checks (conditional) --------------
+  # The checks below (engine mode, compatibility shims, shim-loop, rollback
+  # engine) are ONLY meaningful for a repository that hosts a pre-existing
+  # `.ai/` workflow SpecRelay is being incubated inside of. A standalone or
+  # freshly-initialized consumer project has no `.ai/scripts/`, and MUST NOT
+  # be reported as failing for lacking one (spec 0086, section 48). They run
+  # as mandatory checks only when a legacy `.ai/scripts/` tree is present.
+  if [ ! -d "$root/.ai/scripts" ]; then
+    specrelay::doctor::_info "Legacy workflow integration: not present (no .ai/scripts/) — standalone/consumer project"
+    echo
+    if [ "$DOCTOR_FAILED" -ne 0 ]; then
+      specrelay::out::err "doctor: one or more mandatory checks failed"
+      return 1
+    fi
+    echo "specrelay doctor: all checks passed."
+    return 0
+  fi
 
   # --- Current engine mode --------------------------------------------------
   local shim_lib="$root/.ai/scripts/internal/lib/specrelay-shim.sh"

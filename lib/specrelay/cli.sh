@@ -15,6 +15,15 @@ specrelay::cli::usage() {
   cat <<'USAGE'
 Usage: specrelay <command> [subcommand] [args]
 
+Setup:
+  init [--path <dir>] [--force]
+                         Initialize the current (or given) project for
+                         SpecRelay: create .specrelay/config.yml from the
+                         built-in template, create the spec root, and make a
+                         safe, idempotent .gitignore entry for the runtime
+                         evidence directory. Never overwrites an existing
+                         config unless --force is given.
+
 Discovery (read-only):
   version                Print the SpecRelay version and exit.
   help, --help, -h       Show this help.
@@ -72,21 +81,25 @@ Workflow engine:
 <task-ref> accepts a full task id, a unique numeric prefix, or a unique
 partial slug (e.g. 'specrelay show 0084').
 
-A task's own "engine" field records which engine (specrelay or the legacy
-.ai/ workflow) owns mutating it; read-only commands (show/status/list) work
-for tasks created by either engine, but mutating commands refuse a task they
-do not own (spec 0084, section 50).
+A task's own "engine" field records which engine owns mutating it; read-only
+commands (show/status/list) work regardless, but mutating commands refuse a
+task they do not own.
 
-SpecRelay is incubated inside the Sprint Reports repository under
-tools/specrelay/. See tools/specrelay/README.md and
-tools/specrelay/docs/engine-parity.md for background and current parity
-status against the still-authoritative legacy .ai/ workflow.
+See the bundled README.md and docs/ (architecture, configuration, providers,
+context-adapters, task-lifecycle, installation) for background. When SpecRelay
+is incubated inside a repository that has a pre-existing `.ai/` workflow, see
+docs/migration.md and docs/engine-parity.md for the compatibility model.
 USAGE
 }
 
+specrelay::cli::cmd_init() {
+  local self_dir="$1"; shift
+  specrelay::init::run "$self_dir" "$@"
+}
+
 specrelay::cli::version() {
-  local self_dir="$1"
-  local version_file="$self_dir/../VERSION"
+  local home="$1"
+  local version_file="$home/VERSION"
   if [ ! -f "$version_file" ]; then
     specrelay::out::err "VERSION file not found: $version_file"
     return 1
@@ -593,10 +606,11 @@ specrelay::cli::task_dispatch() {
   esac
 }
 
-# specrelay::cli::main <self-dir> <argv...>
-# self-dir is the directory containing bin/specrelay (used to locate VERSION).
+# specrelay::cli::main <specrelay-home> <argv...>
+# specrelay-home is SpecRelay's own install/source root (used to locate
+# VERSION and templates); it is NOT the consumer project root.
 specrelay::cli::main() {
-  local self_dir="$1"
+  local home="$1"
   shift
 
   if [ "$#" -eq 0 ]; then
@@ -608,8 +622,11 @@ specrelay::cli::main() {
   shift
 
   case "$cmd" in
+    init)
+      specrelay::cli::cmd_init "$home" "$@"
+      ;;
     version)
-      specrelay::cli::version "$self_dir"
+      specrelay::cli::version "$home"
       ;;
     help|--help|-h)
       specrelay::cli::usage
@@ -665,7 +682,7 @@ specrelay::cli::main() {
       specrelay::cli::task_dispatch "$@"
       ;;
     doctor)
-      specrelay::doctor::run "$self_dir"
+      specrelay::doctor::run "$home"
       ;;
     review)
       specrelay::cli::unimplemented "$cmd"

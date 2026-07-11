@@ -14,8 +14,41 @@ set -uo pipefail
 # `pipefail` (a pipeline's exit status reflects any failing stage) remain
 # enabled as safety nets that do not have this hazard.
 
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB_DIR="$SELF_DIR/../lib/specrelay"
+# Resolve this script's REAL location, following symlinks, so SpecRelay can
+# find its own bundled resources regardless of how bin/specrelay was invoked
+# (source/incubation tree, copied install prefix, or a symlink on PATH).
+specrelay::_resolve_bin_dir() {
+  local src="${BASH_SOURCE[0]}" dir
+  while [ -h "$src" ]; do
+    dir="$(cd "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in
+      /*) ;;
+      *) src="$dir/$src" ;;
+    esac
+  done
+  cd "$(dirname "$src")" && pwd
+}
+BIN_DIR="$(specrelay::_resolve_bin_dir)"
+
+# SPECRELAY_HOME: where SpecRelay ITSELF is installed (its lib/, templates/,
+# VERSION) — deliberately distinct from the consumer PROJECT_ROOT (spec 0086,
+# sections 7-8). An explicit env override wins; otherwise it is derived from
+# the executable's own location, supporting BOTH the source/incubation layout
+# (<home>/bin, <home>/lib) AND the installed layout (<prefix>/bin,
+# <prefix>/share/specrelay/lib).
+if [ -n "${SPECRELAY_HOME:-}" ] && [ -d "${SPECRELAY_HOME}/lib/specrelay" ]; then
+  SPECRELAY_HOME="$(cd "$SPECRELAY_HOME" && pwd)"
+elif [ -d "$BIN_DIR/../lib/specrelay" ]; then
+  SPECRELAY_HOME="$(cd "$BIN_DIR/.." && pwd)"
+elif [ -d "$BIN_DIR/../share/specrelay/lib/specrelay" ]; then
+  SPECRELAY_HOME="$(cd "$BIN_DIR/../share/specrelay" && pwd)"
+else
+  echo "specrelay: cannot locate SpecRelay home (lib/specrelay not found relative to $BIN_DIR); set SPECRELAY_HOME" >&2
+  exit 1
+fi
+export SPECRELAY_HOME
+LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 
 # shellcheck source=lib/specrelay/output.sh
 . "$LIB_DIR/output.sh"
@@ -55,7 +88,9 @@ LIB_DIR="$SELF_DIR/../lib/specrelay"
 . "$LIB_DIR/workflow.sh"
 # shellcheck source=lib/specrelay/doctor.sh
 . "$LIB_DIR/doctor.sh"
+# shellcheck source=lib/specrelay/project_init.sh
+. "$LIB_DIR/project_init.sh"
 # shellcheck source=lib/specrelay/cli.sh
 . "$LIB_DIR/cli.sh"
 
-specrelay::cli::main "$SELF_DIR" "$@"
+specrelay::cli::main "$SPECRELAY_HOME" "$@"
