@@ -184,6 +184,36 @@ This transitions `EXECUTOR_RUNNING → BLOCKED` and records why, so a human can
 decide what to do next. Use `recover` when a healthy task was merely
 interrupted; use `block` when the task cannot proceed as specified.
 
+## 6. When a compatibility check refuses a resume
+
+`specrelay run`/`resume` refuse to **mutate** a task whose recorded metadata is
+incompatible with the running engine, rather than silently resuming state it may
+not understand. Two guards can fire (see `docs/versioning.md`):
+
+- **Engine version** — a different MAJOR version, or a task created by a *newer*
+  engine than the one running. Message: `incompatible engine version`.
+- **State schema** — a `schema_version` greater than the one this engine writes,
+  or an unreadable/non-integer `schema_version`. Message:
+  `incompatible state schema`.
+
+Neither guard blocks read-only inspection. When one fires:
+
+1. Inspect the task first — `specrelay show <task-ref>` reports both the
+   `Engine version` and `Schema version` it recorded, and never mutates state.
+2. Prefer installing the **matching (or newer) engine version** so the task
+   resumes under an engine that understands its metadata.
+3. Only if you have deliberately decided it is safe, override for that single
+   invocation — the override is logged every time:
+
+   ```sh
+   SPECRELAY_ALLOW_ENGINE_MISMATCH=1 specrelay resume <task-ref>   # engine guard
+   SPECRELAY_ALLOW_SCHEMA_MISMATCH=1 specrelay resume <task-ref>   # schema guard
+   ```
+
+Historical tasks with **no** `engine_version`/`schema_version` are treated as
+unknown-origin / implicit v1 and are **not** blocked; no action is needed for
+them.
+
 ## Quick reference
 
 | Situation | Command |
@@ -193,6 +223,8 @@ interrupted; use `block` when the task cannot proceed as specified.
 | Recover an interrupted `EXECUTOR_RUNNING` task | `specrelay task recover <task-ref> --reason "…"` |
 | Re-run an interrupted reviewer | `specrelay resume <task-ref>` |
 | Mark a task that cannot complete | `specrelay task block <task-ref> "<reason>"` |
+| Resume refused: incompatible engine version | install matching engine, or `SPECRELAY_ALLOW_ENGINE_MISMATCH=1 specrelay resume <task-ref>` |
+| Resume refused: incompatible state schema | install matching engine, or `SPECRELAY_ALLOW_SCHEMA_MISMATCH=1 specrelay resume <task-ref>` |
 
 Never edit `state.json` by hand and never `rm` a task directory or its lock to
 recover a task — use the audited commands above so every recovery is recorded.

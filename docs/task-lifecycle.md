@@ -40,9 +40,23 @@ SpecRelay:
   reads it for backward-compatible inspection of tasks created by the legacy
   engine.
 
+Two of these names deserve explicit clarification, because they mark two
+different reviews:
+
+- `READY_FOR_REVIEW` means **ready for the automated (AI) reviewer**. The
+  executor has finished and produced evidence; the reviewer agent has not yet
+  decided. Its legacy alias `READY_FOR_CODEX_REVIEW` reflects the same meaning.
+- `READY_FOR_HUMAN_REVIEW` means **the automated reviewer accepted, and the
+  human final gate is still pending**. Automated acceptance is *not* human
+  approval — it only moves the task to the human gate. The automated decision
+  is recorded separately in `review_result` (`"accepted"`); a human's approval
+  to merge/ship is an out-of-band act the engine never performs on its own.
+
 `READY_FOR_HUMAN_REVIEW` is the intended stopping point of every successful
 run: the automated loop halts there and never advances past it on its own.
-`BLOCKED` is the only "stuck" state the automated loop can reach.
+`BLOCKED` is the only "stuck" state the automated loop can reach. A
+request-changes decision goes to `CHANGES_REQUESTED` (rework loop, §6), which
+is distinct from a provider `BLOCKED`/failure (§9).
 
 ## 2. State diagram
 
@@ -333,12 +347,18 @@ task:
 **Set at creation** (`transitions::create`):
 
 - `task_id`
-- `state` — the canonical current state (see §1)
+- `state` — the canonical current state (see §1). This is the only field
+  required for a task to be operable; every other field is metadata.
+- `schema_version` — integer shape version of `state.json` (currently `1`).
+  Historical tasks without it are treated as an implicit v1. See
+  `docs/versioning.md` for the compatibility guard.
 - `created_at`
 - `base_commit` — repository `HEAD` at creation time
 - `requires_human_approval`
 - `engine` — always `"specrelay"` for tasks this engine owns; a mutating
   command refuses any task whose `engine` is not `specrelay`
+- `engine_version` — the `VERSION` of the engine that created the task (see
+  `docs/versioning.md`)
 - `iteration` — starts at `1`, incremented by each requeue
 - `allow_pre_existing_dirty`
 - `spec_source` — the spec's project-relative path (present when created from a
@@ -349,7 +369,8 @@ task:
 - Approval: `approved_at`, `approved_by`
 - Claim: `claimed_at`, `claimed_by` (cleared on requeue and on recover)
 - Submit: `submitted_for_review_at`, `submitted_for_review_by`
-- Accept: `reviewed_at`, `reviewed_by`, `review_result`, `reviewer_provider`
+- Accept: `reviewed_at`, `reviewed_by`, `review_result` (the **automated
+  reviewer's** decision, `"accepted"`; not a human decision), `reviewer_provider`
 - Request-changes: `changes_requested_at`, `changes_requested_by`,
   `changes_requested_reason`, `reviewer_provider`
 - Requeue: `requeued_at`, `requeued_by`, updated `iteration`

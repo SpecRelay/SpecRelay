@@ -17,6 +17,9 @@ a crash mid-write never leaves a half-written state.json.
 CLI usage (each subcommand prints to stdout on success, JSON diagnostics
 never required by callers, plain text errors to stderr):
 
+  state_lib.py schema-version
+      Prints CURRENT_SCHEMA_VERSION (the schema version written for new tasks).
+
   state_lib.py get <state-file> <field>
       Prints a top-level field's value (empty line if absent/None).
 
@@ -53,6 +56,21 @@ READY_FOR_REVIEW = "READY_FOR_REVIEW"
 CHANGES_REQUESTED = "CHANGES_REQUESTED"
 READY_FOR_HUMAN_REVIEW = "READY_FOR_HUMAN_REVIEW"
 BLOCKED = "BLOCKED"
+
+# The state.json schema version this engine writes for NEW tasks. This is the
+# single source of truth: bash reads it via `state_lib.py schema-version`
+# (see state.sh) rather than hardcoding the number. It is an integer that
+# increments only when the persisted state.json shape changes in a way the
+# compatibility guard must reason about (see
+# specrelay::workflow::assert_schema_compat and docs/versioning.md).
+#
+# Compatibility rules for a task's recorded schema_version:
+#   * absent (historical task) -> treated as implicit v1; readable and safe.
+#   * <= CURRENT_SCHEMA_VERSION -> compatible (schema is additive within a
+#     major engine version; older/current shapes still read).
+#   * >  CURRENT_SCHEMA_VERSION -> unknown FUTURE schema; a mutating resume/run
+#     is refused with an actionable message (read-only inspection still works).
+CURRENT_SCHEMA_VERSION = 1
 
 # Legacy state name -> canonical state name. Read-only backward compatibility;
 # SpecRelay never writes a legacy name.
@@ -93,6 +111,13 @@ def atomic_write(path, data):
         except OSError:
             pass
         raise
+
+
+def cmd_schema_version(argv):
+    """Print the schema version this engine writes for NEW tasks (the single
+    source of truth used by state.sh / transitions.sh / workflow.sh)."""
+    print(CURRENT_SCHEMA_VERSION)
+    return 0
 
 
 def cmd_get(argv):
@@ -185,9 +210,11 @@ def cmd_transition(argv):
 
 def main(argv):
     if not argv:
-        sys.stderr.write("Usage: state_lib.py <get|init|transition> ...\n")
+        sys.stderr.write("Usage: state_lib.py <schema-version|get|init|set|transition> ...\n")
         return 2
     cmd, rest = argv[0], argv[1:]
+    if cmd == "schema-version":
+        return cmd_schema_version(rest)
     if cmd == "get":
         return cmd_get(rest)
     if cmd == "init":

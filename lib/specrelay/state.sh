@@ -21,6 +21,15 @@ specrelay::state::path() {
   printf '%s/state.json\n' "$1"
 }
 
+# specrelay::state::current_schema_version
+# Prints the state.json schema version this engine writes for NEW tasks. The
+# single source of truth is state_lib.py's CURRENT_SCHEMA_VERSION; callers must
+# not hardcode the number.
+specrelay::state::current_schema_version() {
+  specrelay::state::require_python || return 1
+  python3 "$SPECRELAY_STATE_LIB_PY" schema-version
+}
+
 # specrelay::state::get <state-file> <field>
 specrelay::state::get() {
   specrelay::state::require_python || return 1

@@ -438,6 +438,55 @@ specrelay::workflow::assert_engine_compat() {
   return 0
 }
 
+# specrelay::workflow::assert_schema_compat <state-file>
+# state.json schema compatibility guard (spec 0005, section 4). Complements the
+# engine-version guard above: it compares the SCHEMA version recorded in a
+# task's state.json with the schema version this engine writes for new tasks,
+# and refuses to mutate a task written by an UNKNOWN FUTURE schema rather than
+# silently resuming state it may not fully understand.
+#
+# Compatibility policy (see docs/versioning.md):
+#   * No recorded schema_version (historical task) -> allowed (implicit v1).
+#   * schema_version <= current -> allowed (schema is additive within a major
+#     engine version; older/current shapes still read).
+#   * schema_version > current  -> UNSAFE (written by a newer engine's schema);
+#     refuse the mutating action.
+# The per-invocation override SPECRELAY_ALLOW_SCHEMA_MISMATCH=1 exists for
+# deliberate human recovery; it is never the default and always logs its use.
+# Read-only inspection (show/status/list) never calls this — only mutating
+# resume/run.
+specrelay::workflow::assert_schema_compat() {
+  local state_file="$1" task_sv cur_sv
+  [ -f "$state_file" ] || return 0
+  task_sv="$(specrelay::state::get "$state_file" "schema_version" 2>/dev/null || true)"
+  if [ -z "$task_sv" ] || [ "$task_sv" = "null" ]; then
+    return 0
+  fi
+  # A non-integer schema_version is unreadable metadata, not a safe resume.
+  case "$task_sv" in
+    ''|*[!0-9]*)
+      specrelay::out::err "[specrelay] refusing to resume task: unreadable schema_version '$task_sv' in state.json."
+      specrelay::out::err "  Inspect it read-only with 'specrelay task show', then recover deliberately."
+      return 1
+      ;;
+  esac
+  cur_sv="$(specrelay::state::current_schema_version 2>/dev/null || true)"
+  [ -n "$cur_sv" ] || return 0
+  if [ "$task_sv" -le "$cur_sv" ]; then
+    return 0
+  fi
+
+  if [ "${SPECRELAY_ALLOW_SCHEMA_MISMATCH:-}" = "1" ]; then
+    specrelay::out::err "[specrelay] WARNING: resuming a task written by a newer state schema (task schema_version=$task_sv, this engine writes $cur_sv) because SPECRELAY_ALLOW_SCHEMA_MISMATCH=1 was set."
+    return 0
+  fi
+  specrelay::out::err "[specrelay] refusing to resume task: incompatible state schema (task was written by a newer engine)."
+  specrelay::out::err "  task schema_version: $task_sv"
+  specrelay::out::err "  this engine writes:  $cur_sv"
+  specrelay::out::err "  Install a newer SpecRelay engine, or set SPECRELAY_ALLOW_SCHEMA_MISMATCH=1 to override deliberately."
+  return 1
+}
+
 # --- resume (spec section 39) -----------------------------------------------
 
 # specrelay::workflow::resume <project-root> <task-id>
@@ -452,6 +501,9 @@ specrelay::workflow::resume() {
     return 1
   fi
   if ! specrelay::workflow::assert_engine_compat "$(specrelay::state::path "$task_dir")"; then
+    return 1
+  fi
+  if ! specrelay::workflow::assert_schema_compat "$(specrelay::state::path "$task_dir")"; then
     return 1
   fi
   if ! specrelay::lock::acquire "$root" "$task_id"; then
@@ -507,6 +559,10 @@ specrelay::workflow::run() {
   else
     echo "[specrelay] resuming existing task '$task_id'"
     if ! specrelay::workflow::assert_engine_compat "$(specrelay::state::path "$task_dir")"; then
+      specrelay::lock::release "$root" "$task_id"
+      return 1
+    fi
+    if ! specrelay::workflow::assert_schema_compat "$(specrelay::state::path "$task_dir")"; then
       specrelay::lock::release "$root" "$task_id"
       return 1
     fi

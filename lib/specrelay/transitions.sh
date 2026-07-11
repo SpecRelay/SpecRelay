@@ -91,12 +91,22 @@ specrelay::transitions::create() {
     engine_version="$(tr -d '[:space:]' < "$SPECRELAY_HOME/VERSION")"
   fi
 
-  SPEC_REL="$spec_rel" TASK_ID="$task_id" BASE_COMMIT="$base_commit" CREATED_AT="$(specrelay::transitions::_now)" ALLOW_DIRTY="$allow_dirty" ENGINE_VERSION="$engine_version" \
+  # The explicit state.json schema version (spec 0005, section 4). Written once
+  # at creation from the single source of truth (state_lib.py's
+  # CURRENT_SCHEMA_VERSION) so the compatibility guard
+  # (specrelay::workflow::assert_schema_compat) can refuse an unsafe resume of a
+  # task written by a FUTURE schema. Historical tasks without this field are
+  # treated as implicit v1 and remain readable/resumable.
+  local schema_version
+  schema_version="$(specrelay::state::current_schema_version)"
+
+  SPEC_REL="$spec_rel" TASK_ID="$task_id" BASE_COMMIT="$base_commit" CREATED_AT="$(specrelay::transitions::_now)" ALLOW_DIRTY="$allow_dirty" ENGINE_VERSION="$engine_version" SCHEMA_VERSION="$schema_version" \
   python3 -c '
 import json, os
 fields = {
     "task_id": os.environ["TASK_ID"],
     "state": "DRAFT",
+    "schema_version": int(os.environ["SCHEMA_VERSION"]),
     "created_at": os.environ["CREATED_AT"],
     "base_commit": os.environ["BASE_COMMIT"],
     "requires_human_approval": True,
