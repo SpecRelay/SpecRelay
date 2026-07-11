@@ -219,6 +219,17 @@ specrelay::doctor::run() {
       else
         specrelay::doctor::_provider_unavailable "Reviewer provider: $reviewer_provider — '$(specrelay::provider::claude::_bin)' not found on PATH"
       fi
+      # Reviewer sub-agent readiness. The `--agent ai-reviewer` sub-agent runs
+      # ONLY when the project provides `.claude/agents/ai-reviewer.md` (SpecRelay
+      # does NOT ship it) and the CLI advertises `--agent`. Report the actual
+      # situation so `claude-subagent` never silently pretends a sub-agent that
+      # is not there — a missing file is a non-failing WARNING, not a hard fail,
+      # because the reviewer falls back cleanly to a plain `claude` reviewer.
+      if [ -f "$root/.claude/agents/ai-reviewer.md" ]; then
+        specrelay::doctor::_info "Reviewer sub-agent: ai-reviewer configured (.claude/agents/ai-reviewer.md present; used as --agent ai-reviewer when the CLI advertises --agent)"
+      else
+        specrelay::doctor::_warn "Reviewer sub-agent: no .claude/agents/ai-reviewer.md — the Claude reviewer will run as a plain reviewer; copy templates/claude/agents/ai-reviewer.md (or re-run 'specrelay init') to enable --agent ai-reviewer"
+      fi
       ;;
     *)
       specrelay::doctor::_fail "Reviewer provider: unsupported provider '$reviewer_provider'"

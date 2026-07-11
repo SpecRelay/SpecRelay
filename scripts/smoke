@@ -9,11 +9,18 @@
 #   3. produce a clear doctor result             (bin/specrelay doctor)
 #   4. install from source into a temp prefix    (install/install.sh --prefix)
 #      and run the installed executable          (<prefix>/bin/specrelay version)
+#   5. run the installed doctor provider-optional (<prefix>/bin/specrelay doctor)
+#   6. upgrade in place by reinstalling over the existing install
+#   7. bootstrap a temporary fake-provider consumer project with the installed
+#      CLI and reach READY_FOR_HUMAN_REVIEW without any Claude
+#   8. uninstall cleanly and leave the consumer project's .specrelay/ untouched
 #
-# It relies on NOTHING outside this repository: no Sprint-reports, no `.ai/`
-# host workflow, and no archived `tools/specrelay/` path. Claude is an optional
-# provider and is not required — the doctor step runs in provider-optional mode
-# so an absent Claude CLI is a clear, documented, non-failing result.
+# This is the installation/upgrade readiness verification required by spec 0008
+# (section 8). It relies on NOTHING outside this repository: no Sprint-reports,
+# no `.ai/` host workflow, and no archived `tools/specrelay/` path, and it needs
+# no network access. Claude is an optional provider and is not required — the
+# doctor steps run in provider-optional mode so an absent Claude CLI is a clear,
+# documented, non-failing result.
 #
 #   scripts/smoke
 #
@@ -51,12 +58,16 @@ else
   echo "doctor: FAILED (a mandatory core check failed)"; fail=1
 fi
 
-step "4. install from source into a temp prefix"
-prefix="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-smoke.XXXXXX")"
-cleanup() { [ -n "${prefix:-}" ] && rm -rf "$prefix"; }
+# All temporary artifacts (install prefix + consumer project) live under one
+# workdir removed on exit, so the smoke check never leaves anything behind.
+workdir="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-smoke.XXXXXX")"
+cleanup() { [ -n "${workdir:-}" ] && rm -rf "$workdir"; }
 trap cleanup EXIT
+prefix="$workdir/prefix"
+installed="$prefix/bin/specrelay"
+
+step "4. install from source into a temp prefix"
 if "$ROOT/install/install.sh" --prefix "$prefix" >/dev/null; then
-  installed="$prefix/bin/specrelay"
   if [ -x "$installed" ] && "$installed" version; then
     echo "install + installed version: OK ($installed)"
   else
@@ -64,6 +75,86 @@ if "$ROOT/install/install.sh" --prefix "$prefix" >/dev/null; then
   fi
 else
   echo "install: FAILED"; fail=1
+fi
+
+step "5. installed doctor (provider-optional) in a fake-provider consumer project"
+# Bootstrap a temporary consumer project with the INSTALLED CLI. init writes the
+# claude-executor template; switch both roles to the deterministic fake provider
+# so no Claude is required, then verify doctor is all-green there.
+consumer="$workdir/consumer"
+mkdir -p "$consumer"
+# core.hooksPath=/dev/null neutralizes any developer-global git hook; a local
+# identity keeps `git commit` working on a machine (or CI) with no global one.
+(cd "$consumer" && git init -q \
+  && git config core.hooksPath /dev/null \
+  && git config user.email smoke@specrelay.invalid \
+  && git config user.name "SpecRelay Smoke")
+if [ -x "$installed" ] && (cd "$consumer" && "$installed" init >/dev/null); then
+  cat > "$consumer/.specrelay/config.yml" <<'YAML'
+version: 1
+project:
+  name: smoke-consumer
+specs:
+  root: specs
+tasks:
+  runs_root: .specrelay-runs/tasks
+  max_iterations: 3
+roles:
+  executor:
+    provider: fake
+  reviewer:
+    provider: fake
+context:
+  adapter: none
+  required: false
+validation:
+  full_test_command: "echo ok"
+policy:
+  human_final_review_required: true
+YAML
+  if (cd "$consumer" && SPECRELAY_PROVIDER_OPTIONAL=1 "$installed" doctor >/dev/null); then
+    echo "consumer bootstrap + installed doctor: OK"
+  else
+    echo "consumer doctor: FAILED"; fail=1
+  fi
+else
+  echo "consumer init: FAILED"; fail=1
+fi
+
+step "6. upgrade in place (reinstall over the existing install)"
+if "$ROOT/install/install.sh" --prefix "$prefix" --force >/dev/null && "$installed" version >/dev/null; then
+  echo "reinstall/upgrade over existing install: OK"
+else
+  echo "reinstall/upgrade: FAILED"; fail=1
+fi
+
+step "7. run a fake-provider task with the installed CLI (no Claude)"
+mkdir -p "$consumer/specs/0001-smoke"
+printf '# Smoke spec\n' > "$consumer/specs/0001-smoke/spec.md"
+# Commit the bootstrap so the working-tree baseline is clean (the run guard
+# refuses to start a task on top of unrelated pre-existing changes).
+(cd "$consumer" && git add -A && git commit -q -m "bootstrap specrelay consumer")
+# Capture the run output in full BEFORE grepping. Piping straight into
+# `grep -q` is unsafe under `set -o pipefail`: grep exits at the first match
+# while `run` is still writing, `run` then dies of SIGPIPE (141), and pipefail
+# makes the whole pipeline non-zero even though the match succeeded.
+run_out="$(cd "$consumer" && "$installed" run specs/0001-smoke/spec.md 2>&1)"
+run_rc=$?
+if [ "$run_rc" -eq 0 ] && printf '%s' "$run_out" | grep -q "READY_FOR_HUMAN_REVIEW"; then
+  echo "fake-provider run reached READY_FOR_HUMAN_REVIEW: OK"
+else
+  echo "fake-provider run: FAILED (rc=$run_rc)"; fail=1
+fi
+
+step "8. uninstall removes the tool but not the consumer's .specrelay/"
+if "$ROOT/install/uninstall.sh" --prefix "$prefix" >/dev/null; then
+  if [ ! -e "$installed" ] && [ ! -e "$prefix/share/specrelay" ] && [ -f "$consumer/.specrelay/config.yml" ]; then
+    echo "uninstall removed tool, preserved consumer config: OK"
+  else
+    echo "uninstall: tool files remained or consumer config was removed"; fail=1
+  fi
+else
+  echo "uninstall: FAILED"; fail=1
 fi
 
 echo

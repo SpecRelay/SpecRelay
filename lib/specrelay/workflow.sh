@@ -155,7 +155,7 @@ specrelay::workflow::executor_iteration() {
     return 1
   fi
 
-  echo "[executor] task '$task_id': checking working-tree guard"
+  specrelay::out::log "[executor] task '$task_id': checking working-tree guard"
   if ! specrelay::git_guard::check "$root" "$task_dir"; then
     return 1
   fi
@@ -165,16 +165,16 @@ specrelay::workflow::executor_iteration() {
   context_adapter="$(specrelay::workflow::context_adapter "$root")"
   context_required="$(specrelay::workflow::context_required "$root")"
 
-  echo "[executor] task '$task_id': context-capability preflight (adapter: $context_adapter)"
+  specrelay::out::log "[executor] task '$task_id': context-capability preflight (adapter: $context_adapter)"
   if ! specrelay::context::preflight "$context_adapter" "executor" "$root" "$task_id" "$provider"; then
     if specrelay::workflow::_truthy "$context_required"; then
       specrelay::out::err "[executor] context-capability preflight failed; refusing to claim/launch the executor"
       return 1
     fi
-    echo "[executor] context-capability preflight failed but is not required by policy; proceeding"
+    specrelay::out::log "[executor] context-capability preflight failed but is not required by policy; proceeding"
   fi
 
-  echo "[executor] task '$task_id': claiming"
+  specrelay::out::log "[executor] task '$task_id': claiming"
   if ! specrelay::transitions::claim "$root" "$task_id"; then
     return 1
   fi
@@ -183,14 +183,14 @@ specrelay::workflow::executor_iteration() {
   round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
   [ -n "$round" ] || round=1
 
-  echo "[executor] task '$task_id': running provider '$provider' (round $round)"
+  specrelay::out::log "[executor] task '$task_id': running provider '$provider' (round $round)"
   if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md"; then
     rc=0
   else
     rc=$?
   fi
 
-  echo "[executor] task '$task_id': capturing evidence"
+  specrelay::out::log "[executor] task '$task_id': capturing evidence"
   specrelay::evidence::capture "$root" "$task_dir"
 
   if [ "$rc" -ne 0 ]; then
@@ -226,7 +226,7 @@ specrelay::workflow::executor_iteration() {
     return 1
   fi
 
-  echo "[executor] task '$task_id': submitted for review (READY_FOR_REVIEW)"
+  specrelay::out::log "[executor] task '$task_id': submitted for review (READY_FOR_REVIEW)"
   return 0
 }
 
@@ -253,20 +253,20 @@ specrelay::workflow::reviewer_iteration() {
   provider="$(specrelay::workflow::reviewer_provider "$root")"
 
   if [ "$provider" = "manual" ]; then
-    echo "[reviewer] task '$task_id': reviewer provider is 'manual'; a human must decide (specrelay task accept|request-changes). State unchanged."
+    specrelay::out::log "[reviewer] task '$task_id': reviewer provider is 'manual'; a human must decide (specrelay task accept|request-changes). State unchanged."
     return 2
   fi
 
   context_adapter="$(specrelay::workflow::context_adapter "$root")"
   context_required="$(specrelay::workflow::context_required "$root")"
 
-  echo "[reviewer] task '$task_id': independent context-capability preflight (adapter: $context_adapter)"
+  specrelay::out::log "[reviewer] task '$task_id': independent context-capability preflight (adapter: $context_adapter)"
   if ! specrelay::context::preflight "$context_adapter" "reviewer" "$root" "$task_id" "$provider"; then
     if specrelay::workflow::_truthy "$context_required"; then
       specrelay::out::err "[reviewer] context-capability preflight failed; refusing to launch the reviewer"
       return 1
     fi
-    echo "[reviewer] context-capability preflight failed but is not required by policy; proceeding"
+    specrelay::out::log "[reviewer] context-capability preflight failed but is not required by policy; proceeding"
   fi
 
   local round prompt_file decision rc
@@ -274,7 +274,7 @@ specrelay::workflow::reviewer_iteration() {
   [ -n "$round" ] || round=1
   prompt_file="$(specrelay::workflow::build_reviewer_prompt "$root" "$task_id")"
 
-  echo "[reviewer] task '$task_id': running provider '$provider' (round $round, isolated context)"
+  specrelay::out::log "[reviewer] task '$task_id': running provider '$provider' (round $round, isolated context)"
   if decision="$(specrelay::provider::reviewer_run "$provider" "$root" "$task_dir" "$round" "$prompt_file")"; then
     rc=0
   else
@@ -306,10 +306,10 @@ specrelay::workflow::reviewer_iteration() {
       case "$current" in
         READY_FOR_REVIEW)
           specrelay::transitions::accept "$root" "$task_id" "$provider" || return 1
-          echo "[reviewer] task '$task_id': accepted -> READY_FOR_HUMAN_REVIEW"
+          specrelay::out::log "[reviewer] task '$task_id': accepted -> READY_FOR_HUMAN_REVIEW"
           ;;
         READY_FOR_HUMAN_REVIEW)
-          echo "[reviewer] task '$task_id': already accepted -> READY_FOR_HUMAN_REVIEW (reviewer enacted the transition; runner stops cleanly)"
+          specrelay::out::log "[reviewer] task '$task_id': already accepted -> READY_FOR_HUMAN_REVIEW (reviewer enacted the transition; runner stops cleanly)"
           ;;
         *)
           specrelay::out::err "[reviewer] task '$task_id': reviewer decided ACCEPT but task is in unexpected state '$current'; refusing to transition"
@@ -324,10 +324,10 @@ specrelay::workflow::reviewer_iteration() {
           reason="$(head -c 500 "$task_dir/09-consultant-review.md" 2>/dev/null)"
           [ -n "$reason" ] || reason="changes requested"
           specrelay::transitions::request_changes "$root" "$task_id" "$reason" "$provider" || return 1
-          echo "[reviewer] task '$task_id': changes requested -> CHANGES_REQUESTED"
+          specrelay::out::log "[reviewer] task '$task_id': changes requested -> CHANGES_REQUESTED"
           ;;
         CHANGES_REQUESTED)
-          echo "[reviewer] task '$task_id': changes already requested -> CHANGES_REQUESTED (reviewer enacted the transition; runner stops cleanly)"
+          specrelay::out::log "[reviewer] task '$task_id': changes already requested -> CHANGES_REQUESTED (reviewer enacted the transition; runner stops cleanly)"
           ;;
         *)
           specrelay::out::err "[reviewer] task '$task_id': reviewer decided REQUEST_CHANGES but task is in unexpected state '$current'; refusing to transition"
@@ -351,25 +351,25 @@ specrelay::workflow::run_once() {
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
   state_file="$(specrelay::state::path "$task_dir")"
   current="$(specrelay::state::canonical "$state_file")"
-  echo "[workflow] task '$task_id' current state: $current"
+  specrelay::out::log "[workflow] task '$task_id' current state: $current"
 
   case "$current" in
     READY_FOR_EXECUTOR)
       specrelay::workflow::executor_iteration "$root" "$task_id"
       ;;
     CHANGES_REQUESTED)
-      echo "[workflow] requeuing the task, then routing to the executor..."
+      specrelay::out::log "[workflow] requeuing the task, then routing to the executor..."
       specrelay::transitions::requeue "$root" "$task_id" && specrelay::workflow::executor_iteration "$root" "$task_id"
       ;;
     READY_FOR_REVIEW)
       if [ "$want_reviewer" = "1" ]; then
         specrelay::workflow::reviewer_iteration "$root" "$task_id"
       else
-        echo "[workflow] task is READY_FOR_REVIEW. Re-run with --reviewer to run the reviewer automatically. State unchanged."
+        specrelay::out::log "[workflow] task is READY_FOR_REVIEW. Re-run with --reviewer to run the reviewer automatically. State unchanged."
       fi
       ;;
     READY_FOR_HUMAN_REVIEW)
-      echo "[workflow] task '$task_id' is READY_FOR_HUMAN_REVIEW; human final review required. State unchanged."
+      specrelay::out::log "[workflow] task '$task_id' is READY_FOR_HUMAN_REVIEW; human final review required. State unchanged."
       ;;
     BLOCKED)
       specrelay::out::err "task '$task_id' is BLOCKED; no automated step. State unchanged."
@@ -550,14 +550,14 @@ specrelay::workflow::run() {
   fi
 
   if [ ! -d "$task_dir" ]; then
-    echo "[specrelay] creating task '$task_id' from spec: $spec_rel"
+    specrelay::out::log "[specrelay] creating task '$task_id' from spec: $spec_rel"
     if ! specrelay::transitions::create "$root" "$task_id" "$spec_rel" "$allow_dirty"; then
       specrelay::lock::release "$root" "$task_id"
       return 1
     fi
     specrelay::workflow::seed_task_from_spec "$root" "$task_id" "$spec_abs"
   else
-    echo "[specrelay] resuming existing task '$task_id'"
+    specrelay::out::log "[specrelay] resuming existing task '$task_id'"
     if ! specrelay::workflow::assert_engine_compat "$(specrelay::state::path "$task_dir")"; then
       specrelay::lock::release "$root" "$task_id"
       return 1
@@ -582,7 +582,7 @@ specrelay::workflow::run() {
 
   case "$current" in
     DRAFT|WAITING_FOR_HUMAN)
-      echo "[specrelay] approving task '$task_id' (this 'specrelay run' invocation IS the human approval — see docs/engine-parity.md, 'Approval semantics')"
+      specrelay::out::log "[specrelay] approving task '$task_id' (this 'specrelay run' invocation IS the human approval — see docs/engine-parity.md, 'Approval semantics')"
       if ! specrelay::transitions::approve "$root" "$task_id"; then
         specrelay::lock::release "$root" "$task_id"
         return 1
@@ -608,7 +608,7 @@ specrelay::workflow::run() {
     current="$(specrelay::state::canonical "$state_file")"
     case "$current" in
       READY_FOR_HUMAN_REVIEW)
-        echo "[specrelay] task '$task_id' reached READY_FOR_HUMAN_REVIEW."
+        specrelay::out::log "[specrelay] task '$task_id' reached READY_FOR_HUMAN_REVIEW."
         rc=0
         break
         ;;
@@ -632,7 +632,7 @@ specrelay::workflow::run() {
         fi
         ;;
       CHANGES_REQUESTED)
-        echo "[specrelay] requeuing task '$task_id' for its next iteration"
+        specrelay::out::log "[specrelay] requeuing task '$task_id' for its next iteration"
         if ! specrelay::transitions::requeue "$root" "$task_id"; then
           rc=1
           break
@@ -643,7 +643,7 @@ specrelay::workflow::run() {
         rc=$?
         case "$rc" in
           0) rc=0 ;;
-          2) echo "[specrelay] reviewer provider is 'manual'; stopping the automated loop. Run 'specrelay task accept|request-changes' when ready."; break ;;
+          2) specrelay::out::log "[specrelay] reviewer provider is 'manual'; stopping the automated loop. Run 'specrelay task accept|request-changes' when ready."; break ;;
           *) rc=4; break ;;
         esac
         ;;

@@ -49,6 +49,32 @@ import os
 import sys
 import tempfile
 
+# Shared color policy (optional sibling module). Only the human-facing status
+# lines below are ever colorized; the machine-parsed command output (get,
+# schema-version) is always printed raw so callers can parse it. Color is
+# emitted only when stdout is a TTY (auto) or SPECRELAY_COLOR=always, so any
+# `$(...)` capture stays plain.
+try:
+    import color as _color
+except Exception:  # pragma: no cover - color is an optional sibling module
+    _color = None
+
+
+def _code(name):
+    """An ANSI code from the shared module, or "" when color is unavailable."""
+    return getattr(_color, name, "") if _color is not None else ""
+
+
+def _human(text, code):
+    """Print one human-facing status line to stdout, colorized when the shared
+    policy says color is enabled for stdout. Never used for parsable output."""
+    if _color is not None and code:
+        on, _invalid = _color.enabled_from_env(sys.stdout)
+        if on:
+            text = _color.paint(text, code, True)
+    print(text)
+
+
 DRAFT = "DRAFT"
 READY_FOR_EXECUTOR = "READY_FOR_EXECUTOR"
 EXECUTOR_RUNNING = "EXECUTOR_RUNNING"
@@ -146,7 +172,7 @@ def cmd_init(argv):
         return 3
     os.makedirs(os.path.dirname(path), exist_ok=True)
     atomic_write(path, data)
-    print(f"Initialized state: {path}")
+    _human(f"Initialized state: {path}", _code("CYAN"))
     return 0
 
 
@@ -169,7 +195,7 @@ def cmd_set(argv):
 
     data.update(set_fields)
     atomic_write(path, data)
-    print(f"Updated fields: {', '.join(sorted(set_fields.keys()))}")
+    _human(f"Updated fields: {', '.join(sorted(set_fields.keys()))}", _code("CYAN"))
     return 0
 
 
@@ -204,7 +230,7 @@ def cmd_transition(argv):
     data["state"] = target
 
     atomic_write(path, data)
-    print(f"Transitioned: {current} -> {target}")
+    _human(f"Transitioned: {current} -> {target}", _code("GREEN"))
     return 0
 
 

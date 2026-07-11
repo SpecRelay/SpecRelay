@@ -108,9 +108,20 @@ No sudo, no system directories. Copy-based user installation into a prefix
 This installs `<prefix>/bin/specrelay` (the CLI) and
 `<prefix>/share/specrelay/` (its library, templates, and version). Add
 `<prefix>/bin` to your `PATH` if it isn't already — the installer tells you if
-it isn't. Update an installed copy from a local source with
-`./install/update.sh --from /path/to/specrelay`. Full details:
-[docs/installation.md](docs/installation.md).
+it isn't. You can also install from a **pinned version tag** once one is
+published (`git clone --branch vX.Y.Z --depth 1 …`); no tag exists yet, so track
+`main` for now. Full details, including how to verify which executable you are
+running: [docs/installation.md](docs/installation.md).
+
+**Upgrade** by fast-forwarding your clone and reinstalling
+(`git pull --ff-only origin main && ./install/install.sh`); there is **no**
+`specrelay self-update`. **Uninstall** with `./install/uninstall.sh` (it removes
+only the tool, never a project's `.specrelay/`). See
+[docs/upgrading.md](docs/upgrading.md).
+
+A **Homebrew** install (`brew install specrelay`) is **not available yet** — the
+phased tap plan and a clearly-marked sample formula are in
+[docs/homebrew.md](docs/homebrew.md).
 
 **Requirements:** `bash` (3.2+), `git`, `ruby` (YAML config parsing), and
 `python3` (task state), plus standard POSIX tools; macOS and Linux are
@@ -171,7 +182,11 @@ Providers are adapters that implement the executor and reviewer roles:
 - **`fake`** — deterministic, scriptable; used for testing the workflow with no
   AI involved.
 - **`claude`** / **`claude-subagent`** — drive the Claude CLI. SpecRelay
-  detects availability and never stores credentials in config.
+  detects availability and never stores credentials in config. `claude-subagent`
+  is legacy shorthand for the Claude reviewer with the `ai-reviewer` sub-agent
+  *when the project provides `.claude/agents/ai-reviewer.md`* (shipped as a
+  template, installed by `specrelay init`); otherwise it falls back to a plain
+  Claude reviewer. See [docs/providers.md](docs/providers.md).
 - **`manual`** (reviewer only) — no automated decision; a human runs
   `specrelay task accept` / `specrelay task request-changes`.
 - **your own** — implement the provider contract.

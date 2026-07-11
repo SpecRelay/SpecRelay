@@ -130,6 +130,15 @@ The mechanical push steps a human would later perform (push `main`, push tags
 only after review, enable branch protection) are recorded in
 `docs/publication.md`. Nothing in this repository performs them automatically.
 
+## Upgrading between versions
+
+How a user moves from one installed version to another — the source-clone
+upgrade, the version-tag upgrade, uninstall/reinstall, and the explicit fact
+that there is **no** `specrelay self-update` — is documented in
+[upgrading.md](upgrading.md). `self-update` is a recorded follow-up and a
+documented non-goal until a maintainer decides to build and test it; this
+repository never claims a command it does not implement.
+
 ## For consuming projects
 
 A consuming project pins the exact engine version it expects (for the incubation

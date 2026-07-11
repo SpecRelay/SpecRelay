@@ -50,10 +50,12 @@ specrelay_test::assert_contains "2: always mode emits ANSI escapes" \
   "$out_always" "$ESC["
 specrelay_test::assert_contains "2: always mode dims the role prefix" \
   "$out_always" "${ESC}[2m[executor]${ESC}[0m"
-specrelay_test::assert_contains "2: always mode colors a command line yellow" \
-  "$out_always" "${ESC}[33mcommand: git status --short${ESC}[0m"
-specrelay_test::assert_contains "2: always mode colors the success result green" \
-  "$out_always" "${ESC}[32mresult: success"
+specrelay_test::assert_contains "2: always mode renders a colored aligned 'Bash' label" \
+  "$out_always" "${ESC}[33mBash ${ESC}[0m git status --short"
+specrelay_test::assert_contains "2: always mode renders an aligned 'Read' tool row" \
+  "$out_always" "${ESC}[34mRead ${ESC}[0m docs/providers.md"
+specrelay_test::assert_contains "2: always mode marks the success result green" \
+  "$out_always" "${ESC}[32m● result: success"
 
 # =============================================================================
 # 3 — SPECRELAY_COLOR=never emits no ANSI escapes
@@ -91,6 +93,32 @@ specrelay_test::assert_not_contains "5: final-stdout evidence file has NO ANSI e
   "$(cat "$final5")" "$ESC["
 specrelay_test::assert_contains "5: final-stdout evidence file holds the extracted text" \
   "$(cat "$final5")" "Executor final summary"
+
+# =============================================================================
+# 5b — reviewer decision output stays parse-safe even with SPECRELAY_COLOR=always
+#      (color never leaks into the extracted final text the decision grep reads)
+# =============================================================================
+rfinal="$work/reviewer-final.txt"
+env SPECRELAY_COLOR=always python3 "$RENDERER" --role reviewer:claude --provider claude \
+  --final-stdout "$rfinal" \
+  < "$FIXTURES/claude-reviewer-accept.jsonl" >/dev/null 2>&1
+specrelay_test::assert_not_contains "5b: reviewer final-stdout has NO ANSI escapes in always mode" \
+  "$(cat "$rfinal")" "$ESC["
+specrelay_test::assert_contains "5b: reviewer DECISION marker survives intact for parsing" \
+  "$(cat "$rfinal")" "DECISION: ACCEPT"
+
+# =============================================================================
+# 5c — a long Bash command wraps onto an indented, role-prefixed continuation
+#      line (Claude-Code-like layout) in color mode
+# =============================================================================
+long_cmd="git log --oneline --graph --decorate --all --since=2020-01-01 --author=someone-with-a-long-name"
+long_event="$(printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"%s"}}]}}\n' "$long_cmd")"
+out_long="$(printf '%s' "$long_event" | env SPECRELAY_COLOR=always python3 "$RENDERER" \
+  --role executor --provider claude 2>/dev/null)"
+specrelay_test::assert_contains "5c: long command renders a 'Bash' label line" \
+  "$out_long" "${ESC}[33mBash ${ESC}[0m"
+specrelay_test::assert_contains "5c: long command body wraps onto an indented continuation line" \
+  "$out_long" "${ESC}[2m[executor]${ESC}[0m       git log --oneline"
 
 # =============================================================================
 # 6 — an invalid SPECRELAY_COLOR value falls back to auto (plain to non-TTY)

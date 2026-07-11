@@ -8,6 +8,11 @@ SpecRelay currently ships and installs **from a source tree**. There is no
 package-manager, release-archive, or network install path yet; see
 [Future distribution](#future-distribution) below.
 
+**Related docs:** upgrading and uninstalling are covered in
+[upgrading.md](upgrading.md); the (not-yet-published) Homebrew plan is in
+[homebrew.md](homebrew.md). This page covers first-install and the two
+supported source install paths (a `main` clone and a version tag).
+
 ## Requirements
 
 SpecRelay is a Bash CLI built from portable shell and standard POSIX tools:
@@ -55,6 +60,30 @@ or `roles.reviewer.provider: claude` / `claude-subagent`). Projects using the
 `fake` executor/reviewer or a `manual` reviewer need no Claude CLI at all.
 Continuous integration for this repository intentionally does not install
 Claude; see `SPECRELAY_PROVIDER_OPTIONAL` below.
+
+### Claude reviewer sub-agent (`ai-reviewer`)
+
+The `claude` / `claude-subagent` **reviewer** can run as a named Claude
+sub-agent (`--agent ai-reviewer`), but that requires an agent definition at
+`.claude/agents/ai-reviewer.md` **in your project**. SpecRelay does **not** ship
+that file into your repository — it belongs to the consumer project. SpecRelay
+provides it as a template at `templates/claude/agents/ai-reviewer.md` and sets
+it up for you as follows:
+
+- **`specrelay init`** copies the template to `.claude/agents/ai-reviewer.md`
+  automatically when the reviewer provider is `claude` or `claude-subagent`. It
+  never overwrites an existing agent file.
+- **Manual copy** (e.g. you switched an already-initialized project to a Claude
+  reviewer): copy it yourself —
+
+  ```sh
+  mkdir -p .claude/agents
+  cp "$SPECRELAY_HOME/templates/claude/agents/ai-reviewer.md" .claude/agents/ai-reviewer.md
+  ```
+
+If the file is absent the reviewer still works: it falls back to a plain
+`claude --print` reviewer, and `specrelay doctor` prints a warning so the state
+is never silently misrepresented.
 
 ### Environment variables
 
@@ -164,6 +193,80 @@ Usage: install.sh [--prefix DIR] [--dev-link] [--force] [-h|--help]
   -h, --help     Show this help.
 ```
 
+## Install paths: `main` clone vs. release tag
+
+There are two supported ways to obtain the source tree the installer copies
+from. Both use the same `install/install.sh`; they differ only in **which
+revision** you check out first.
+
+### Install from a fresh clone (tracking `main`)
+
+The canonical fresh-user path. Clone the repository, then install from it:
+
+```sh
+git clone git@github.com:SpecRelay/SpecRelay.git
+cd SpecRelay
+./install/install.sh
+specrelay version     # requires <prefix>/bin on PATH; otherwise run <prefix>/bin/specrelay version
+specrelay doctor
+```
+
+This tracks `main` (the latest reviewed development state). To upgrade later,
+fast-forward the clone and reinstall — see
+[upgrading.md](upgrading.md#upgrade-path-a--source-clone-tracking-main).
+
+> If `<prefix>/bin` is not yet on your `PATH`, the plain `specrelay` name will
+> not resolve in this shell. Either add `<prefix>/bin` to `PATH` first (the
+> installer prints the exact line), or invoke the installed executable by its
+> full path, e.g. `"$HOME/.local/bin/specrelay" version`.
+
+### Install from a release tag
+
+For users who want a pinned version instead of tracking `main`, do a shallow
+clone of a specific tag and install from it:
+
+```sh
+git clone --branch vX.Y.Z --depth 1 git@github.com:SpecRelay/SpecRelay.git SpecRelay
+cd SpecRelay
+./install/install.sh
+specrelay version     # should report X.Y.Z
+```
+
+> **Honesty note:** no version tag has been published yet — the repository
+> currently has **no tags**, and publication is blocked until a license is
+> chosen (see [publication.md](publication.md) and
+> [versioning.md](versioning.md#releases-and-git-tags)). The command above is
+> the documented path for **once a tag exists**; substitute the real tag name
+> when there is one. Until then, use the `main`-clone path above.
+
+### Release tarball / archive install
+
+A downloadable **release tarball/archive** install (fetching a `.tar.gz` for a
+tag and installing from the unpacked tree) is **not supported yet**: no release
+archive is published, and SpecRelay does not download anything over the network
+during install. When a real release archive exists, unpacking it yields the
+same source layout as a checkout, so `./install/install.sh` from the unpacked
+directory would work identically — but that flow is unverified today and is a
+recorded follow-up (see [homebrew.md](homebrew.md) and the release plan in
+[publication.md](publication.md)). Do not assume an archive URL until one is
+published.
+
+## Verifying which executable you are running
+
+After installing, confirm you are running the copy you just installed:
+
+```sh
+command -v specrelay          # the specrelay resolved on your PATH
+specrelay version             # the version it reports
+specrelay doctor              # prints "SpecRelay home (<prefix>/share/specrelay)"
+```
+
+`command -v specrelay` prints the exact path; if it is not
+`<prefix>/bin/specrelay`, an older or different install is shadowing it on your
+`PATH`. The `doctor` output's "SpecRelay home" line names the resources
+directory the running executable actually resolved, which is the definitive
+answer to "which install is this?".
+
 ## Tool root vs. project root
 
 Installing the **tool** is a separate concern from initializing a **project**:
@@ -242,6 +345,89 @@ Adjust the generated config only by editing the keys documented in
 [configuration.md](configuration.md); do not treat a hand-edited config as the
 intended long-term interface.
 
+## Bootstrapping a consumer project (fake provider, no Claude)
+
+You can enable SpecRelay in a project and run a full workflow **without Claude
+installed**, using the deterministic `fake` provider. This is the fastest way
+to confirm your install works end to end.
+
+**Is there a `specrelay init`?** Yes — `specrelay init` is the supported way to
+bootstrap a project; you do **not** have to hand-write configuration. It
+creates `.specrelay/config.yml` from the built-in template, creates the spec
+root, and adds a `.gitignore` entry for the runtime evidence directory.
+
+The template's default executor is `claude` (see the note above about `init`'s
+current fixed template), so for a no-Claude run you switch the providers to
+`fake` after `init`:
+
+```sh
+cd my-project
+git init                     # SpecRelay discovers the project root via git
+specrelay init               # creates .specrelay/config.yml, spec root, .gitignore
+
+# Switch executor AND reviewer to the deterministic fake provider so no Claude
+# CLI is required. Edit .specrelay/config.yml so the roles block reads:
+#
+#   roles:
+#     executor:
+#       provider: fake
+#     reviewer:
+#       provider: fake
+
+specrelay doctor             # should pass: fake providers are always available
+```
+
+The **minimal** `.specrelay/config.yml` for a fake-provider project is:
+
+```yaml
+version: 1
+project:
+  name: my-project
+specs:
+  root: specs
+tasks:
+  runs_root: .specrelay-runs/tasks
+  max_iterations: 3
+roles:
+  executor:
+    provider: fake
+  reviewer:
+    provider: fake
+context:
+  adapter: none
+  required: false
+validation:
+  full_test_command: "echo ok"
+policy:
+  human_final_review_required: true
+```
+
+Specs live under the configured `specs.root` (default `specs/`), one directory
+per task: `specs/0001-example/spec.md`. Run a first deterministic task:
+
+```sh
+mkdir -p specs/0001-example
+printf '# Example spec\n' > specs/0001-example/spec.md
+specrelay run specs/0001-example/spec.md
+```
+
+With the `fake` executor and `fake` reviewer this reaches
+`READY_FOR_HUMAN_REVIEW` deterministically, producing real evidence files under
+`.specrelay-runs/tasks/0001-example/`, and never calls any AI.
+
+**Switching to the Claude provider.** When you are ready to use a real AI, set
+the executor (and optionally reviewer) back to `claude` /`claude-subagent` in
+`.specrelay/config.yml`, and install the Claude CLI so it is on your `PATH`.
+`specrelay doctor` then verifies the Claude CLI is present; without it, doctor
+fails (by default) so a missing provider is never hidden — see
+[providers.md](providers.md).
+
+**What `doctor` verifies in a consumer project:** that you are in a git
+repository, `.specrelay/config.yml` is present and well-formed, the spec root
+exists, the task runtime root is writable (or creatable), and the configured
+executor/reviewer providers are available (`fake` always is; `claude` requires
+the Claude CLI on `PATH`). It is read-only and changes nothing.
+
 ## Updating an installed copy
 
 During incubation the only supported update source is a **local SpecRelay
@@ -283,6 +469,23 @@ Usage: update.sh --from DIR [--prefix DIR] [--allow-downgrade] [-h|--help]
   -h, --help          Show this help.
 ```
 
+## Uninstalling
+
+Remove an installed SpecRelay with the bundled uninstaller. It removes only the
+tool-owned `<prefix>/bin/specrelay` and `<prefix>/share/specrelay/`, refuses to
+delete an unrelated directory, is idempotent, and **never** touches any consumer
+project's `.specrelay/` configuration, task runs, or specs:
+
+```sh
+./install/uninstall.sh                       # uninstall from ~/.local
+./install/uninstall.sh --prefix "$HOME/.local"
+```
+
+The equivalent manual removal is `rm -f "$HOME/.local/bin/specrelay"` and
+`rm -rf "$HOME/.local/share/specrelay"`. Full uninstall/reinstall details,
+including what is intentionally left in consumer projects, are in
+[upgrading.md](upgrading.md#uninstalling).
+
 ## Version ownership
 
 The single source of truth for the version is the **`VERSION` file**. The
@@ -314,3 +517,8 @@ release archive, or other package managers (npm, gem, etc.) — are **possible
 future options only**. None of them exist today, and this document does not
 provide install commands for them. Until they ship, use the copy-based
 `install.sh` / `update.sh` flow described above.
+
+The Homebrew path is planned in phases (a project tap first, Homebrew core only
+much later) and is described — with a clearly-marked **sample** formula — in
+[homebrew.md](homebrew.md). No tap exists yet and `brew install specrelay` does
+not work; that document plans the future, it does not enable it.

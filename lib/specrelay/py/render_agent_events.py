@@ -59,6 +59,15 @@ import re
 import subprocess
 import sys
 
+# Shared color policy (mode resolution, NO_COLOR, escape codes) lives beside
+# this file. It is optional: if it cannot be imported for any reason, the
+# renderer degrades to plain text rather than failing — rendering must never
+# break because of a color problem.
+try:
+    import color as _color
+except Exception:  # pragma: no cover - color is an optional sibling module
+    _color = None
+
 # Maximum characters rendered for any single payload field (command text, file
 # path, message snippet). Larger payloads are truncated with an ellipsis so a
 # huge tool input never floods the terminal.
@@ -181,97 +190,99 @@ def clip(value, limit=MAX_FIELD):
 # events file (--raw-events) and the final stdout file (--final-stdout) are
 # NEVER colorized — those are evidence and stay plain text.
 #
-# Mode is chosen by SPECRELAY_COLOR (auto|always|never), defaulting to auto:
-#   - always: emit colors unconditionally;
-#   - never:  never emit colors;
-#   - auto:   emit colors only when stdout is a TTY, and only when NO_COLOR is
-#             unset. NO_COLOR (https://no-color.org) is honored in auto/never but
-#             is overridden by an explicit SPECRELAY_COLOR=always.
-# An unrecognized SPECRELAY_COLOR value is treated as auto (with a stderr
-# warning). CI / non-TTY output therefore stays plain text by default.
+# Mode is chosen by SPECRELAY_COLOR (auto|always|never) via the shared color
+# module, defaulting to auto (color only on a TTY, honoring NO_COLOR). An
+# unrecognized value is treated as auto (with a stderr warning). CI / non-TTY
+# output therefore stays plain text by default.
+#
+# When color is enabled the plain verb strings the adapters emit ("command: X",
+# "reading: X", ...) are re-laid-out into a Claude-Code-like view: a distinct,
+# aligned, colored tool label followed by the (plain, readable) argument; long
+# Bash commands wrap onto an indented continuation line; result/started lines
+# get a "●" marker. When color is DISABLED the output is byte-for-byte the
+# historical plain form, so evidence, greps, and existing tests are unaffected.
 COLOR_ENABLED = False
 
-_RESET = "\033[0m"
-_DIM = "\033[2m"
-_CYAN = "\033[36m"
-_BLUE = "\033[34m"
-_GREEN = "\033[32m"
-_YELLOW = "\033[33m"
-_MAGENTA = "\033[35m"
-_RED = "\033[31m"
-
-
-def resolve_color_mode(raw):
-    """Normalize a raw SPECRELAY_COLOR value to one of auto|always|never.
-
-    Returns (mode, invalid): `mode` is always a valid value (unrecognized or
-    empty input yields "auto"); `invalid` is True only when a non-empty value
-    was supplied that is not one of the three allowed names, so the caller can
-    warn once."""
-    normalized = (raw or "").strip().lower()
-    if not normalized:
-        return "auto", False
-    if normalized in ("auto", "always", "never"):
-        return normalized, False
-    return "auto", True
-
-
-def compute_color_enabled(mode, stream):
-    """Decide whether to emit ANSI colors for `mode` writing to `stream`.
-
-    always -> True; never -> False; auto -> stdout must be a TTY and NO_COLOR
-    must be unset. NO_COLOR (any value, per the spec) disables color in auto and
-    never, but an explicit SPECRELAY_COLOR=always still wins."""
-    if mode == "always":
-        return True
-    if mode == "never":
-        return False
-    if "NO_COLOR" in os.environ:
-        return False
-    try:
-        return bool(stream.isatty())
-    except Exception:
-        return False
+# Aligned tool rows: plain-message prefix -> (label, color). The label is padded
+# to _LABEL_WIDTH so successive rows line up like Claude Code's tool list.
+_LABEL_WIDTH = 5
+_BASH_INLINE_MAX = 60
+if _color is not None:
+    _TOOL_ROWS = (
+        ("reading: ", "Read", _color.BLUE),
+        ("writing: ", "Write", _color.MAGENTA),
+        ("editing: ", "Edit", _color.MAGENTA),
+        ("searching web: ", "Web", _color.BLUE),
+        ("searching: ", "Grep", _color.BLUE),
+        ("globbing: ", "Glob", _color.BLUE),
+        ("fetching: ", "Fetch", _color.BLUE),
+    )
+else:  # pragma: no cover - color module unavailable
+    _TOOL_ROWS = ()
 
 
 def configure_color(enabled):
     """Set the module-level color flag. main() derives the value from the
     environment; tests may call this directly for deterministic rendering."""
     global COLOR_ENABLED
-    COLOR_ENABLED = bool(enabled)
+    COLOR_ENABLED = bool(enabled) and _color is not None
 
 
-def _body_color(message):
-    """Map a rendered message to an ANSI color (or "" for no color), keyed on the
-    verb prefix the adapters emit. Colors chosen to read well on dark themes."""
-    if message.startswith("says:"):
-        return _GREEN
-    if message.startswith(("reading:", "globbing:", "searching", "fetching:")):
-        return _BLUE
-    if message.startswith(("writing:", "editing")):
-        return _MAGENTA
-    if message.startswith("command"):
-        return _YELLOW
-    if message.startswith("started"):
-        return _CYAN
-    if message.startswith("result:"):
-        return _RED if "error" in message else _GREEN
-    if message.startswith(("error", "turn failed", "tool finished with an error")):
-        return _RED
-    return ""
+def _label(name, code):
+    """A colored, width-padded tool label, e.g. a yellow 'Bash '."""
+    return _color.paint(name.ljust(_LABEL_WIDTH), code, True)
 
 
 def format_rendered_line(role, message):
-    """Build one live line: "[role] message", dimming the role prefix and
-    coloring the body by category when COLOR_ENABLED. With color disabled the
-    output is exactly the historical plain-text form."""
-    prefix = "[%s]" % role
+    """Build the physical output for one rendered event.
+
+    With color disabled: exactly "[role] message" (the historical plain form).
+    With color enabled: a dimmed "[role]" prefix plus a scannable, colored
+    layout. May return multiple physical lines (each role-prefixed) when a long
+    Bash command wraps."""
+    plain_prefix = "[%s]" % role
     if not COLOR_ENABLED:
-        return "%s %s" % (prefix, message)
-    prefix = "%s%s%s" % (_DIM, prefix, _RESET)
-    color = _body_color(message)
-    if color:
-        return "%s %s%s%s" % (prefix, color, message, _RESET)
+        return "%s %s" % (plain_prefix, message)
+
+    prefix = _color.paint(plain_prefix, _color.DIM, True)
+
+    # Bash: a distinct 'Bash' label; short commands inline, long ones on an
+    # indented continuation line (still role-prefixed so every line greps).
+    if message.startswith("command: "):
+        detail = message[len("command: "):]
+        label = _label("Bash", _color.YELLOW)
+        if len(detail) <= _BASH_INLINE_MAX:
+            return "%s %s %s" % (prefix, label, detail)
+        indent = " " * (_LABEL_WIDTH + 1)
+        return "%s %s\n%s %s%s" % (prefix, label, prefix, indent, detail)
+
+    # Other command lines ("command finished: exit N", "running a command").
+    if message.startswith("command"):
+        return "%s %s" % (prefix, _color.paint(message, _color.YELLOW, True))
+
+    # Aligned file/search tool rows: colored label + plain argument.
+    for kw, name, code in _TOOL_ROWS:
+        if message.startswith(kw):
+            return "%s %s %s" % (prefix, _label(name, code), message[len(kw):])
+
+    # Assistant text.
+    if message.startswith("says: "):
+        detail = message[len("says: "):]
+        return "%s %s %s" % (prefix, _color.paint("says", _color.GREEN, True), detail)
+
+    # Result / started lines get a marker so they stand out in the stream.
+    if message.startswith("result:"):
+        code = _color.RED if "error" in message else _color.GREEN
+        return "%s %s" % (prefix, _color.paint("● " + message, code, True))
+    if message.startswith("started"):
+        return "%s %s" % (prefix, _color.paint("● " + message, _color.CYAN, True))
+
+    # Errors / failures.
+    if message.startswith(("error", "turn failed", "tool finished with an error")):
+        return "%s %s" % (prefix, _color.paint(message, _color.RED, True))
+
+    # Everything else (tool: X, subagent: X, updating task list, ...) stays
+    # plain-bodied under the dimmed prefix.
     return "%s %s" % (prefix, message)
 
 
@@ -574,13 +585,14 @@ def main(argv=None):
         except OSError:
             pass
 
-    color_mode, color_invalid = resolve_color_mode(os.environ.get("SPECRELAY_COLOR"))
-    if color_invalid:
-        warn(
-            "warning: unrecognized SPECRELAY_COLOR=%s (expected auto|always|never); using 'auto'"
-            % os.environ.get("SPECRELAY_COLOR", "")
-        )
-    configure_color(compute_color_enabled(color_mode, sys.stdout))
+    if _color is not None:
+        color_on, color_invalid = _color.enabled_from_env(sys.stdout)
+        if color_invalid:
+            warn(
+                "warning: unrecognized SPECRELAY_COLOR=%s (expected auto|always|never); using 'auto'"
+                % os.environ.get("SPECRELAY_COLOR", "")
+            )
+        configure_color(color_on)
 
     raw_fh = None
     if args.raw_events:

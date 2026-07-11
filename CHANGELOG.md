@@ -11,6 +11,57 @@ release date.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] — Public installation & upgrade readiness (task 0008)
+
+Validates and documents the complete first-user journey — install, verify,
+upgrade, uninstall, bootstrap a consumer project, and plan Homebrew packaging —
+from an external user's point of view. Documentation and readiness only; no
+workflow, provider, or task-state semantics change.
+
+### Added
+
+- `install/uninstall.sh`: a copy-safe, no-sudo uninstaller that removes only the
+  tool-owned `<prefix>/bin/specrelay` and `<prefix>/share/specrelay/`, refuses to
+  delete an unrelated directory, is idempotent, and never touches a consumer
+  project's `.specrelay/` config, task runs, or specs.
+- `docs/upgrading.md`: the canonical upgrade path (fast-forward the clone and
+  reinstall, or `install/update.sh --from`), the version-tag upgrade path, and
+  uninstall/reinstall instructions. States plainly that there is **no**
+  `specrelay self-update` and records it as a documented non-goal for now.
+- `docs/homebrew.md`: a phased Homebrew plan (organization tap first, Homebrew
+  core only much later), how a tag/release archive/sha256 are used, how to
+  compute a sha256, and how to test a formula locally — with explicit notes that
+  no tap exists and `brew install specrelay` does not work yet.
+- `packaging/homebrew/specrelay.rb`: a clearly-marked **sample/template** formula
+  with placeholder `url`/`sha256`; not validated against any real release
+  tarball and not installable.
+- `test/install_upgrade_test.sh`: deterministic install/upgrade/uninstall smoke
+  tests — install into a temporary prefix, run the installed `version` and
+  (provider-optional) `doctor`, reinstall over an existing install, uninstall
+  and verify tool-owned files are gone while a consumer `.specrelay/` survives,
+  bootstrap a temporary fake-provider consumer project and run a task, and check
+  that the docs reference commands/files that actually exist. No network access.
+
+### Changed
+
+- `docs/installation.md`: adds the two supported source install paths (`main`
+  clone and version tag), a "release tarball not supported yet" note, a
+  "verify which executable you are running" section, a fake-provider consumer
+  bootstrap walkthrough (init → switch to `fake` → `doctor` → `run`), an
+  uninstall section, and cross-links to `upgrading.md` and `homebrew.md`.
+- `scripts/smoke`: extends the fresh-clone smoke check to also run the installed
+  executable's `doctor` (provider-optional), reinstall over the existing install
+  (upgrade path), bootstrap a temporary fake-provider consumer project and pass
+  `doctor` there, and uninstall and verify removal.
+- `README.md`: documents the version-tag install option, the upgrade/uninstall
+  commands (and that `self-update` does not exist), and links the Homebrew plan.
+
+### Notes
+
+- No release tag is created and no Homebrew tap is published (both remain
+  explicit human follow-ups). No `specrelay self-update` is implemented. No
+  network-dependent test was added.
+
 ## [Unreleased] — Standalone release-readiness baseline (task 0007)
 
 This entry summarizes the first clean public-release baseline for the standalone

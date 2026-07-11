@@ -46,10 +46,13 @@ Currently dispatched provider names (`lib/specrelay/providers/provider.sh`):
 | executor | `fake`, `claude` |
 | reviewer | `fake`, `claude`, `claude-subagent` |
 
-`claude-subagent` is accepted **only** for the reviewer role and routes to the
-same Claude reviewer implementation as `claude`. Any other value causes the
-dispatcher to print `unsupported executor/reviewer provider: <name>` and return
-non-zero.
+`claude-subagent` is accepted **only** for the reviewer role. It is a **legacy
+shorthand** that routes to the same Claude reviewer implementation as `claude`:
+"the Claude reviewer, preferring the `ai-reviewer` sub-agent when the project
+provides one." It does **not** guarantee a sub-agent is used — see
+[Reviewer usage](#the-claude-and-claude-subagent-adapters) below. Any other
+value causes the dispatcher to print
+`unsupported executor/reviewer provider: <name>` and return non-zero.
 
 `specrelay doctor` reports the availability of the configured executor and
 reviewer providers as part of its read-only readiness checks (see
@@ -318,22 +321,41 @@ Codex adapter to demonstrate neutrality). The shell side is the generic
 | `SPECRELAY_SEMANTIC_EVENTS=0` | Force the generic spec-0003 path even when stream-json is advertised. |
 | `SPECRELAY_PYTHON` | Interpreter used for the renderer (default `python3`). |
 | `SPECRELAY_CLAUDE_BIN` | The Claude binary whose `--help` is inspected and which is run. |
-| `SPECRELAY_COLOR` | Color mode for the rendered semantic live lines: `auto` (default), `always`, or `never`. An unrecognized value is treated as `auto` (with a stderr warning). |
+| `SPECRELAY_COLOR` | Color mode for all human-facing terminal output (orchestrator logs and semantic live lines): `auto` (default), `always`, or `never`. An unrecognized value is treated as `auto` (with a stderr warning). |
 | `NO_COLOR` | When set (any value, per [no-color.org](https://no-color.org)), disables color unless `SPECRELAY_COLOR=always` overrides it. |
 
-**Optional color.** The rendered semantic live lines can be colorized for the
-operator terminal (dim role prefix; cyan `started`; green `says:`/success
-`result:`; yellow `command:`; blue `reading:`/`globbing:`/`searching:`; magenta
-`writing:`/`editing:`; red errors). Color is controlled by `SPECRELAY_COLOR`:
+**Optional color.** `SPECRELAY_COLOR` controls ANSI color for **all** of
+SpecRelay's human-facing terminal output — both the engine/orchestrator logs and
+the semantic live agent events. The three modes are:
 
-- `auto` (default) emits ANSI colors **only when stdout is a TTY** and `NO_COLOR`
-  is unset, so CI and other non-TTY output stay plain text automatically;
+- `auto` (default) emits ANSI colors **only when the target stream is a TTY** and
+  `NO_COLOR` is unset, so CI and other non-TTY output stay plain text
+  automatically;
 - `always` emits colors unconditionally (and overrides `NO_COLOR`);
 - `never` never emits colors.
 
-Colors are **terminal-only** and are **never written into evidence**: the raw
-events files (`19`/`20`), the extracted final-text files (`12`/`15`), and the
-stderr files (`13`/`16`) all stay plain text regardless of color mode.
+*Orchestrator logs.* Engine status lines (e.g. `[specrelay] creating task …`,
+`[executor] task … checking working-tree guard`, `Transitioned: … -> …`) get a
+dimmed `[tag]` prefix and a body accent keyed on the state keyword — green as a
+task progresses toward completion, yellow for rework/warnings, red for
+refusals/failures. Errors on stderr are red.
+
+*Semantic live events.* When color is on, the rendered lines are laid out closer
+to the Claude Code UI: a distinct, aligned, colored tool label followed by the
+plain argument — `Bash` (yellow), `Read`/`Grep`/`Glob` (blue), `Write`/`Edit`
+(magenta); a long `Bash` command wraps onto an indented, role-prefixed
+continuation line; `started` and `result:` lines carry a `●` marker (cyan;
+green on success, red on error); `says:` is green. With color **off** the output
+is byte-for-byte the historical single-line plain form, so greps and parsing are
+unaffected.
+
+Colors are **terminal-only** and are **never written into evidence** and never
+pollute machine-parsed channels: the raw events files (`19`/`20`), the extracted
+final-text files (`12`/`15`), the stderr files (`13`/`16`), the persisted
+`state.json`, and the reviewer `DECISION:` output all stay plain text regardless
+of color mode. Color policy is centralized (the shell side in
+`lib/specrelay/output.sh`, the Python side in `lib/specrelay/py/color.py`); no
+raw escape codes are sprinkled through the engine.
 
 `specrelay doctor` reports, as an informational line, whether the semantic layer
 is available for the configured Claude provider(s).
@@ -428,12 +450,23 @@ and the raw JSONL event stream is persisted to `19-executor-events.jsonl` while
 the extracted final assistant text is written to `12-executor-stdout.txt` —
 see [Semantic Claude live event rendering](#semantic-claude-live-event-rendering-spec-0006).
 
-**Reviewer usage.** Always a **fresh** `claude` process. If the repository
-defines a reviewer sub-agent (`.claude/agents/ai-reviewer.md` is present) **and**
-`claude --help` advertises `--agent`, it runs with
+**Reviewer usage.** Always a **fresh** `claude` process. If the **consumer
+project** defines a reviewer sub-agent (`.claude/agents/ai-reviewer.md` is
+present) **and** `claude --help` advertises `--agent`, it runs with
 `--agent ai-reviewer --print --dangerously-skip-permissions`; otherwise it runs
 with `--print --dangerously-skip-permissions`. This flag choice is made by
-*inspecting* `claude --help`, never by guessing. When semantic events are
+*inspecting* `claude --help`, never by guessing.
+
+> **Standalone SpecRelay does not ship `.claude/agents/ai-reviewer.md`.** That
+> file belongs to the *consumer project*, not to the SpecRelay engine. SpecRelay
+> ships it only as a **template** at `templates/claude/agents/ai-reviewer.md`.
+> `specrelay init` copies that template into a project's
+> `.claude/agents/ai-reviewer.md` when the reviewer provider is `claude` or
+> `claude-subagent` (never overwriting an existing file); otherwise copy it
+> manually. When the file is absent the Claude reviewer still works — it simply
+> falls back to a plain `claude --print` reviewer using the same prompt, and
+> `specrelay doctor` reports the sub-agent as not configured. See
+> [Installation](installation.md) for the consumer-project setup. When semantic events are
 available, the same `--verbose --output-format stream-json` flags are added
 (e.g.
 `claude --agent ai-reviewer --print --verbose --output-format stream-json --dangerously-skip-permissions "<prompt>"`),
@@ -463,8 +496,14 @@ session — so the reviewer forms its judgement independently of the executor's
 conversational state.
 
 **`claude-subagent`.** As a reviewer-role provider value, `claude-subagent`
-dispatches to the same `claude` reviewer implementation described above. There
-is no separate executor for `claude-subagent`.
+dispatches to the same `claude` reviewer implementation described above; it is
+kept as **legacy shorthand** for "the Claude reviewer with the `ai-reviewer`
+sub-agent when available." It is fully backward compatible — existing configs
+using `provider: claude-subagent` keep working unchanged — but it is truthfully
+just the `claude` reviewer: it uses `--agent ai-reviewer` **only** when the
+project ships `.claude/agents/ai-reviewer.md` and the CLI advertises `--agent`,
+and otherwise falls back to a plain `claude --print` reviewer. There is no
+separate executor for `claude-subagent`.
 
 **No credentials in SpecRelay config (section 31).** SpecRelay stores only the
 *provider name* in `.specrelay/config.yml` (and, optionally, a binary path via
@@ -485,6 +524,13 @@ provider's availability read-only, mutating nothing:
 - reviewer `manual` → reported as an informational line (a human decides).
 - any other configured value → reported as an unsupported provider (failing
   check).
+
+When the **reviewer** provider is `claude` or `claude-subagent`, `doctor` also
+reports whether the `ai-reviewer` sub-agent is configured: an informational line
+when `.claude/agents/ai-reviewer.md` is present, or a non-failing **warning**
+when it is absent (the reviewer falls back to a plain `claude` reviewer). This
+makes `claude-subagent` honest — it never silently pretends a sub-agent that the
+project has not provided.
 
 When either role uses a Claude provider, `doctor` also prints an informational
 line reporting whether **semantic live events** are available (python3 +

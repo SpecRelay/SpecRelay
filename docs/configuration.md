@@ -112,6 +112,12 @@ default shown here.
   automated reviewer adapters are `claude`, `claude-subagent`, and `fake`
   (deterministic, for testing). Any other value is rejected as an unsupported
   reviewer provider.
+- **`claude-subagent`:** legacy shorthand for the `claude` reviewer that prefers
+  the `ai-reviewer` sub-agent. It uses `--agent ai-reviewer` only when the
+  project provides `.claude/agents/ai-reviewer.md` (shipped as a template and
+  installed by `specrelay init`; see [docs/installation.md](installation.md))
+  and the CLI advertises `--agent`; otherwise it runs as a plain `claude`
+  reviewer. Existing `provider: claude-subagent` configs keep working unchanged.
 
 ### `context.adapter`
 

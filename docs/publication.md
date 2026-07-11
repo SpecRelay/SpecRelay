@@ -49,3 +49,11 @@ version tag  ->  release artifact  ->  checksum  ->  install pinned version
 This project does **not** implement a fake checksum/release/download flow while
 no real artifacts exist. Local, source-based installation (via `install/`) is
 the only supported installation path until real signed releases exist.
+
+## Homebrew packaging (future)
+
+Homebrew distribution depends on the release model above: a real version tag, a
+release archive, and its sha256. The phased plan (an organization tap first,
+Homebrew core only much later) and a clearly-marked **sample** formula are in
+[homebrew.md](homebrew.md). No tap is created here, and `brew install specrelay`
+does not work yet.
