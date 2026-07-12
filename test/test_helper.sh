@@ -63,7 +63,19 @@ specrelay_test::mktemp_project() {
   # nothing about what the tests commit, just that they do not execute arbitrary
   # developer hooks, so the suite is deterministic regardless of the developer's
   # environment.
-  (cd "$dir" && git init -q && git config core.hooksPath /dev/null)
+  # Give every fixture repo a DETERMINISTIC, local Git identity. CI runners (and
+  # freshly-provisioned dev machines) frequently have NO global user.name /
+  # user.email, so any commit — the fixture setup below, OR one SpecRelay's own
+  # engine makes inside the fixture during a task run — would otherwise fail with
+  # "empty ident name / Author identity unknown", leaving the tree dirty and
+  # tripping the working-tree guard. Setting it LOCALLY (not --global) keeps the
+  # suite hermetic: it never reads or writes the developer's real Git identity,
+  # and the value is stable regardless of the ambient environment.
+  (cd "$dir" \
+    && git init -q \
+    && git config core.hooksPath /dev/null \
+    && git config user.name "SpecRelay Test" \
+    && git config user.email "specrelay-test@example.invalid")
   printf '%s\n' "$dir"
 }
 
@@ -178,10 +190,25 @@ specrelay_test::assert_eq() {
   fi
 }
 
+# Literal substring matching WITHOUT a pipe. The previous form
+# (`printf '%s' "$haystack" | grep -Fq -- "$needle"`) races under load: grep -q
+# exits the instant it matches and closes the pipe, so printf — still writing a
+# large haystack — takes SIGPIPE and prints "printf: write error: Broken pipe"
+# to stderr (and could taint the exit status under pipefail). Bash's `==` inside
+# `[[ ]]` does the same fixed-string test with no subprocess and no pipe: the
+# quoted "$needle" is treated as a literal (glob metacharacters in it are NOT
+# expanded), so this is exactly `grep -F`, minus the failure mode.
+specrelay_test::_contains() {
+  case "$2" in
+    *"$1"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 specrelay_test::assert_contains() {
   local desc="$1" haystack="$2" needle="$3"
   TESTS_RUN=$((TESTS_RUN + 1))
-  if printf '%s' "$haystack" | grep -Fq -- "$needle"; then
+  if specrelay_test::_contains "$needle" "$haystack"; then
     echo "ok - $desc"
   else
     TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -194,7 +221,7 @@ specrelay_test::assert_contains() {
 specrelay_test::assert_not_contains() {
   local desc="$1" haystack="$2" needle="$3"
   TESTS_RUN=$((TESTS_RUN + 1))
-  if printf '%s' "$haystack" | grep -Fq -- "$needle"; then
+  if specrelay_test::_contains "$needle" "$haystack"; then
     TESTS_FAILED=$((TESTS_FAILED + 1))
     echo "NOT OK - $desc"
     echo "    expected NOT to contain: $needle"
