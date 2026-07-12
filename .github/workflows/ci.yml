@@ -37,6 +37,16 @@ jobs:
           python3 --version
           ruby --version
 
+      # GitHub-hosted runners have NO global Git identity. The test suite pins a
+      # deterministic LOCAL identity into each fixture repo (see
+      # test/test_helper.sh), so this is belt-and-suspenders: it guarantees any
+      # Git operation that runs outside a fixture repo still has a harmless,
+      # non-personal identity and never fails with "Author identity unknown".
+      - name: Configure a harmless Git identity
+        run: |
+          git config --global user.name "SpecRelay CI"
+          git config --global user.email "specrelay-ci@example.invalid"
+
       - name: Run standalone test suite
         run: scripts/test
 
