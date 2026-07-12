@@ -1,3 +1,7 @@
 
 # SpecRelay local task run evidence
 .specrelay-runs/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
