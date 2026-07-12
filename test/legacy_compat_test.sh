@@ -77,11 +77,25 @@ JSON
 echo "round 2 prompt" > "$multi_dir/02-executor-prompt.md"
 echo "round 1 prompt (backed up)" > "$multi_dir/02-executor-prompt.before-requeue-20260103T030000Z.md"
 
-# --- snapshot every fixture file's content + mtime before any SpecRelay call
+# --- snapshot every fixture file deterministically before any SpecRelay call.
+# One line per file: relative path, symbolic mode, byte size, and a content
+# checksum. This is enough to catch any file being added, removed, renamed, or
+# content-modified, while being byte-stable across runs and portable between
+# macOS and Linux.
+#
+# It deliberately does NOT use `stat`: the old form `stat -f %m` is `file mtime`
+# on macOS but `--file-system` (statvfs) on GNU/Linux, where `%m` is not a valid
+# operand — so on CI it dumped the FILESYSTEM's free-blocks / free-inodes
+# counters, which drift on their own and made this assertion flap even though no
+# fixture file changed. `ls -ld` (first 10 columns = the mode string), `wc -c`,
+# and `cksum` are all POSIX and identical on both platforms.
 snapshot() {
   (cd "$proj" && find .ai-runs -type f -exec sh -c '
       for f; do
-        printf "%s %s %s\n" "$f" "$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")" "$(cksum < "$f")"
+        mode=$(ls -ld "$f" | cut -c1-10)
+        size=$(wc -c < "$f" | tr -d " ")
+        sum=$(cksum < "$f" | cut -d" " -f1)
+        printf "%s %s %s %s\n" "$f" "$mode" "$size" "$sum"
       done
     ' sh {} + | sort)
 }
