@@ -13,7 +13,7 @@ from a standalone source checkout, or the installed `specrelay ...` on your
 | Command | Purpose | Exit-code semantics |
 |---|---|---|
 | `specrelay run <spec-path> [--task-id <id>] [--allow-dirty-baseline]` | Full create→approve→run→review lifecycle | `0`/`1`/`2`/`3`/`4`/`5` (see `run` below) |
-| `specrelay resume <task-ref>` | One safe next step on an existing task | `0` step ran; non-zero on error/BLOCKED |
+| `specrelay resume <task-ref>` | Resume an existing task and drive the executor/reviewer loop to a terminal/stop state | `0`/`1`/`2`/`3`/`4`/`5` (same contract as `run`) |
 | `specrelay status [<task-ref>]` | Read-only status (one task, or all) | `0` on success; `1` lookup error |
 | `specrelay show <task-ref>` | Read-only full detail | `0` on success; `1` lookup error |
 | `specrelay task approve <task-ref>` | Human-approval gate → `READY_FOR_EXECUTOR` | `0` transitioned; non-zero refused |
@@ -57,9 +57,20 @@ live event rendering".
 ```
 specrelay resume <task-ref>
 ```
-Inspects a task's persisted state and runs exactly one safe next step
-(never restarts from the beginning). Used internally by `specrelay run`'s
-own loop, and by the `run-ai-loop.sh` compatibility shim.
+Resumes an existing task from its persisted state and drives the **same**
+executor/reviewer automation loop as `specrelay run`, to the next terminal or
+explicit-stop state (never restarts from the beginning). It shares `run`'s
+exit-code contract (`0` success, `1` usage/config/lookup error, `2` reviewer is
+`manual`, `3` `BLOCKED`, `4` provider failure, `5` maximum iterations).
+
+Because it uses the same loop, resuming a task whose effective reviewer provider
+is **not** `manual` continues from `READY_FOR_REVIEW` **into reviewer execution
+in the same invocation** and reaches `READY_FOR_HUMAN_REVIEW` — no second manual
+`resume` is required (spec 0010). `READY_FOR_REVIEW` is an internal handoff state
+for the automated reviewer, not the normal endpoint of a successful run; `resume`
+only rests there when the reviewer is `manual` or the automated reviewer fails,
+and always logs an explicit reason. Also used by the `run-ai-loop.sh`
+compatibility shim.
 
 ```
 specrelay status [<task-ref>]

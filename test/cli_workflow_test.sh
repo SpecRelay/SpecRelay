@@ -9,6 +9,35 @@
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
 
 proj="$(specrelay_test::mktemp_specrelay_project)"
+# This file exercises the MANUAL reviewer CLI subcommands (task accept /
+# request-changes). Under the automated-reviewer continuation contract (spec
+# 0010) `resume` with an automated reviewer would run the reviewer too and
+# reach READY_FOR_HUMAN_REVIEW; to deterministically rest a task at
+# READY_FOR_REVIEW for a human decision the reviewer provider must be the
+# explicit `manual` opt-out. Reconfigure this fixture accordingly (executor
+# stays the deterministic `fake` provider).
+cat > "$proj/.specrelay/config.yml" <<'YAML'
+version: 1
+project:
+  name: Fixture Project
+specs:
+  root: docs/sdd
+tasks:
+  runs_root: .ai-runs/tasks
+  max_iterations: 3
+roles:
+  executor:
+    provider: fake
+  reviewer:
+    provider: manual
+context:
+  adapter: none
+  required: false
+validation:
+  full_test_command: "echo ok"
+policy:
+  human_final_review_required: true
+YAML
 mkdir -p "$proj/docs/sdd/0001-cli-fixture"
 echo "# CLI fixture spec" > "$proj/docs/sdd/0001-cli-fixture/spec.md"
 (cd "$proj" && git add -A && git commit -q -m "commit spec")

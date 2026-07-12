@@ -485,43 +485,109 @@ specrelay::workflow::reviewer_iteration() {
   return 0
 }
 
-# --- single dispatched step (mirrors legacy run-workflow.sh --once) --------
+# --- the shared executor<->reviewer automation loop (spec 0010) -------------
 
-# specrelay::workflow::run_once <project-root> <task-id> [want-reviewer(0|1)]
-specrelay::workflow::run_once() {
-  local root="$1" task_id="$2" want_reviewer="${3:-0}" task_dir state_file current
+# specrelay::workflow::drive <project-root> <task-id>
+# The single automation loop shared by BOTH `specrelay run <spec>` and
+# `specrelay resume <task>`. Given a task whose state.json already exists, it
+# repeatedly dispatches the one safe next step for the current state until a
+# terminal or explicit-stop state is reached. This is what makes automated
+# reviewer continuation work (spec 0010): after the executor submits and the
+# task becomes READY_FOR_REVIEW, the SAME invocation runs the reviewer instead
+# of leaving the operator to start it by hand.
+#
+# It NEVER stops silently at READY_FOR_REVIEW. `READY_FOR_REVIEW` is an internal
+# handoff state for automated review; the loop only rests there when the
+# effective reviewer provider is 'manual' (an explicit opt-out) or the automated
+# reviewer fails/is unavailable — and in both cases it logs an explicit reason
+# (spec 0010, section 4). The normal successful path continues through the
+# reviewer to `READY_FOR_HUMAN_REVIEW` in the same invocation.
+#
+# Exit codes (spec section 54):
+#   0  reached READY_FOR_HUMAN_REVIEW
+#   1  usage/config/lookup error (or the internal safety limit — an engine bug)
+#   2  reviewer provider is 'manual' — automated loop stops; human action required
+#   3  task is BLOCKED
+#   4  provider (executor or reviewer) failure — task remains READY_FOR_REVIEW
+#   5  maximum iterations reached without acceptance
+specrelay::workflow::drive() {
+  local root="$1" task_id="$2" task_dir state_file
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
   state_file="$(specrelay::state::path "$task_dir")"
-  current="$(specrelay::state::canonical "$state_file")"
-  specrelay::out::log "[workflow] task '$task_id' current state: $current"
 
-  case "$current" in
-    READY_FOR_EXECUTOR)
-      specrelay::workflow::executor_iteration "$root" "$task_id"
-      ;;
-    CHANGES_REQUESTED)
-      specrelay::out::log "[workflow] requeuing the task, then routing to the executor..."
-      specrelay::transitions::requeue "$root" "$task_id" && specrelay::workflow::executor_iteration "$root" "$task_id"
-      ;;
-    READY_FOR_REVIEW)
-      if [ "$want_reviewer" = "1" ]; then
+  local max_iter safety_limit safety_count current rc
+  max_iter="$(specrelay::workflow::max_iterations "$root")"
+  case "$max_iter" in ''|*[!0-9]*) max_iter=3 ;; esac
+  safety_limit=$((max_iter * 2 + 6))
+  safety_count=0
+  rc=0
+
+  while :; do
+    safety_count=$((safety_count + 1))
+    if [ "$safety_count" -gt "$safety_limit" ]; then
+      specrelay::out::err "[specrelay] internal safety limit reached without a terminal state; stopping (this indicates an engine bug, not a normal outcome)"
+      rc=1
+      break
+    fi
+
+    current="$(specrelay::state::canonical "$state_file")"
+    case "$current" in
+      READY_FOR_HUMAN_REVIEW)
+        specrelay::out::log "[specrelay] task '$task_id' reached READY_FOR_HUMAN_REVIEW."
+        rc=0
+        break
+        ;;
+      BLOCKED)
+        specrelay::out::err "[specrelay] task '$task_id' is BLOCKED."
+        rc=3
+        break
+        ;;
+      READY_FOR_EXECUTOR)
+        local iteration
+        iteration="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
+        [ -n "$iteration" ] || iteration=1
+        if [ "$iteration" -gt "$max_iter" ] 2>/dev/null; then
+          specrelay::out::err "[specrelay] task '$task_id' reached the maximum of $max_iter iteration(s) without acceptance."
+          rc=5
+          break
+        fi
+        if ! specrelay::workflow::executor_iteration "$root" "$task_id"; then
+          rc=4
+          break
+        fi
+        ;;
+      CHANGES_REQUESTED)
+        specrelay::out::log "[specrelay] requeuing task '$task_id' for its next iteration"
+        if ! specrelay::transitions::requeue "$root" "$task_id"; then
+          rc=1
+          break
+        fi
+        ;;
+      READY_FOR_REVIEW)
         specrelay::workflow::reviewer_iteration "$root" "$task_id"
-      else
-        specrelay::out::log "[workflow] task is READY_FOR_REVIEW. Re-run with --reviewer to run the reviewer automatically. State unchanged."
-      fi
-      ;;
-    READY_FOR_HUMAN_REVIEW)
-      specrelay::out::log "[workflow] task '$task_id' is READY_FOR_HUMAN_REVIEW; human final review required. State unchanged."
-      ;;
-    BLOCKED)
-      specrelay::out::err "task '$task_id' is BLOCKED; no automated step. State unchanged."
-      return 1
-      ;;
-    *)
-      specrelay::out::err "task '$task_id' has state '$current' with no safe automated step"
-      return 1
-      ;;
-  esac
+        rc=$?
+        case "$rc" in
+          0) rc=0 ;;
+          2)
+            specrelay::out::log "[reviewer] reviewer provider is 'manual'; stopping at READY_FOR_REVIEW for human review. Run 'specrelay task accept' or 'specrelay task request-changes' when ready."
+            break
+            ;;
+          *)
+            specrelay::out::err "[reviewer] automated reviewer failed; task remains READY_FOR_REVIEW for recovery/resume."
+            rc=4
+            break
+            ;;
+        esac
+        ;;
+      *)
+        specrelay::out::err "[specrelay] task '$task_id' has state '$current' with no safe automated step."
+        rc=1
+        break
+        ;;
+    esac
+  done
+
+  return "$rc"
 }
 
 # specrelay::workflow::assert_engine_compat <state-file>
@@ -632,9 +698,13 @@ specrelay::workflow::assert_schema_compat() {
 # --- resume (spec section 39) -----------------------------------------------
 
 # specrelay::workflow::resume <project-root> <task-id>
-# Inspects persisted state and chooses ONE safe next action (a single
-# run_once step with reviewer automation enabled) — it never blindly
-# restarts a task from the beginning.
+# Resumes an existing task from its persisted state and drives the shared
+# executor<->reviewer automation loop (specrelay::workflow::drive) to the next
+# terminal or explicit-stop state — it never blindly restarts a task from the
+# beginning. Because it uses the same loop as `specrelay run`, resuming an
+# automated-reviewer task continues from READY_FOR_REVIEW into reviewer
+# execution in the SAME invocation and reaches READY_FOR_HUMAN_REVIEW without a
+# second manual `resume` (spec 0010). It shares `run`'s exit-code contract.
 specrelay::workflow::resume() {
   local root="$1" task_id="$2" task_dir
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
@@ -651,7 +721,7 @@ specrelay::workflow::resume() {
   if ! specrelay::lock::acquire "$root" "$task_id"; then
     return 1
   fi
-  specrelay::workflow::run_once "$root" "$task_id" "1"
+  specrelay::workflow::drive "$root" "$task_id"
   local rc=$?
   specrelay::lock::release "$root" "$task_id"
   return "$rc"
@@ -732,70 +802,12 @@ specrelay::workflow::run() {
       ;;
   esac
 
-  local max_iter safety_limit safety_count rc
-  max_iter="$(specrelay::workflow::max_iterations "$root")"
-  case "$max_iter" in ''|*[!0-9]*) max_iter=3 ;; esac
-  safety_limit=$((max_iter * 2 + 6))
-  safety_count=0
-  rc=0
-
-  while :; do
-    safety_count=$((safety_count + 1))
-    if [ "$safety_count" -gt "$safety_limit" ]; then
-      specrelay::out::err "[specrelay] internal safety limit reached without a terminal state; stopping (this indicates an engine bug, not a normal outcome)"
-      rc=1
-      break
-    fi
-
-    current="$(specrelay::state::canonical "$state_file")"
-    case "$current" in
-      READY_FOR_HUMAN_REVIEW)
-        specrelay::out::log "[specrelay] task '$task_id' reached READY_FOR_HUMAN_REVIEW."
-        rc=0
-        break
-        ;;
-      BLOCKED)
-        specrelay::out::err "[specrelay] task '$task_id' is BLOCKED."
-        rc=3
-        break
-        ;;
-      READY_FOR_EXECUTOR)
-        local iteration
-        iteration="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
-        [ -n "$iteration" ] || iteration=1
-        if [ "$iteration" -gt "$max_iter" ] 2>/dev/null; then
-          specrelay::out::err "[specrelay] task '$task_id' reached the maximum of $max_iter iteration(s) without acceptance."
-          rc=5
-          break
-        fi
-        if ! specrelay::workflow::executor_iteration "$root" "$task_id"; then
-          rc=4
-          break
-        fi
-        ;;
-      CHANGES_REQUESTED)
-        specrelay::out::log "[specrelay] requeuing task '$task_id' for its next iteration"
-        if ! specrelay::transitions::requeue "$root" "$task_id"; then
-          rc=1
-          break
-        fi
-        ;;
-      READY_FOR_REVIEW)
-        specrelay::workflow::reviewer_iteration "$root" "$task_id"
-        rc=$?
-        case "$rc" in
-          0) rc=0 ;;
-          2) specrelay::out::log "[specrelay] reviewer provider is 'manual'; stopping the automated loop. Run 'specrelay task accept|request-changes' when ready."; break ;;
-          *) rc=4; break ;;
-        esac
-        ;;
-      *)
-        specrelay::out::err "[specrelay] task '$task_id' has state '$current' with no safe automated step."
-        rc=1
-        break
-        ;;
-    esac
-  done
+  # Drive the shared executor<->reviewer automation loop to a terminal or
+  # explicit-stop state. This is the SAME loop `specrelay resume` uses, so both
+  # commands continue automated reviewer execution identically (spec 0010).
+  local rc
+  specrelay::workflow::drive "$root" "$task_id"
+  rc=$?
 
   specrelay::lock::release "$root" "$task_id"
   return "$rc"

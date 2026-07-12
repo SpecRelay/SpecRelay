@@ -57,19 +57,47 @@ specrelay_test::assert_contains "case 2 (allowed): reaches READY_FOR_HUMAN_REVIE
 # detected/blocked.
 # =============================================================================
 proj3="$(specrelay_test::mktemp_specrelay_project)"
+# Use a MANUAL reviewer for this fixture so the task can deterministically REST
+# at CHANGES_REQUESTED before the external change is injected. Under the
+# automated-reviewer continuation contract (spec 0010), CHANGES_REQUESTED is an
+# internal loop state: an automated reviewer's `resume` requeues straight
+# through it into the next executor round, so it is never a resting point. The
+# manual reviewer opt-out lets a human enact request-changes and pause here,
+# which is exactly the controlled-phase boundary this case needs.
+cat > "$proj3/.specrelay/config.yml" <<'YAML'
+version: 1
+project:
+  name: Fixture Project
+specs:
+  root: docs/sdd
+tasks:
+  runs_root: .ai-runs/tasks
+  max_iterations: 3
+roles:
+  executor:
+    provider: fake
+  reviewer:
+    provider: manual
+context:
+  adapter: none
+  required: false
+validation:
+  full_test_command: "echo ok"
+policy:
+  human_final_review_required: true
+YAML
 mkdir -p "$proj3/docs/sdd/0003-case3"
 echo "# Case 3 spec" > "$proj3/docs/sdd/0003-case3/spec.md"
 (cd "$proj3" && git add -A && git commit -q -m "commit spec")
 
-# Manually drive round 1 to CHANGES_REQUESTED via a single --once step so we
-# can inject an external change before continuing.
-plan3="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-plan.XXXXXX")"
-printf 'decision=request_changes\n' > "$plan3/reviewer-plan.txt"
-
-(cd "$proj3" && "$SPECRELAY_BIN" task create docs/sdd/0003-case3/spec.md >/dev/null)
-(cd "$proj3" && "$SPECRELAY_BIN" task approve 0003-case3 >/dev/null)
-(cd "$proj3" && SPECRELAY_FAKE_REVIEWER_PLAN="$plan3/reviewer-plan.txt" "$SPECRELAY_BIN" resume 0003-case3 >/dev/null 2>&1)
-(cd "$proj3" && SPECRELAY_FAKE_REVIEWER_PLAN="$plan3/reviewer-plan.txt" "$SPECRELAY_BIN" resume 0003-case3 >/dev/null 2>&1)
+# Drive round 1's executor via run (the manual reviewer rests the task at
+# READY_FOR_REVIEW), then enact request-changes via the CLI to reach
+# CHANGES_REQUESTED so we can inject an external change before continuing.
+(cd "$proj3" && "$SPECRELAY_BIN" run docs/sdd/0003-case3/spec.md >/dev/null 2>&1)
+task_dir3="$proj3/.ai-runs/tasks/0003-case3"
+printf 'manual reviewer notes\n' > "$task_dir3/09-consultant-review.md"
+printf 'manual next prompt\n' > "$task_dir3/11-next-executor-prompt.md"
+(cd "$proj3" && "$SPECRELAY_BIN" task request-changes 0003-case3 "please fix X" >/dev/null 2>&1)
 state3="$(cd "$proj3" && "$SPECRELAY_BIN" task status 0003-case3 2>&1)"
 specrelay_test::assert_contains "case 3 setup: task is CHANGES_REQUESTED before the external change" "$state3" "CHANGES_REQUESTED"
 

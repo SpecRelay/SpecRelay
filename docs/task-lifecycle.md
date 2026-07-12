@@ -46,6 +46,13 @@ different reviews:
 - `READY_FOR_REVIEW` means **ready for the automated (AI) reviewer**. The
   executor has finished and produced evidence; the reviewer agent has not yet
   decided. Its legacy alias `READY_FOR_CODEX_REVIEW` reflects the same meaning.
+  When the effective reviewer provider is not `manual`, this is an **internal
+  handoff state**, not the normal endpoint of a successful run: both `specrelay
+  run` and `specrelay resume` continue from `READY_FOR_REVIEW` into reviewer
+  execution in the same invocation (spec 0010). A command only rests here for an
+  explicit `manual` reviewer, a reviewer failure/unavailability, or an explicit
+  guard (e.g. `max_iterations`), and it always logs the reason — never a silent
+  stop.
 - `READY_FOR_HUMAN_REVIEW` means **the automated reviewer accepted, and the
   human final gate is still pending**. Automated acceptance is *not* human
   approval — it only moves the task to the human gate. The automated decision
@@ -190,10 +197,16 @@ From `READY_FOR_REVIEW` the reviewer decides exactly one of:
 `specrelay::workflow::reviewer_iteration` requires the task to already be
 `READY_FOR_REVIEW`.
 
-- **Manual reviewer.** If `roles.reviewer.provider` is `manual`, no automated
-  decision is possible: the iteration returns a distinct "manual" signal, the
-  state is left unchanged, and a human must run
-  `specrelay task accept` / `specrelay task request-changes`.
+- **Manual reviewer.** `manual` is an explicit **opt-out / safe-bootstrap**
+  mode, not the intended automated AI workflow. If `roles.reviewer.provider` is
+  `manual`, no automated decision is possible: the iteration returns a distinct
+  "manual" signal, the state is left unchanged at `READY_FOR_REVIEW`, and both
+  `run` and `resume` stop there (exit code `2`) with an explicit log line stating
+  that manual reviewer mode is configured and that a human must run
+  `specrelay task accept` / `specrelay task request-changes`. When the reviewer
+  provider is **not** `manual`, the same invocation instead continues into
+  reviewer execution automatically (spec 0010); a reviewer failure leaves the
+  task at `READY_FOR_REVIEW` with an explicit recovery reason (exit code `4`).
 - **Independent context.** An automated reviewer runs its **own**
   context-capability preflight for the `reviewer` role; it is never satisfied
   by the executor's preflight having passed.

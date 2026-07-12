@@ -107,11 +107,19 @@ default shown here.
 - **Purpose:** which provider adapter runs the review step.
 - **Type:** string.
 - **Default:** `manual`.
-- **Accepted values:** `manual` means no automated decision — the loop stops and
-  a human runs `specrelay task accept` / `specrelay task request-changes`. The
-  automated reviewer adapters are `claude`, `claude-subagent`, and `fake`
-  (deterministic, for testing). Any other value is rejected as an unsupported
-  reviewer provider.
+- **Accepted values:** `manual` is an explicit **opt-out / safe-bootstrap** mode
+  — no automated decision is made, so both `specrelay run` and `specrelay resume`
+  stop at `READY_FOR_REVIEW` (with a clear handoff message) and a human runs
+  `specrelay task accept` / `specrelay task request-changes`. It is **not** the
+  intended automated AI workflow. The automated reviewer adapters are `claude`,
+  `claude-subagent`, and `fake` (deterministic, for testing). Any other value is
+  rejected as an unsupported reviewer provider.
+- **Automated continuation (spec 0010):** when the effective reviewer provider is
+  **not** `manual`, `READY_FOR_REVIEW` is an internal handoff state, not the
+  normal endpoint. Both `run` and `resume` continue from `READY_FOR_REVIEW` into
+  reviewer execution in the same invocation and reach `READY_FOR_HUMAN_REVIEW`
+  on acceptance. An automated reviewer failure leaves the task at
+  `READY_FOR_REVIEW` with a clear recovery reason so it can be re-run/resumed.
 - **`claude-subagent`:** **legacy shorthand**, not the preferred new form. It
   normalizes internally to `provider: claude` + `agent: ai-reviewer` +
   `model: provider-default`. Existing `provider: claude-subagent` configs keep

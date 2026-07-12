@@ -34,10 +34,17 @@ Each role is configured with three explicit, provider-neutral keys in
 | `roles.<role>.model` | **model** — provider model id, or `provider-default` | `provider-default` |
 | `roles.<role>.agent` | **agent** — provider-specific profile/subagent, or `none` | `none` (reviewer legacy `claude-subagent` → `ai-reviewer`) |
 
-- **provider** = the adapter/CLI. `manual` is not an adapter — it means "no
-  automated reviewer; a human runs `specrelay task accept` /
-  `specrelay task request-changes`." When the reviewer provider is `manual`, the
-  automated loop stops and reports that human action is required (exit code `2`).
+- **provider** = the adapter/CLI. `manual` is not an adapter — it is an explicit
+  **opt-out / safe-bootstrap** mode meaning "no automated reviewer; a human runs
+  `specrelay task accept` / `specrelay task request-changes`." When the reviewer
+  provider is `manual`, both `run` and `resume` stop at `READY_FOR_REVIEW` and
+  report that human action is required (exit code `2`). This is deliberately
+  **not** the intended automated AI workflow: when the reviewer provider is not
+  `manual`, `READY_FOR_REVIEW` is an internal handoff state and the same
+  invocation continues into reviewer execution, reaching `READY_FOR_HUMAN_REVIEW`
+  on acceptance (spec 0010). An automated reviewer failure leaves the task at
+  `READY_FOR_REVIEW` with a clear recovery reason (exit code `4`) — never a
+  silent stop.
 - **model** = the provider model id or version. The sentinel `provider-default`
   means SpecRelay passes **no** explicit model flag and lets the provider CLI use
   its own default. The model is an **opaque string** — SpecRelay never validates

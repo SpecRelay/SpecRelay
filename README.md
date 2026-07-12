@@ -204,8 +204,10 @@ Available providers:
   template, installed by `specrelay init`) and the CLI advertises `--agent`;
   otherwise it falls back to a plain Claude reviewer. Prefer the explicit
   three-key form in new configs.
-- **`manual`** (reviewer only) — no automated decision; a human runs
-  `specrelay task accept` / `specrelay task request-changes`.
+- **`manual`** (reviewer only) — an explicit **opt-out / safe-bootstrap** mode,
+  not the intended automated AI workflow: no automated decision is made, so both
+  `run` and `resume` stop at `READY_FOR_REVIEW` (with a clear handoff message)
+  and a human runs `specrelay task accept` / `specrelay task request-changes`.
 - **your own** — implement the provider contract.
 
 `model` and `agent` can also be overridden per role from the environment
@@ -226,6 +228,15 @@ See [docs/context-adapters.md](docs/context-adapters.md).
 (`READY_FOR_HUMAN_REVIEW` on accept, or `CHANGES_REQUESTED →
 READY_FOR_EXECUTOR` on request-changes, up to `tasks.max_iterations`). Full
 detail and the evidence layout: [docs/task-lifecycle.md](docs/task-lifecycle.md).
+
+When the effective reviewer provider is **not** `manual`, `READY_FOR_REVIEW` is
+an **internal handoff state**, not the normal endpoint: both `specrelay run` and
+`specrelay resume` continue automatically from `READY_FOR_REVIEW` into reviewer
+execution in the same invocation, so the normal successful path ends at
+`READY_FOR_HUMAN_REVIEW` with no second manual `resume`. A run stops at
+`READY_FOR_REVIEW` only for an explicit `manual` reviewer, a reviewer
+failure/unavailability, or an explicit guard (e.g. `max_iterations`), and it
+always logs the reason (spec 0010).
 
 ## Safety model
 

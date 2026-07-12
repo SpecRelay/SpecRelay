@@ -46,8 +46,12 @@ Workflow engine:
                          until READY_FOR_HUMAN_REVIEW, CHANGES_REQUESTED-only
                          (manual reviewer), BLOCKED, a provider failure, or
                          the configured maximum iterations.
-  resume <task-ref>      Inspect a task's persisted state and run exactly one
-                         safe next step (never restarts from the beginning).
+  resume <task-ref>      Resume an existing task from its persisted state and
+                         drive the executor/reviewer loop to the next terminal
+                         or explicit-stop state, exactly like 'run' (never
+                         restarts from the beginning). With an automated
+                         reviewer it continues from READY_FOR_REVIEW into
+                         reviewer execution in the same invocation.
   status [<task-ref>]    Show one task's summary, or every known task's
                          id/state/iteration.
   show <task-ref>        Show one task's full detail (delegates to

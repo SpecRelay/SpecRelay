@@ -57,9 +57,14 @@ $out2"
 specrelay_test::assert_contains "concurrent: the losing process reports a lock conflict" \
   "$combined" "locked by another process"
 
+# With an automated reviewer, the single process that wins the claim drives the
+# full executor<->reviewer loop to completion in the same invocation (spec
+# 0010), so the task ends cleanly at READY_FOR_HUMAN_REVIEW. A double-claim
+# would instead have errored/blocked — reaching this single terminal state
+# confirms exactly one claim went through.
 final_state="$(cd "$proj" && "$SPECRELAY_BIN" task status 0001-race 2>&1)"
-specrelay_test::assert_contains "concurrent: the task ends up cleanly in READY_FOR_REVIEW (only one claim went through)" \
-  "$final_state" "READY_FOR_REVIEW"
+specrelay_test::assert_contains "concurrent: the task ends up cleanly in READY_FOR_HUMAN_REVIEW (only one claim went through)" \
+  "$final_state" "READY_FOR_HUMAN_REVIEW"
 
 rm -f "$out1_file" "$out2_file"
 
