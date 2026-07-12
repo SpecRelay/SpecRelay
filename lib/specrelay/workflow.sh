@@ -373,21 +373,33 @@ specrelay::workflow::executor_iteration() {
 # --- one reviewer round ------------------------------------------------------
 
 # specrelay::workflow::reviewer_iteration <project-root> <task-id>
-# Requires the task to already be READY_FOR_REVIEW. Returns 0 on a decision
+# Requires the task to be READY_FOR_REVIEW or (resuming an interrupted
+# automated review — spec 0011) REVIEWER_RUNNING. Returns 0 on a decision
 # (accept or request-changes, either is "success" for the loop), 1 on a
-# provider failure (no decision, state unchanged), 2 when the configured
-# reviewer provider is 'manual' (no automated decision is possible; state
-# unchanged, a human must run 'specrelay task accept|request-changes').
+# provider failure (no decision — the task stays REVIEWER_RUNNING once the
+# review has started, so a later resume continues from there), 2 when the
+# configured reviewer provider is 'manual' (no automated decision is possible;
+# state unchanged at READY_FOR_REVIEW, a human must run 'specrelay task
+# accept|request-changes').
+#
+# For an AUTOMATED reviewer the state machine is (spec 0011):
+#   READY_FOR_REVIEW -> REVIEWER_RUNNING -> READY_FOR_HUMAN_REVIEW | CHANGES_REQUESTED
+# The transition into REVIEWER_RUNNING happens BEFORE the reviewer executes, so
+# review-in-progress is observable and an interrupted review is recoverable by
+# resume (it never rolls back to READY_FOR_REVIEW).
 specrelay::workflow::reviewer_iteration() {
   local root="$1" task_id="$2" task_dir state_file current
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
   state_file="$(specrelay::state::path "$task_dir")"
 
   current="$(specrelay::state::canonical "$state_file")"
-  if [ "$current" != "READY_FOR_REVIEW" ]; then
-    specrelay::out::err "cannot run reviewer iteration: task '$task_id' is not READY_FOR_REVIEW (current: $current)"
-    return 1
-  fi
+  case "$current" in
+    READY_FOR_REVIEW|REVIEWER_RUNNING) : ;;
+    *)
+      specrelay::out::err "cannot run reviewer iteration: task '$task_id' is not READY_FOR_REVIEW or REVIEWER_RUNNING (current: $current)"
+      return 1
+      ;;
+  esac
 
   local provider context_adapter context_required
   provider="$(specrelay::workflow::reviewer_provider "$root")"
@@ -409,6 +421,21 @@ specrelay::workflow::reviewer_iteration() {
     specrelay::out::log "[reviewer] context-capability preflight failed but is not required by policy; proceeding"
   fi
 
+  # Enter REVIEWER_RUNNING before executing the reviewer (spec 0011). Only when
+  # the task is still READY_FOR_REVIEW: when resuming an interrupted review the
+  # task is already REVIEWER_RUNNING and must NOT be transitioned again. A
+  # preflight refusal above returns early, so it never marks a review "running"
+  # that was never launched (that is not a reviewer crash — no state change).
+  if [ "$current" = "READY_FOR_REVIEW" ]; then
+    specrelay::out::log "[reviewer] task '$task_id': entering REVIEWER_RUNNING (automated review in progress)"
+    if ! specrelay::transitions::start_review "$root" "$task_id" "$provider"; then
+      specrelay::out::err "[reviewer] task '$task_id': could not enter REVIEWER_RUNNING; task stays READY_FOR_REVIEW"
+      return 1
+    fi
+  else
+    specrelay::out::log "[reviewer] task '$task_id': resuming an interrupted review from REVIEWER_RUNNING"
+  fi
+
   local round prompt_file decision rc model agent
   model="$(specrelay::workflow::role_model "$root" reviewer)"
   agent="$(specrelay::workflow::role_agent "$root" reviewer)"
@@ -425,7 +452,7 @@ specrelay::workflow::reviewer_iteration() {
   rm -f "$prompt_file"
 
   if [ "$rc" -ne 0 ]; then
-    specrelay::out::err "[reviewer] task '$task_id': provider exited non-zero or produced no clear decision; task stays READY_FOR_REVIEW"
+    specrelay::out::err "[reviewer] task '$task_id': provider exited non-zero or produced no clear decision; task stays REVIEWER_RUNNING for recovery/resume (spec 0011: no rollback)"
     return 1
   fi
 
@@ -436,7 +463,7 @@ specrelay::workflow::reviewer_iteration() {
   # and CAN itself enact the accept/request-changes transition (neither is
   # runner-owned), so by the time control returns here the task may already be
   # in the decision's target state. Own the transition state-aware: apply it
-  # only when the task is still READY_FOR_REVIEW, and otherwise stop cleanly
+  # only when the task is still REVIEWER_RUNNING, and otherwise stop cleanly
   # instead of attempting a second, invalid transition out of an already-final
   # state (spec 0004). This does NOT weaken any guard — transitions.sh still
   # refuses genuinely invalid transitions; the runner simply stops making the
@@ -446,7 +473,7 @@ specrelay::workflow::reviewer_iteration() {
   case "$decision" in
     ACCEPT)
       case "$current" in
-        READY_FOR_REVIEW)
+        REVIEWER_RUNNING)
           specrelay::transitions::accept "$root" "$task_id" "$provider" || return 1
           specrelay::out::log "[reviewer] task '$task_id': accepted -> READY_FOR_HUMAN_REVIEW"
           ;;
@@ -461,7 +488,7 @@ specrelay::workflow::reviewer_iteration() {
       ;;
     REQUEST_CHANGES)
       case "$current" in
-        READY_FOR_REVIEW)
+        REVIEWER_RUNNING)
           local reason
           reason="$(head -c 500 "$task_dir/09-consultant-review.md" 2>/dev/null)"
           [ -n "$reason" ] || reason="changes requested"
@@ -563,7 +590,12 @@ specrelay::workflow::drive() {
           break
         fi
         ;;
-      READY_FOR_REVIEW)
+      READY_FOR_REVIEW|REVIEWER_RUNNING)
+        # Both the initial handoff (READY_FOR_REVIEW) and an interrupted
+        # automated review (REVIEWER_RUNNING — spec 0011) are driven by the same
+        # reviewer iteration: it enters REVIEWER_RUNNING when needed, executes
+        # the reviewer, and transitions to the decision state. Resuming a task
+        # left in REVIEWER_RUNNING continues the review from there (no rollback).
         specrelay::workflow::reviewer_iteration "$root" "$task_id"
         rc=$?
         case "$rc" in
@@ -573,7 +605,9 @@ specrelay::workflow::drive() {
             break
             ;;
           *)
-            specrelay::out::err "[reviewer] automated reviewer failed; task remains READY_FOR_REVIEW for recovery/resume."
+            local failed_state
+            failed_state="$(specrelay::state::canonical "$state_file")"
+            specrelay::out::err "[reviewer] automated reviewer failed; task remains ${failed_state:-READY_FOR_REVIEW} for recovery/resume."
             rc=4
             break
             ;;

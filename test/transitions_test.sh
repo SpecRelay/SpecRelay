@@ -123,6 +123,72 @@ rc=$?
 specrelay_test::assert_eq "block succeeds from EXECUTOR_RUNNING" "0" "$rc"
 specrelay_test::assert_eq "block transitions to BLOCKED" "BLOCKED" "$(specrelay::state::canonical "$state_file")"
 
+# --- REVIEWER_RUNNING transitions (spec 0011) -------------------------------
+# A second task walked to READY_FOR_REVIEW, then through the automated-reviewer
+# state machine: READY_FOR_REVIEW -> REVIEWER_RUNNING -> READY_FOR_HUMAN_REVIEW.
+rr_dir="$(specrelay::task::dir "$proj" "0002-reviewer-running")"
+rr_state="$(specrelay::state::path "$rr_dir")"
+specrelay::transitions::create "$proj" "0002-reviewer-running" "$spec_rel" "0" >/dev/null
+specrelay::transitions::approve "$proj" "0002-reviewer-running" >/dev/null
+echo "Prompt #1 — review-running fixture" > "$rr_dir/02-executor-prompt.md"
+specrelay::transitions::claim "$proj" "0002-reviewer-running" >/dev/null
+printf 'log\n' > "$rr_dir/03-executor-log.md"
+printf 'tests\n' > "$rr_dir/07-tests.txt"
+printf 'summary\n' > "$rr_dir/08-executor-summary.md"
+specrelay::evidence::capture "$proj" "$rr_dir"
+rr_token="$(specrelay::auth::mint "$proj" "0002-reviewer-running")"
+specrelay::transitions::submit "$proj" "0002-reviewer-running" "$rr_token" >/dev/null
+specrelay_test::assert_eq "second task reaches READY_FOR_REVIEW" "READY_FOR_REVIEW" "$(specrelay::state::canonical "$rr_state")"
+
+# start_review: READY_FOR_REVIEW -> REVIEWER_RUNNING (the only way in).
+specrelay::transitions::start_review "$proj" "0002-reviewer-running" "fake" >/dev/null
+rc=$?
+specrelay_test::assert_eq "start_review succeeds from READY_FOR_REVIEW" "0" "$rc"
+specrelay_test::assert_eq "start_review transitions to REVIEWER_RUNNING" "REVIEWER_RUNNING" "$(specrelay::state::canonical "$rr_state")"
+
+# start_review is refused a second time (task is no longer READY_FOR_REVIEW):
+# REVIEWER_RUNNING -> REVIEWER_RUNNING is not an allowed re-entry.
+specrelay::transitions::start_review "$proj" "0002-reviewer-running" "fake" >/tmp/specrelay-rr-again.$$ 2>&1
+rc=$?
+specrelay_test::assert_true "start_review refuses when the task is already REVIEWER_RUNNING" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+rm -f /tmp/specrelay-rr-again.$$
+
+# accept from REVIEWER_RUNNING -> READY_FOR_HUMAN_REVIEW (automated path).
+printf 'review notes\n' > "$rr_dir/09-consultant-review.md"
+printf 'business summary\n' > "$rr_dir/10-business-summary.md"
+specrelay::transitions::accept "$proj" "0002-reviewer-running" "fake" >/dev/null
+rc=$?
+specrelay_test::assert_eq "accept succeeds from REVIEWER_RUNNING" "0" "$rc"
+specrelay_test::assert_eq "accept transitions REVIEWER_RUNNING -> READY_FOR_HUMAN_REVIEW" \
+  "READY_FOR_HUMAN_REVIEW" "$(specrelay::state::canonical "$rr_state")"
+
+# A third task proves the request-changes side from REVIEWER_RUNNING, and that
+# start_review is refused from a non-READY_FOR_REVIEW state (EXECUTOR_RUNNING).
+rc2_dir="$(specrelay::task::dir "$proj" "0003-reviewer-running")"
+rc2_state="$(specrelay::state::path "$rc2_dir")"
+specrelay::transitions::create "$proj" "0003-reviewer-running" "$spec_rel" "0" >/dev/null
+specrelay::transitions::approve "$proj" "0003-reviewer-running" >/dev/null
+echo "Prompt #1 — reject fixture" > "$rc2_dir/02-executor-prompt.md"
+specrelay::transitions::claim "$proj" "0003-reviewer-running" >/dev/null
+specrelay::transitions::start_review "$proj" "0003-reviewer-running" "fake" >/tmp/specrelay-rr-early.$$ 2>&1
+rc=$?
+specrelay_test::assert_true "start_review is refused from EXECUTOR_RUNNING (forbidden entry)" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+rm -f /tmp/specrelay-rr-early.$$
+printf 'log\n' > "$rc2_dir/03-executor-log.md"
+printf 'tests\n' > "$rc2_dir/07-tests.txt"
+printf 'summary\n' > "$rc2_dir/08-executor-summary.md"
+specrelay::evidence::capture "$proj" "$rc2_dir"
+rc2_token="$(specrelay::auth::mint "$proj" "0003-reviewer-running")"
+specrelay::transitions::submit "$proj" "0003-reviewer-running" "$rc2_token" >/dev/null
+specrelay::transitions::start_review "$proj" "0003-reviewer-running" "fake" >/dev/null
+printf 'review notes\n' > "$rc2_dir/09-consultant-review.md"
+printf 'next prompt\n' > "$rc2_dir/11-next-executor-prompt.md"
+specrelay::transitions::request_changes "$proj" "0003-reviewer-running" "needs work" "fake" >/dev/null
+rc=$?
+specrelay_test::assert_eq "request-changes succeeds from REVIEWER_RUNNING" "0" "$rc"
+specrelay_test::assert_eq "request-changes transitions REVIEWER_RUNNING -> CHANGES_REQUESTED" \
+  "CHANGES_REQUESTED" "$(specrelay::state::canonical "$rc2_state")"
+
 # --- cross-engine mutation safety (spec section 50) -------------------------
 legacy_task_dir="$proj/.ai-runs/tasks/9999-legacy-task"
 mkdir -p "$legacy_task_dir"

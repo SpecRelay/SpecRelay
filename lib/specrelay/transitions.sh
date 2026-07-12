@@ -200,8 +200,36 @@ specrelay::transitions::submit() {
     "$(printf '{"submitted_for_review_at": "%s", "submitted_for_review_by": "specrelay-runner"}' "$(specrelay::transitions::_now)")"
 }
 
+# specrelay::transitions::start_review <project-root> <task-id> [reviewer-provider]
+# READY_FOR_REVIEW -> REVIEWER_RUNNING (spec 0011). Marks an AUTOMATED review as
+# in progress so waiting-for-a-reviewer is distinguishable from being-reviewed.
+# This is the ONLY allowed way into REVIEWER_RUNNING; the runner-owned reviewer
+# loop (workflow.sh) is its only caller. Manual reviewers never enter this state
+# (they rest at READY_FOR_REVIEW for a human). No evidence files are required
+# here — the reviewer has not run yet.
+specrelay::transitions::start_review() {
+  local root="$1" task_id="$2" reviewer_provider="${3:-}" task_dir state_file
+  task_dir="$(specrelay::task::dir "$root" "$task_id")"
+  state_file="$(specrelay::state::path "$task_dir")"
+  specrelay::transitions::_require_owned "$task_dir" || return 1
+
+  local set_json
+  set_json="$(REVIEW_STARTED_AT="$(specrelay::transitions::_now)" REVIEWER_PROVIDER="$reviewer_provider" python3 -c '
+import json, os
+d = {"review_started_at": os.environ["REVIEW_STARTED_AT"], "review_started_by": "reviewer-agent"}
+if os.environ.get("REVIEWER_PROVIDER"):
+    d["reviewer_provider"] = os.environ["REVIEWER_PROVIDER"]
+print(json.dumps(d))
+')"
+
+  specrelay::state::transition "$state_file" "READY_FOR_REVIEW" "REVIEWER_RUNNING" "$set_json"
+}
+
 # specrelay::transitions::accept <project-root> <task-id> [reviewer-provider]
-# READY_FOR_REVIEW -> READY_FOR_HUMAN_REVIEW. Requires 09/10 non-empty.
+# REVIEWER_RUNNING|READY_FOR_REVIEW -> READY_FOR_HUMAN_REVIEW. Requires 09/10
+# non-empty. An AUTOMATED reviewer accepts from REVIEWER_RUNNING (the runner
+# enters that state before executing the reviewer — spec 0011); a MANUAL
+# reviewer's human decision still accepts from READY_FOR_REVIEW (unchanged).
 specrelay::transitions::accept() {
   local root="$1" task_id="$2" reviewer_provider="${3:-}" task_dir state_file f
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
@@ -229,11 +257,13 @@ if os.environ.get("REVIEWER_PROVIDER"):
 print(json.dumps(d))
 ')"
 
-  specrelay::state::transition "$state_file" "READY_FOR_REVIEW" "READY_FOR_HUMAN_REVIEW" "$set_json"
+  specrelay::state::transition "$state_file" "REVIEWER_RUNNING,READY_FOR_REVIEW" "READY_FOR_HUMAN_REVIEW" "$set_json"
 }
 
 # specrelay::transitions::request_changes <project-root> <task-id> <reason> [reviewer-provider]
-# READY_FOR_REVIEW -> CHANGES_REQUESTED. Requires 09/11 non-empty.
+# REVIEWER_RUNNING|READY_FOR_REVIEW -> CHANGES_REQUESTED. Requires 09/11
+# non-empty. An AUTOMATED reviewer rejects from REVIEWER_RUNNING (spec 0011); a
+# MANUAL reviewer's human decision still rejects from READY_FOR_REVIEW.
 specrelay::transitions::request_changes() {
   local root="$1" task_id="$2" reason="${3:?reason required}" reviewer_provider="${4:-}" task_dir state_file f
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
@@ -260,7 +290,7 @@ if os.environ.get("REVIEWER_PROVIDER"):
 print(json.dumps(d))
 ')"
 
-  specrelay::state::transition "$state_file" "READY_FOR_REVIEW" "CHANGES_REQUESTED" "$set_json"
+  specrelay::state::transition "$state_file" "REVIEWER_RUNNING,READY_FOR_REVIEW" "CHANGES_REQUESTED" "$set_json"
 }
 
 # specrelay::transitions::requeue <project-root> <task-id>
@@ -335,12 +365,12 @@ specrelay::transitions::requeue() {
 # specrelay::cli::task_recover, which checks lock owner liveness and reclaims a
 # stale lock via specrelay::lock::acquire before calling this).
 #
-# Supported recoveries (section 3.6 + the section 3.7(a) decision that the
-# reviewer runs synchronously under READY_FOR_REVIEW, so there is no distinct
-# reviewer-running state to recover — an interrupted reviewer is simply re-run
-# from READY_FOR_REVIEW):
+# Supported recoveries (section 3.6):
 #   EXECUTOR_RUNNING -> READY_FOR_EXECUTOR
-# Any other (source, target) pair is refused.
+# Any other (source, target) pair is refused. An interrupted AUTOMATED reviewer
+# needs no recover path here: spec 0011 gives it the durable REVIEWER_RUNNING
+# state, and a later `specrelay resume` continues the review from REVIEWER_RUNNING
+# directly (no rollback, no fabricated evidence — see workflow.sh's drive loop).
 #
 # On success it records durable, audited recovery metadata into state.json
 # (recovered_at / recovered_by / recovered_from_state / recovery_reason) and

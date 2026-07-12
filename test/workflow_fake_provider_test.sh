@@ -26,6 +26,10 @@ out_a="$(specrelay_test::run "$proj_a" "docs/sdd/0001-scenario-a/spec.md" 2>&1)"
 rc_a=$?
 specrelay_test::assert_eq "scenario A: run exits 0" "0" "$rc_a"
 specrelay_test::assert_contains "scenario A: reaches READY_FOR_HUMAN_REVIEW" "$out_a" "READY_FOR_HUMAN_REVIEW"
+# spec 0011: an automated reviewer makes its execution visible by entering
+# REVIEWER_RUNNING before running, then exits it on the accept decision.
+specrelay_test::assert_contains "scenario A: automated reviewer enters REVIEWER_RUNNING" \
+  "$out_a" "entering REVIEWER_RUNNING"
 
 state_a="$proj_a/.ai-runs/tasks/0001-scenario-a/state.json"
 specrelay_test::assert_contains "scenario A: state.json records READY_FOR_HUMAN_REVIEW" \
@@ -78,7 +82,10 @@ specrelay_test::assert_eq "scenario C: no READY_FOR_REVIEW submission was record
   "" "$(cat "$task_dir_c/state.json" | grep -o 'submitted_for_review_at')"
 
 # =============================================================================
-# Scenario D — reviewer failure: non-zero exit -> no false acceptance
+# Scenario D — reviewer failure: non-zero exit -> no false acceptance. Under
+# spec 0011 the runner enters REVIEWER_RUNNING BEFORE executing the reviewer,
+# so an interrupted/failed automated review remains in REVIEWER_RUNNING (no
+# rollback to READY_FOR_REVIEW) for a later resume to continue from.
 # =============================================================================
 proj_d="$(specrelay_test::mktemp_specrelay_project)"
 mkdir -p "$proj_d/docs/sdd/0004-scenario-d"
@@ -91,8 +98,8 @@ rc_d=$?
 specrelay_test::assert_true "scenario D: run exits non-zero on reviewer failure" "$([ "$rc_d" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_not_contains "scenario D: never falsely accepts" "$out_d" "accepted -> READY_FOR_HUMAN_REVIEW"
 task_dir_d="$proj_d/.ai-runs/tasks/0004-scenario-d"
-specrelay_test::assert_contains "scenario D: task remains READY_FOR_REVIEW (no false accept)" \
-  "$(cat "$task_dir_d/state.json")" "READY_FOR_REVIEW"
+specrelay_test::assert_contains "scenario D: interrupted review remains REVIEWER_RUNNING (no false accept, no rollback)" \
+  "$(cat "$task_dir_d/state.json")" "REVIEWER_RUNNING"
 
 # =============================================================================
 # Scenario E — max rounds: repeated REQUEST_CHANGES -> clear max-round outcome

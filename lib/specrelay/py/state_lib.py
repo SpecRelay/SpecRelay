@@ -79,6 +79,11 @@ DRAFT = "DRAFT"
 READY_FOR_EXECUTOR = "READY_FOR_EXECUTOR"
 EXECUTOR_RUNNING = "EXECUTOR_RUNNING"
 READY_FOR_REVIEW = "READY_FOR_REVIEW"
+# An automated reviewer currently owns the task and review execution is in
+# progress (spec 0011). Manual reviewers never enter this state — they rest at
+# READY_FOR_REVIEW for a human decision. Existing task files without this state
+# remain valid; only new automated executions may enter it (no migration).
+REVIEWER_RUNNING = "REVIEWER_RUNNING"
 CHANGES_REQUESTED = "CHANGES_REQUESTED"
 READY_FOR_HUMAN_REVIEW = "READY_FOR_HUMAN_REVIEW"
 BLOCKED = "BLOCKED"

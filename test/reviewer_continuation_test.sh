@@ -136,8 +136,10 @@ specrelay_test::assert_contains "manual reviewer leaves the task at READY_FOR_RE
 
 # =============================================================================
 # Test 4 (spec required test #6) — an AUTOMATED reviewer that FAILS leaves the
-# task at READY_FOR_REVIEW with a clear recovery reason and exit 4 (never a
-# silent stop, never a false acceptance).
+# task in REVIEWER_RUNNING with a clear recovery reason and exit 4 (never a
+# silent stop, never a false acceptance). Under spec 0011 the runner enters
+# REVIEWER_RUNNING before executing the reviewer, so an interrupted review
+# remains in REVIEWER_RUNNING (no rollback) for a later resume to continue.
 # =============================================================================
 proj4="$(specrelay_test::mktemp_specrelay_project)"
 specrelay_test::_new_task "$proj4" "0004-resume-revfail" "fake"
@@ -152,8 +154,8 @@ specrelay_test::assert_contains "reviewer failure is reported clearly with a rec
 specrelay_test::assert_not_contains "reviewer failure never falsely accepts" \
   "$out4" "READY_FOR_HUMAN_REVIEW"
 state4="$proj4/.ai-runs/tasks/0004-resume-revfail/state.json"
-specrelay_test::assert_contains "reviewer failure leaves the task at READY_FOR_REVIEW for recovery" \
-  "$(cat "$state4")" "READY_FOR_REVIEW"
+specrelay_test::assert_contains "interrupted review remains in REVIEWER_RUNNING for recovery (spec 0011)" \
+  "$(cat "$state4")" "REVIEWER_RUNNING"
 
 # =============================================================================
 # Test 5 (spec required test #7) — the request-changes flow via resume still
@@ -174,6 +176,40 @@ specrelay_test::assert_contains "resume rework reaches READY_FOR_HUMAN_REVIEW" "
 task_dir5="$proj5/.ai-runs/tasks/0005-resume-rework"
 specrelay_test::assert_eq "resume rework: final iteration is 2" \
   "2" "$(grep -o '"iteration": [0-9]*' "$task_dir5/state.json" | grep -o '[0-9]*')"
+
+# =============================================================================
+# Test 6 (spec 0011) — an interrupted automated review parked in REVIEWER_RUNNING
+# is continued by a later `specrelay resume` directly from REVIEWER_RUNNING and
+# reaches READY_FOR_HUMAN_REVIEW. Proves the acceptance criteria "interrupted
+# reviews remain in REVIEWER_RUNNING" and "resume continues correctly from
+# REVIEWER_RUNNING" — no rollback to READY_FOR_REVIEW is required or performed.
+# =============================================================================
+proj6="$(specrelay_test::mktemp_specrelay_project)"
+specrelay_test::_new_task "$proj6" "0006-resume-revrunning" "fake"
+plan6="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-plan.XXXXXX")"
+printf 'exit=1\n' > "$plan6/reviewer-plan.txt"
+
+# First resume: executor submits, reviewer enters REVIEWER_RUNNING then crashes
+# (exit=1). The task must be left in REVIEWER_RUNNING (exit 4), not rolled back.
+out6a="$(cd "$proj6" && SPECRELAY_FAKE_REVIEWER_PLAN="$plan6/reviewer-plan.txt" "$SPECRELAY_BIN" resume 0006-resume-revrunning 2>&1)"
+rc6a=$?
+specrelay_test::assert_eq "first resume (reviewer crash) exits 4" "4" "$rc6a"
+state6="$proj6/.ai-runs/tasks/0006-resume-revrunning/state.json"
+specrelay_test::assert_contains "crashed automated review is left in REVIEWER_RUNNING" \
+  "$(cat "$state6")" "REVIEWER_RUNNING"
+
+# Second resume: no failing plan (reviewer defaults to accept). The loop must
+# continue FROM REVIEWER_RUNNING, run the reviewer, and reach the terminal state.
+out6b="$(cd "$proj6" && "$SPECRELAY_BIN" resume 0006-resume-revrunning 2>&1)"
+rc6b=$?
+specrelay_test::assert_eq "resume from REVIEWER_RUNNING exits 0" "0" "$rc6b"
+specrelay_test::assert_contains "resume from REVIEWER_RUNNING continues the interrupted review" \
+  "$out6b" "resuming an interrupted review from REVIEWER_RUNNING"
+specrelay_test::assert_contains "resume from REVIEWER_RUNNING runs the reviewer" "$out6b" "reviewer:fake"
+specrelay_test::assert_contains "resume from REVIEWER_RUNNING reaches READY_FOR_HUMAN_REVIEW" \
+  "$out6b" "READY_FOR_HUMAN_REVIEW"
+specrelay_test::assert_contains "final state.json is READY_FOR_HUMAN_REVIEW" \
+  "$(cat "$state6")" "READY_FOR_HUMAN_REVIEW"
 
 specrelay_test::summary
 exit $?
