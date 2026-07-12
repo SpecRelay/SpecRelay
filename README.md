@@ -159,9 +159,13 @@ tasks:
   max_iterations: 3
 roles:
   executor:
-    provider: claude
+    provider: claude          # adapter/CLI that runs the role
+    model: provider-default   # model id, or provider-default (no model flag)
+    agent: none               # provider-specific profile/subagent, or none
   reviewer:
     provider: manual
+    model: provider-default
+    agent: none
 context:
   adapter: none
   required: false
@@ -177,21 +181,37 @@ machine-specific absolute paths. Every key is documented in
 
 ## Providers
 
-Providers are adapters that implement the executor and reviewer roles:
+Each role is configured with three explicit, provider-neutral keys:
+
+- **`provider`** — the adapter/CLI that runs the role.
+- **`model`** — the provider model id, or `provider-default` (SpecRelay passes
+  no model flag and lets the CLI pick its default). The model is an opaque
+  string; SpecRelay never validates vendor model names. For `claude`, an
+  explicit model is passed only when `claude --help` advertises `--model`, and a
+  configured-but-unsupported model fails clearly rather than being ignored.
+- **`agent`** — a provider-specific profile/subagent, usually `none` or
+  `ai-reviewer`.
+
+Available providers:
 
 - **`fake`** — deterministic, scriptable; used for testing the workflow with no
   AI involved.
-- **`claude`** / **`claude-subagent`** — drive the Claude CLI. SpecRelay
-  detects availability and never stores credentials in config. `claude-subagent`
-  is legacy shorthand for the Claude reviewer with the `ai-reviewer` sub-agent
+- **`claude`** — drives the Claude CLI. SpecRelay detects availability and never
+  stores credentials in config.
+- **`claude-subagent`** (reviewer only) — **legacy shorthand** that normalizes
+  to `provider: claude` + `agent: ai-reviewer`. It uses `--agent ai-reviewer`
   *when the project provides `.claude/agents/ai-reviewer.md`* (shipped as a
-  template, installed by `specrelay init`); otherwise it falls back to a plain
-  Claude reviewer. See [docs/providers.md](docs/providers.md).
+  template, installed by `specrelay init`) and the CLI advertises `--agent`;
+  otherwise it falls back to a plain Claude reviewer. Prefer the explicit
+  three-key form in new configs.
 - **`manual`** (reviewer only) — no automated decision; a human runs
   `specrelay task accept` / `specrelay task request-changes`.
 - **your own** — implement the provider contract.
 
-See [docs/providers.md](docs/providers.md).
+`model` and `agent` can also be overridden per role from the environment
+(`SPECRELAY_EXECUTOR_MODEL`, `SPECRELAY_REVIEWER_MODEL`,
+`SPECRELAY_EXECUTOR_AGENT`, `SPECRELAY_REVIEWER_AGENT`), which takes precedence
+over config. See [docs/providers.md](docs/providers.md).
 
 ## Context adapters
 

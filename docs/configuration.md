@@ -112,12 +112,76 @@ default shown here.
   automated reviewer adapters are `claude`, `claude-subagent`, and `fake`
   (deterministic, for testing). Any other value is rejected as an unsupported
   reviewer provider.
-- **`claude-subagent`:** legacy shorthand for the `claude` reviewer that prefers
-  the `ai-reviewer` sub-agent. It uses `--agent ai-reviewer` only when the
-  project provides `.claude/agents/ai-reviewer.md` (shipped as a template and
-  installed by `specrelay init`; see [docs/installation.md](installation.md))
-  and the CLI advertises `--agent`; otherwise it runs as a plain `claude`
-  reviewer. Existing `provider: claude-subagent` configs keep working unchanged.
+- **`claude-subagent`:** **legacy shorthand**, not the preferred new form. It
+  normalizes internally to `provider: claude` + `agent: ai-reviewer` +
+  `model: provider-default`. Existing `provider: claude-subagent` configs keep
+  working unchanged, but new configs should prefer the explicit three-key form
+  (`provider` / `model` / `agent`) below. As before, `--agent ai-reviewer` is
+  used only when the project provides `.claude/agents/ai-reviewer.md` (shipped as
+  a template and installed by `specrelay init`; see
+  [docs/installation.md](installation.md)) and the CLI advertises `--agent`;
+  otherwise it runs as a plain `claude` reviewer.
+
+### `roles.<role>.model`
+
+- **Purpose:** which provider model id the provider should use for the role
+  (`<role>` is `executor` or `reviewer`).
+- **Type:** string (opaque).
+- **Default:** `provider-default`.
+- **Meaning of `provider-default`:** SpecRelay passes **no explicit model flag**
+  and lets the provider CLI use its own default. Any other value is treated as
+  an opaque model id — SpecRelay does **not** validate it against real vendor
+  model names.
+- **Provider behavior (`claude`):** when the model is anything other than
+  `provider-default`, SpecRelay passes the Claude CLI model flag **only if
+  `claude --help` advertises it** (`--model`). If an explicit model is configured
+  but the installed CLI cannot accept model selection, the run **fails clearly**
+  rather than silently ignoring the model, and `specrelay doctor` reports the
+  mismatch.
+
+### `roles.<role>.agent`
+
+- **Purpose:** which provider-specific agent/profile/subagent the role should
+  use (`<role>` is `executor` or `reviewer`).
+- **Type:** string.
+- **Default:** `none` — except a reviewer whose provider is the legacy
+  `claude-subagent`, which defaults to `ai-reviewer` (see normalization above).
+- **Meaning of `none`:** no provider-specific agent/profile/subagent is used.
+- **`ai-reviewer`:** selects the bundled Claude reviewer sub-agent. As with the
+  legacy shorthand, it is used only when the project provides
+  `.claude/agents/ai-reviewer.md` and the CLI advertises `--agent`; otherwise the
+  Claude reviewer runs as a plain reviewer and `doctor` warns.
+
+> **provider / model / agent, summarized.** `provider` is the adapter/CLI that
+> runs the role; `model` is the provider model id (or `provider-default`);
+> `agent` is a provider-specific profile/subagent, usually `none` or
+> `ai-reviewer`. Keeping them separate is what removes the old ambiguity where
+> `claude-subagent` looked like a provider even though it is really the Claude
+> provider plus the `ai-reviewer` agent.
+
+### Role-specific environment overrides
+
+Model and agent can be overridden per role from the environment, which takes
+**precedence over `.specrelay/config.yml`**:
+
+| Variable | Overrides |
+|---|---|
+| `SPECRELAY_EXECUTOR_MODEL` | `roles.executor.model` |
+| `SPECRELAY_REVIEWER_MODEL` | `roles.reviewer.model` |
+| `SPECRELAY_EXECUTOR_AGENT` | `roles.executor.agent` |
+| `SPECRELAY_REVIEWER_AGENT` | `roles.reviewer.agent` |
+
+The full resolution precedence for a role's effective `model`/`agent` is:
+
+1. the role-specific env override above;
+2. the value in `.specrelay/config.yml`;
+3. normalized legacy provider behavior (e.g. reviewer `claude-subagent` →
+   `agent: ai-reviewer`);
+4. the provider default (`provider-default` / `none`).
+
+An empty env override (set but blank) is treated as unset and falls through to
+the config. Provider-specific env overrides may be added as future work; they
+are intentionally not introduced here.
 
 ### `context.adapter`
 
@@ -212,8 +276,12 @@ tasks:
 roles:
   executor:
     provider: claude
+    model: provider-default
+    agent: none
   reviewer:
     provider: manual
+    model: provider-default
+    agent: none
 
 context:
   adapter: none

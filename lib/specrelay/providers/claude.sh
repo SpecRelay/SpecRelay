@@ -66,12 +66,48 @@ specrelay::provider::claude::_stream_args() {
   fi
 }
 
+# specrelay::provider::claude::_model_supported <bin>
+# True (exit 0) when the installed Claude CLI advertises a `--model` flag in its
+# `--help` output. Model passing is help-driven (spec 0009): a model flag is
+# NEVER guessed — it is passed only when help advertises it, and an explicit
+# model configured against a CLI that does not advertise `--model` is a hard
+# failure (the adapter refuses rather than silently dropping the model).
+specrelay::provider::claude::_model_supported() {
+  local bin="$1" help
+  help="$("$bin" --help 2>&1)" || true
+  printf '%s' "$help" | grep -Fq -- '--model'
+}
+
+# specrelay::provider::claude::_resolve_model_args <role> <bin> <model>
+# Prints the model flag(s) to pass for an effective <model> (empty for
+# `provider-default`), or fails (non-zero, with a clear error) when an explicit
+# model is configured but the CLI cannot accept one. Callers MUST check the
+# return code before using the printed value.
+specrelay::provider::claude::_resolve_model_args() {
+  local role="$1" bin="$2" model="$3"
+  if [ -z "$model" ] || [ "$model" = "provider-default" ]; then
+    return 0
+  fi
+  if specrelay::provider::claude::_model_supported "$bin"; then
+    printf '%s\n' "--model $model"
+    return 0
+  fi
+  specrelay::out::err "$role: model '$model' is configured but the Claude CLI ('$bin') does not advertise a --model flag; refusing to silently ignore the configured model"
+  return 1
+}
+
 specrelay::provider::claude::executor_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:claude}" bin prompt stream_args
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:claude}" model="${6:-provider-default}" agent="${7:-none}" bin prompt stream_args model_args
   bin="$(specrelay::provider::claude::_bin)"
 
   if ! command -v "$bin" >/dev/null 2>&1; then
     specrelay::out::err "'$bin' was not found on PATH"
+    return 1
+  fi
+
+  # Model negotiation (help-driven): fail clearly before launch if an explicit
+  # model is configured but the CLI cannot accept one.
+  if ! model_args="$(specrelay::provider::claude::_resolve_model_args "$label" "$bin" "$model")"; then
     return 1
   fi
 
@@ -83,21 +119,22 @@ specrelay::provider::claude::executor_run() {
   if specrelay::provider::claude::_semantic_enabled; then
     stream_args="$(specrelay::provider::claude::_stream_args "$bin")"
     if [ -n "$stream_args" ]; then
-      # shellcheck disable=SC2086  # stream_args is controlled, word-split on purpose
+      # shellcheck disable=SC2086  # stream_args/model_args are controlled, word-split on purpose
       specrelay::provider::run_agent_events "$label" claude \
         "$task_dir/19-executor-events.jsonl" \
         "$task_dir/12-executor-stdout.txt" \
         "$task_dir/13-executor-stderr.txt" "$root" -- \
-        "$bin" --print $stream_args --dangerously-skip-permissions "$prompt"
+        "$bin" --print $stream_args $model_args --dangerously-skip-permissions "$prompt"
       return $?
     fi
   fi
 
   # Fallback: generic stdout/stderr streaming (spec 0003). run_streamed returns
   # claude's REAL exit code.
+  # shellcheck disable=SC2086  # model_args is controlled, word-split on purpose
   specrelay::provider::run_streamed "$label" \
     "$task_dir/12-executor-stdout.txt" "$task_dir/13-executor-stderr.txt" "$root" -- \
-    "$bin" --print --dangerously-skip-permissions "$prompt"
+    "$bin" --print $model_args --dangerously-skip-permissions "$prompt"
   return $?
 }
 
@@ -108,7 +145,7 @@ specrelay::provider::claude::executor_run() {
 # claude --help, never by guessing flags"). Uses the same semantic stream-json
 # layer as the executor when available, else the generic fallback.
 specrelay::provider::claude::reviewer_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:claude}" bin prompt rc out stream_args
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:claude}" model="${6:-provider-default}" agent="${7:-}" bin prompt rc out stream_args model_args
   bin="$(specrelay::provider::claude::_bin)"
 
   if ! command -v "$bin" >/dev/null 2>&1; then
@@ -116,13 +153,38 @@ specrelay::provider::claude::reviewer_run() {
     return 1
   fi
 
+  # Model negotiation (help-driven): fail clearly before launch if an explicit
+  # model is configured but the CLI cannot accept one.
+  if ! model_args="$(specrelay::provider::claude::_resolve_model_args "$label" "$bin" "$model")"; then
+    return 1
+  fi
+
   prompt="$(cat "$prompt_file")"
 
-  # Reviewer subagent selection (help-driven; never guess flags), preserved.
+  # Reviewer subagent selection (help-driven; never guess flags). The effective
+  # agent comes from the normalized role config (spec 0009). An empty value is
+  # the legacy/direct-call default and preserves the original auto-detect
+  # behavior ("prefer ai-reviewer when the project ships it and the CLI
+  # advertises --agent"); "none" disables the sub-agent explicitly; any other
+  # name selects that sub-agent when the CLI advertises --agent (and, for
+  # ai-reviewer, when the project provides .claude/agents/ai-reviewer.md — the
+  # 0008 fallback so a missing agent file never breaks the reviewer).
   local -a agent_args=()
-  if [ -f "$root/.claude/agents/ai-reviewer.md" ] && "$bin" --help 2>&1 | grep -q -- '--agent'; then
-    agent_args=(--agent ai-reviewer)
-  fi
+  case "$agent" in
+    ""|auto|ai-reviewer)
+      if [ -f "$root/.claude/agents/ai-reviewer.md" ] && "$bin" --help 2>&1 | grep -q -- '--agent'; then
+        agent_args=(--agent ai-reviewer)
+      fi
+      ;;
+    none)
+      : # explicitly no provider-specific sub-agent
+      ;;
+    *)
+      if "$bin" --help 2>&1 | grep -q -- '--agent'; then
+        agent_args=(--agent "$agent")
+      fi
+      ;;
+  esac
 
   # Preferred: semantic live events. The final assistant text is extracted into
   # 15-reviewer-stdout.txt (so the DECISION grep below still works), raw events
@@ -135,19 +197,20 @@ specrelay::provider::claude::reviewer_run() {
   fi
 
   if [ "$semantic" -eq 1 ]; then
-    # shellcheck disable=SC2086  # stream_args is controlled, word-split on purpose
+    # shellcheck disable=SC2086  # stream_args/model_args are controlled, word-split on purpose
     specrelay::provider::run_agent_events "$label" claude \
       "$task_dir/20-reviewer-events.jsonl" \
       "$task_dir/15-reviewer-stdout.txt" \
       "$task_dir/16-reviewer-stderr.txt" "$root" -- \
-      "$bin" ${agent_args[@]+"${agent_args[@]}"} --print $stream_args --dangerously-skip-permissions "$prompt"
+      "$bin" ${agent_args[@]+"${agent_args[@]}"} --print $stream_args $model_args --dangerously-skip-permissions "$prompt"
     rc=$?
   else
     # Fallback: generic streaming (spec 0003). Live output goes to fd 2 so this
     # function's OWN stdout stays reserved for the decision below.
+    # shellcheck disable=SC2086  # model_args is controlled, word-split on purpose
     specrelay::provider::run_streamed "$label" \
       "$task_dir/15-reviewer-stdout.txt" "$task_dir/16-reviewer-stderr.txt" "$root" -- \
-      "$bin" ${agent_args[@]+"${agent_args[@]}"} --print --dangerously-skip-permissions "$prompt"
+      "$bin" ${agent_args[@]+"${agent_args[@]}"} --print $model_args --dangerously-skip-permissions "$prompt"
     rc=$?
   fi
 

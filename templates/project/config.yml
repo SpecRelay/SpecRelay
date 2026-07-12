@@ -25,17 +25,36 @@ tasks:
   max_iterations: 3
 
 roles:
-  # Provider adapters for SpecRelay's executor/reviewer roles.
-  #   executor: the adapter that implements the task (e.g. "claude", or
-  #             "fake" for deterministic testing).
-  #   reviewer: "manual" means no automated decision — a human runs
-  #             `specrelay task accept` / `specrelay task request-changes`.
-  #             Set an automated reviewer adapter (e.g. "claude") to run the
-  #             review step inside `specrelay run`.
+  # Each role is configured with three explicit, provider-neutral keys:
+  #   provider = which adapter/CLI runs the role. "claude" drives the Claude
+  #              Code CLI; "fake" is a deterministic adapter for testing;
+  #              "manual" (reviewer only) means no automated decision — a human
+  #              runs `specrelay task accept` / `specrelay task request-changes`.
+  #   model    = which provider model id to use, or "provider-default" to let
+  #              the provider CLI pick its own default (SpecRelay passes no
+  #              model flag). The model is an opaque string; SpecRelay does not
+  #              validate vendor model names.
+  #   agent    = which provider-specific agent/profile/subagent to use, or
+  #              "none". "ai-reviewer" selects the bundled Claude reviewer
+  #              sub-agent (installed at .claude/agents/ai-reviewer.md by
+  #              `specrelay init`). See docs/providers.md.
+  #
+  # Legacy shorthand: `reviewer.provider: claude-subagent` still works and
+  # normalizes internally to provider: claude + agent: ai-reviewer. The explicit
+  # three-key form below is the preferred, provider-neutral way to say the same
+  # thing.
+  #
+  # Role-specific env overrides (highest precedence) are also available:
+  #   SPECRELAY_EXECUTOR_MODEL / SPECRELAY_REVIEWER_MODEL
+  #   SPECRELAY_EXECUTOR_AGENT / SPECRELAY_REVIEWER_AGENT
   executor:
     provider: claude
+    model: provider-default
+    agent: none
   reviewer:
     provider: manual
+    model: provider-default
+    agent: none
 
 context:
   # Optional context-retrieval capability required before roles do

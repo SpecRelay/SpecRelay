@@ -25,19 +25,36 @@ only the two generic dispatch functions in
 `lib/specrelay/providers/provider.sh` and never knows which concrete adapter
 ran.
 
-Each role selects its provider independently through project configuration
-(`.specrelay/config.yml`):
+Each role is configured with three explicit, provider-neutral keys in
+`.specrelay/config.yml` (spec 0009):
 
 | Config key | Meaning | Default |
 |---|---|---|
-| `roles.executor.provider` | Adapter that runs the executor role | `claude` |
-| `roles.reviewer.provider` | Adapter that runs the reviewer role | `manual` |
+| `roles.<role>.provider` | **provider** — adapter/CLI that runs the role | executor `claude`, reviewer `manual` |
+| `roles.<role>.model` | **model** — provider model id, or `provider-default` | `provider-default` |
+| `roles.<role>.agent` | **agent** — provider-specific profile/subagent, or `none` | `none` (reviewer legacy `claude-subagent` → `ai-reviewer`) |
 
-The defaults come from `specrelay::workflow::executor_provider` /
-`specrelay::workflow::reviewer_provider`. `manual` is not an adapter — it means
-"no automated reviewer; a human runs `specrelay task accept` /
-`specrelay task request-changes`." When the reviewer provider is `manual`, the
-automated loop stops and reports that human action is required (exit code `2`).
+- **provider** = the adapter/CLI. `manual` is not an adapter — it means "no
+  automated reviewer; a human runs `specrelay task accept` /
+  `specrelay task request-changes`." When the reviewer provider is `manual`, the
+  automated loop stops and reports that human action is required (exit code `2`).
+- **model** = the provider model id or version. The sentinel `provider-default`
+  means SpecRelay passes **no** explicit model flag and lets the provider CLI use
+  its own default. The model is an **opaque string** — SpecRelay never validates
+  it against real vendor model names. See
+  [Model passing](#model-passing-spec-0009).
+- **agent** = a provider-specific profile/subagent, usually `none` or
+  `ai-reviewer`. `none` means no provider-specific agent is used.
+
+Keeping the three concerns separate is what removes the earlier ambiguity where
+`claude-subagent` behaved like a provider name even though it is really the
+Claude provider plus the `ai-reviewer` agent. `claude-subagent` remains
+supported as **legacy shorthand** (see below), but the explicit three-key form
+is the preferred way to express the same thing.
+
+The provider defaults come from `specrelay::workflow::executor_provider` /
+`specrelay::workflow::reviewer_provider`; the model/agent resolution lives in
+`specrelay::workflow::role_model` / `specrelay::workflow::role_agent`.
 
 Currently dispatched provider names (`lib/specrelay/providers/provider.sh`):
 
@@ -57,6 +74,48 @@ value causes the dispatcher to print
 `specrelay doctor` reports the availability of the configured executor and
 reviewer providers as part of its read-only readiness checks (see
 [Availability detection](#availability-detection-doctor)).
+
+## Model passing (spec 0009)
+
+Model selection is explicit in config and is added to provider invocation only
+where it is **safe and help-driven**. SpecRelay never validates real vendor
+model names — a model is an opaque string.
+
+For the `claude` adapter:
+
+- If the effective model is `provider-default`, SpecRelay passes **no model
+  flag**; the Claude CLI uses its own default.
+- If the model is anything else, SpecRelay passes the Claude CLI model flag
+  (`--model <model>`) **only if `claude --help` advertises that flag** — flags
+  are never guessed.
+- If an explicit model is configured but the installed CLI **cannot** accept a
+  model (its `--help` does not advertise `--model`), the run **fails clearly**
+  before launch rather than silently ignoring the configured model, and
+  `specrelay doctor` reports the mismatch.
+
+Codex (and other future adapters) are described here as **provider-neutral**:
+the same three keys — `provider`, `model`, `agent` — would carry over, with each
+adapter passing its own CLI's model flag help-driven in exactly this way. No
+Codex adapter is implemented until one exists and can be tested deterministically
+with fake binaries.
+
+## Role environment overrides (spec 0009)
+
+A role's `model` and `agent` can be overridden from the environment. These take
+**precedence over `.specrelay/config.yml`**:
+
+| Variable | Overrides |
+|---|---|
+| `SPECRELAY_EXECUTOR_MODEL` | `roles.executor.model` |
+| `SPECRELAY_REVIEWER_MODEL` | `roles.reviewer.model` |
+| `SPECRELAY_EXECUTOR_AGENT` | `roles.executor.agent` |
+| `SPECRELAY_REVIEWER_AGENT` | `roles.reviewer.agent` |
+
+Full resolution precedence for the effective `model`/`agent`: (1) the
+role-specific env override, (2) `.specrelay/config.yml`, (3) normalized legacy
+provider behavior (reviewer `claude-subagent` → `agent: ai-reviewer`),
+(4) the provider default. An empty env override is treated as unset.
+Provider-specific env overrides are possible future work and are not added here.
 
 ## The generic provider contract (section 32)
 
@@ -497,13 +556,16 @@ conversational state.
 
 **`claude-subagent`.** As a reviewer-role provider value, `claude-subagent`
 dispatches to the same `claude` reviewer implementation described above; it is
-kept as **legacy shorthand** for "the Claude reviewer with the `ai-reviewer`
-sub-agent when available." It is fully backward compatible — existing configs
-using `provider: claude-subagent` keep working unchanged — but it is truthfully
-just the `claude` reviewer: it uses `--agent ai-reviewer` **only** when the
-project ships `.claude/agents/ai-reviewer.md` and the CLI advertises `--agent`,
-and otherwise falls back to a plain `claude --print` reviewer. There is no
-separate executor for `claude-subagent`.
+kept as **legacy shorthand**, not the preferred new form. Internally it
+normalizes to the explicit three-key form **`provider: claude`, `agent:
+ai-reviewer`, `model: provider-default`** (spec 0009); that normalized metadata
+is what `doctor` reports and what the runtime evidence records. It is fully
+backward compatible — existing configs using `provider: claude-subagent` keep
+working unchanged — but new configs should prefer the explicit form. It is
+truthfully just the `claude` reviewer: it uses `--agent ai-reviewer` **only**
+when the project ships `.claude/agents/ai-reviewer.md` and the CLI advertises
+`--agent`, and otherwise falls back to a plain `claude --print` reviewer. There
+is no separate executor for `claude-subagent`.
 
 **No credentials in SpecRelay config (section 31).** SpecRelay stores only the
 *provider name* in `.specrelay/config.yml` (and, optionally, a binary path via
@@ -531,6 +593,19 @@ when `.claude/agents/ai-reviewer.md` is present, or a non-failing **warning**
 when it is absent (the reviewer falls back to a plain `claude` reviewer). This
 makes `claude-subagent` honest — it never silently pretends a sub-agent that the
 project has not provided.
+
+`doctor` also reports the **effective, normalized role configuration** (spec
+0009) as two informational lines — for example:
+
+```
+Executor role: provider=claude model=provider-default agent=none
+Reviewer role: provider=claude model=claude-sonnet-4 agent=ai-reviewer
+```
+
+These reflect the resolved provider/model/agent after env overrides, config, and
+legacy `claude-subagent` normalization. If an explicit model is configured for a
+Claude role but the installed CLI does not advertise a `--model` flag, `doctor`
+reports that clearly (the run would fail rather than silently ignore the model).
 
 When either role uses a Claude provider, `doctor` also prints an informational
 line reporting whether **semantic live events** are available (python3 +

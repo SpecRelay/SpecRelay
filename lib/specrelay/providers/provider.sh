@@ -204,15 +204,22 @@ specrelay::provider::run_agent_events() {
   return "$rc"
 }
 
+# The optional trailing <model>/<agent> args (spec 0009) carry the effective,
+# already-normalized model id (or the "provider-default" sentinel) and the
+# provider-specific agent selector (or "none"). Adapters that accept them
+# (claude) use them to negotiate a model flag and sub-agent; adapters that
+# ignore them (fake) simply do not read them. They default to the neutral
+# provider-default/none so a caller that passes only the first five args (e.g.
+# a direct unit test) keeps the pre-0009 behavior.
 specrelay::provider::executor_run() {
-  local provider="$1" root="$2" task_dir="$3" round="$4" prompt_file="$5"
+  local provider="$1" root="$2" task_dir="$3" round="$4" prompt_file="$5" model="${6:-provider-default}" agent="${7:-none}"
   local label="executor:$provider"
   case "$provider" in
     fake)
       specrelay::provider::fake::executor_run "$root" "$task_dir" "$round" "$prompt_file" "$label"
       ;;
     claude)
-      specrelay::provider::claude::executor_run "$root" "$task_dir" "$round" "$prompt_file" "$label"
+      specrelay::provider::claude::executor_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent"
       ;;
     *)
       specrelay::out::err "unsupported executor provider: $provider"
@@ -222,14 +229,14 @@ specrelay::provider::executor_run() {
 }
 
 specrelay::provider::reviewer_run() {
-  local provider="$1" root="$2" task_dir="$3" round="$4" prompt_file="$5"
+  local provider="$1" root="$2" task_dir="$3" round="$4" prompt_file="$5" model="${6:-provider-default}" agent="${7:-none}"
   local label="reviewer:$provider"
   case "$provider" in
     fake)
       specrelay::provider::fake::reviewer_run "$root" "$task_dir" "$round" "$prompt_file" "$label"
       ;;
     claude|claude-subagent)
-      specrelay::provider::claude::reviewer_run "$root" "$task_dir" "$round" "$prompt_file" "$label"
+      specrelay::provider::claude::reviewer_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent"
       ;;
     *)
       specrelay::out::err "unsupported reviewer provider: $provider"

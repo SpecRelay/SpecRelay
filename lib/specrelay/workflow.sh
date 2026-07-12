@@ -18,6 +18,140 @@ specrelay::workflow::reviewer_provider() {
   specrelay::config::get "$1" "roles.reviewer.provider" "manual"
 }
 
+# --- normalized role config: provider / model / agent (spec 0009) ----------
+#
+# Spec 0009 separates three concerns that used to be conflated in a single
+# "provider" string:
+#   provider = which adapter/CLI runs the role
+#   model    = which model id the provider should use (opaque string), or the
+#              sentinel "provider-default" (pass no explicit model flag)
+#   agent    = which provider-specific agent/profile/subagent to use, or "none"
+#
+# The accessors below compute the EFFECTIVE, NORMALIZED value for a role,
+# honoring this precedence (spec "Environment overrides"):
+#   1. role-specific env override
+#   2. .specrelay/config.yml
+#   3. normalized legacy provider behavior (e.g. reviewer `claude-subagent`)
+#   4. provider default
+# They are the single source of truth for doctor reporting, runtime evidence
+# metadata, and what the provider dispatch actually passes to the adapter.
+
+# specrelay::workflow::_role_env <role> <MODEL|AGENT>
+# Prints the role-specific env override variable NAME for a role/kind (empty
+# for an unknown role, so a caller never dereferences a bogus name).
+specrelay::workflow::_role_env() {
+  local role="$1" kind="$2"
+  case "$role" in
+    executor) printf 'SPECRELAY_EXECUTOR_%s\n' "$kind" ;;
+    reviewer) printf 'SPECRELAY_REVIEWER_%s\n' "$kind" ;;
+    *) printf '\n' ;;
+  esac
+}
+
+# specrelay::workflow::role_raw_provider <root> <role>
+# The provider EXACTLY as configured (may be the legacy `claude-subagent`),
+# used both for the default computation below and for the provider dispatch's
+# own case arms (which still accept `claude-subagent` for backward compat).
+specrelay::workflow::role_raw_provider() {
+  local root="$1" role="$2"
+  case "$role" in
+    executor) specrelay::config::get "$root" "roles.executor.provider" "claude" ;;
+    reviewer) specrelay::config::get "$root" "roles.reviewer.provider" "manual" ;;
+  esac
+}
+
+# specrelay::workflow::role_provider <root> <role>
+# The NORMALIZED provider: the legacy `claude-subagent` shorthand collapses to
+# the real provider `claude` (its sub-agent selection is expressed via `agent`
+# below), everything else passes through unchanged.
+specrelay::workflow::role_provider() {
+  local raw
+  raw="$(specrelay::workflow::role_raw_provider "$1" "$2")"
+  case "$raw" in
+    claude-subagent) printf 'claude\n' ;;
+    *) printf '%s\n' "$raw" ;;
+  esac
+}
+
+# specrelay::workflow::role_model <root> <role>
+# Effective model: role-specific env override, else configured model, else the
+# `provider-default` sentinel. The model is an opaque string — SpecRelay never
+# validates it against real vendor model names.
+specrelay::workflow::role_model() {
+  local root="$1" role="$2" env_name env_val cfg
+  env_name="$(specrelay::workflow::_role_env "$role" MODEL)"
+  if [ -n "$env_name" ]; then
+    env_val="${!env_name:-}"
+    if [ -n "$env_val" ]; then
+      printf '%s\n' "$env_val"
+      return 0
+    fi
+  fi
+  cfg="$(specrelay::config::get "$root" "roles.$role.model" "")"
+  if [ -n "$cfg" ]; then
+    printf '%s\n' "$cfg"
+    return 0
+  fi
+  printf 'provider-default\n'
+}
+
+# specrelay::workflow::role_agent <root> <role>
+# Effective agent: role-specific env override, else configured agent, else the
+# normalized-legacy default (reviewer + legacy `claude-subagent` -> ai-reviewer),
+# else `none`.
+specrelay::workflow::role_agent() {
+  local root="$1" role="$2" env_name env_val cfg raw
+  env_name="$(specrelay::workflow::_role_env "$role" AGENT)"
+  if [ -n "$env_name" ]; then
+    env_val="${!env_name:-}"
+    if [ -n "$env_val" ]; then
+      printf '%s\n' "$env_val"
+      return 0
+    fi
+  fi
+  cfg="$(specrelay::config::get "$root" "roles.$role.agent" "")"
+  if [ -n "$cfg" ]; then
+    printf '%s\n' "$cfg"
+    return 0
+  fi
+  raw="$(specrelay::workflow::role_raw_provider "$root" "$role")"
+  if [ "$role" = "reviewer" ] && [ "$raw" = "claude-subagent" ]; then
+    printf 'ai-reviewer\n'
+    return 0
+  fi
+  printf 'none\n'
+}
+
+# specrelay::workflow::record_effective_roles <root> <task-id>
+# Persists the effective, NORMALIZED role metadata (provider/model/agent for
+# both roles) into the task's state.json under "roles_effective" (spec 0009,
+# "Runtime evidence"). Based strictly on the normalized effective config above,
+# never the raw legacy config. Idempotent metadata update (not a lifecycle
+# transition), so re-running a round refreshes it. A missing state.json is a
+# no-op (nothing to annotate yet).
+specrelay::workflow::record_effective_roles() {
+  local root="$1" task_id="$2" state_file
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 0
+
+  local set_json
+  set_json="$(
+    EP="$(specrelay::workflow::role_provider "$root" executor)" \
+    EM="$(specrelay::workflow::role_model "$root" executor)" \
+    EA="$(specrelay::workflow::role_agent "$root" executor)" \
+    RP="$(specrelay::workflow::role_provider "$root" reviewer)" \
+    RM="$(specrelay::workflow::role_model "$root" reviewer)" \
+    RA="$(specrelay::workflow::role_agent "$root" reviewer)" \
+    python3 -c '
+import json, os
+print(json.dumps({"roles_effective": {
+    "executor": {"provider": os.environ["EP"], "model": os.environ["EM"], "agent": os.environ["EA"]},
+    "reviewer": {"provider": os.environ["RP"], "model": os.environ["RM"], "agent": os.environ["RA"]},
+}}))
+')"
+  specrelay::state::set "$state_file" "$set_json" >/dev/null
+}
+
 specrelay::workflow::context_adapter() {
   specrelay::config::get "$1" "context.adapter" "none"
 }
@@ -160,8 +294,10 @@ specrelay::workflow::executor_iteration() {
     return 1
   fi
 
-  local provider context_adapter context_required
+  local provider model agent context_adapter context_required
   provider="$(specrelay::workflow::executor_provider "$root")"
+  model="$(specrelay::workflow::role_model "$root" executor)"
+  agent="$(specrelay::workflow::role_agent "$root" executor)"
   context_adapter="$(specrelay::workflow::context_adapter "$root")"
   context_required="$(specrelay::workflow::context_required "$root")"
 
@@ -179,12 +315,16 @@ specrelay::workflow::executor_iteration() {
     return 1
   fi
 
+  # Record effective (normalized) role metadata into durable state (spec 0009,
+  # "Runtime evidence"): provider/model/agent for both roles.
+  specrelay::workflow::record_effective_roles "$root" "$task_id"
+
   local round rc
   round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
   [ -n "$round" ] || round=1
 
-  specrelay::out::log "[executor] task '$task_id': running provider '$provider' (round $round)"
-  if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md"; then
+  specrelay::out::log "[executor] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent)"
+  if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md" "$model" "$agent"; then
     rc=0
   else
     rc=$?
@@ -269,13 +409,15 @@ specrelay::workflow::reviewer_iteration() {
     specrelay::out::log "[reviewer] context-capability preflight failed but is not required by policy; proceeding"
   fi
 
-  local round prompt_file decision rc
+  local round prompt_file decision rc model agent
+  model="$(specrelay::workflow::role_model "$root" reviewer)"
+  agent="$(specrelay::workflow::role_agent "$root" reviewer)"
   round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
   [ -n "$round" ] || round=1
   prompt_file="$(specrelay::workflow::build_reviewer_prompt "$root" "$task_id")"
 
-  specrelay::out::log "[reviewer] task '$task_id': running provider '$provider' (round $round, isolated context)"
-  if decision="$(specrelay::provider::reviewer_run "$provider" "$root" "$task_dir" "$round" "$prompt_file")"; then
+  specrelay::out::log "[reviewer] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent, isolated context)"
+  if decision="$(specrelay::provider::reviewer_run "$provider" "$root" "$task_dir" "$round" "$prompt_file" "$model" "$agent")"; then
     rc=0
   else
     rc=$?

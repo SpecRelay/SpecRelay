@@ -95,6 +95,8 @@ runs; none is required for normal use.
 | `SPECRELAY_HOME` | Absolute path to the installed SpecRelay itself (its `lib/`, `templates/`, `VERSION`). Normally derived from the executable's own location; set it to force a specific engine copy. |
 | `SPECRELAY_PYTHON` | Python interpreter used for task `state.json` (default `python3`). |
 | `SPECRELAY_CLAUDE_BIN` | Executable name/path for the Claude CLI (default `claude`), used by the `claude` / `claude-subagent` providers. |
+| `SPECRELAY_EXECUTOR_MODEL` / `SPECRELAY_REVIEWER_MODEL` | Override the effective model for the executor / reviewer role. Takes precedence over `roles.<role>.model` in config; unset/blank falls through to config, then `provider-default`. See [docs/configuration.md](configuration.md). |
+| `SPECRELAY_EXECUTOR_AGENT` / `SPECRELAY_REVIEWER_AGENT` | Override the effective provider-specific agent (e.g. `ai-reviewer`, or `none`) for the executor / reviewer role. Takes precedence over `roles.<role>.agent` in config. |
 | `SPECRELAY_SEMANTIC_EVENTS` | Set to `0` to disable Claude semantic live events and fall back to generic stdout/stderr streaming (default on). |
 | `SPECRELAY_PROVIDER_OPTIONAL` | Set to `1` so `specrelay doctor` reports an absent **configured** provider CLI (e.g. Claude) as an advisory warning instead of a hard failure. Core dependency checks stay mandatory. Used by CI (`.github/workflows/ci.yml`) so verification does not require a real Claude; default off, so normal local diagnostics still fail loudly when a configured provider is missing. |
 

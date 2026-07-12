@@ -47,6 +47,27 @@ specrelay::doctor::_provider_unavailable() {
   fi
 }
 
+# specrelay::doctor::_role_model_support <Role-label> <normalized-provider> <model>
+# Read-only advisory (spec 0009, "Doctor"): when an EXPLICIT model is configured
+# for a Claude role (anything other than the `provider-default` sentinel), report
+# whether the installed Claude CLI can actually accept a model. If the CLI does
+# not advertise a `--model` flag, warn clearly — the run would fail rather than
+# silently ignore the model. Only checked when the CLI is present (help cannot be
+# inspected otherwise) and the provider is `claude`; a no-op for other providers,
+# for `provider-default`, or for an absent CLI (already reported above).
+specrelay::doctor::_role_model_support() {
+  local role="$1" provider="$2" model="$3" bin
+  [ "$model" != "provider-default" ] || return 0
+  [ "$provider" = "claude" ] || return 0
+  bin="$(specrelay::provider::claude::_bin)"
+  command -v "$bin" >/dev/null 2>&1 || return 0
+  if specrelay::provider::claude::_model_supported "$bin"; then
+    specrelay::doctor::_info "$role model '$model': the Claude CLI advertises --model (an explicit model can be passed)"
+  else
+    specrelay::doctor::_warn "$role model '$model' is configured but the Claude CLI ('$bin') does not advertise a --model flag; the run will fail rather than silently ignore the configured model. Use model: provider-default, or install a CLI that supports model selection."
+  fi
+}
+
 # specrelay::doctor::_hook_has_nonascii_shell_punct <hook-file>
 # Returns 0 (true) if the given hook file contains non-ASCII shell punctuation
 # that is DANGEROUS in a shell command (spec 0002): a Unicode en/em dash used
@@ -235,6 +256,26 @@ specrelay::doctor::run() {
       specrelay::doctor::_fail "Reviewer provider: unsupported provider '$reviewer_provider'"
       ;;
   esac
+
+  # --- Effective role configuration (spec 0009) -----------------------------
+  # Report the NORMALIZED effective provider/model/agent for each role, so an
+  # operator sees exactly what SpecRelay will pass — after env overrides, config,
+  # and legacy `claude-subagent` normalization are all resolved.
+  local exec_prov_n exec_model exec_agent rev_prov_n rev_model rev_agent
+  exec_prov_n="$(specrelay::workflow::role_provider "$root" executor)"
+  exec_model="$(specrelay::workflow::role_model "$root" executor)"
+  exec_agent="$(specrelay::workflow::role_agent "$root" executor)"
+  rev_prov_n="$(specrelay::workflow::role_provider "$root" reviewer)"
+  rev_model="$(specrelay::workflow::role_model "$root" reviewer)"
+  rev_agent="$(specrelay::workflow::role_agent "$root" reviewer)"
+  specrelay::doctor::_info "Executor role: provider=$exec_prov_n model=$exec_model agent=$exec_agent"
+  specrelay::doctor::_info "Reviewer role: provider=$rev_prov_n model=$rev_model agent=$rev_agent"
+
+  # If an explicit model is configured for a Claude role but the installed CLI
+  # does not advertise a --model flag, report it clearly (spec 0009): the run
+  # would fail rather than silently ignore the model, so surface it here.
+  specrelay::doctor::_role_model_support "Executor" "$exec_prov_n" "$exec_model"
+  specrelay::doctor::_role_model_support "Reviewer" "$rev_prov_n" "$rev_model"
 
   # --- Claude semantic live events availability (spec 0006) -----------------
   # Informational only: when either role uses a Claude provider, report whether
