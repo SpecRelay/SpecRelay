@@ -13,8 +13,13 @@ tasks:
 roles:
   executor:
     provider: claude
+    model: fable-5
+    agent: none
+
   reviewer:
     provider: claude-subagent
+    model: claude-opus-4-8
+    agent: ai-reviewer
 
 context:
   adapter: none
