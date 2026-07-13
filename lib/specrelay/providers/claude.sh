@@ -39,6 +39,59 @@ specrelay::provider::claude::_bin() {
   printf '%s\n' "${SPECRELAY_CLAUDE_BIN:-claude}"
 }
 
+# --- provider capability (spec 0014) -----------------------------------------
+#
+# Provider-owned model-selection knowledge. The Claude CLI does not expose a
+# reliable, non-billable, machine-readable list of the models available to the
+# current account, so this adapter's practical capability level is
+# "Declared Aliases Only": a small, adapter-owned set of provider-recognized
+# semantic aliases can be validated locally, but SpecRelay never claims to
+# enumerate all remote Claude models — an exact model id is forwarded as-is and
+# ultimately validated by the provider. Nothing here performs any billable or
+# remote call.
+
+# Capability level: exact | aliases | structural | none (see providers/capability.sh).
+specrelay::provider::claude::capability_level() {
+  printf 'aliases\n'
+}
+
+specrelay::provider::claude::capability_supports_explicit_model() {
+  return 0
+}
+
+# The adapter-declared, provider-scoped alias set (one per line). These are the
+# semantic model aliases the Claude CLI itself recognizes as --model arguments;
+# SpecRelay does not invent aliases beyond what the adapter declares here.
+specrelay::provider::claude::capability_declared_aliases() {
+  printf 'opus\nsonnet\n'
+}
+
+# specrelay::provider::claude::capability_resolve_alias <alias>
+# Deterministic alias resolution: a declared alias resolves to itself — the
+# provider-recognized alias ARGUMENT passed via --model (the CLI maps it to the
+# latest concrete model). SpecRelay never fabricates an exact model id for it.
+# Unknown aliases fail (non-zero, nothing printed).
+specrelay::provider::claude::capability_resolve_alias() {
+  local alias="$1" a
+  while IFS= read -r a; do
+    if [ "$a" = "$alias" ]; then
+      printf '%s\n' "$alias"
+      return 0
+    fi
+  done < <(specrelay::provider::claude::capability_declared_aliases)
+  return 1
+}
+
+# Discovery status: "unavailable" — no reliable non-billable model list exists,
+# and SpecRelay does not pretend otherwise (spec 0014, "No false certainty").
+specrelay::provider::claude::capability_discovery_status() {
+  printf 'unavailable\n'
+}
+
+specrelay::provider::claude::capability_discovered_models() {
+  return 1
+}
+
 # specrelay::provider::claude::_semantic_enabled
 # Whether the semantic layer may be considered for this run: not explicitly
 # disabled, and the renderer/python3 are available. Provider flag capability is

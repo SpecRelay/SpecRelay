@@ -32,6 +32,84 @@
 # Missing a plan file (or a line past its end) falls back to the defaults
 # above, so a scenario that only cares about round 1 need not specify later
 # rounds explicitly.
+#
+# Capability simulation (spec 0014) — lets tests exercise every provider
+# model-discovery/validation level without any live Claude/Codex call:
+#   SPECRELAY_FAKE_CAPABILITY_LEVEL    exact | aliases | structural (default) | none
+#   SPECRELAY_FAKE_DECLARED_ALIASES    space-separated alias entries; each entry
+#                                      is either "<alias>" (resolves to itself)
+#                                      or "<alias>=<resolved-model-id>" (resolves
+#                                      to that exact id). Empty => no aliases.
+#   SPECRELAY_FAKE_DISCOVERED_MODELS   space-separated exact model ids (used
+#                                      when level=exact)
+#   SPECRELAY_FAKE_DISCOVERY_FAIL      when =1, model discovery FAILS (level
+#                                      exact reports a discovery failure instead
+#                                      of a list — distinct from an invalid
+#                                      user model configuration)
+# The default level is "structural" so existing tests that configure arbitrary
+# raw model strings keep working unchanged (structural-only providers never
+# falsely reject a valid-looking raw id).
+
+# --- provider capability (spec 0014) -----------------------------------------
+
+specrelay::provider::fake::capability_level() {
+  case "${SPECRELAY_FAKE_CAPABILITY_LEVEL:-structural}" in
+    exact|aliases|structural|none) printf '%s\n' "${SPECRELAY_FAKE_CAPABILITY_LEVEL:-structural}" ;;
+    *) printf 'structural\n' ;;
+  esac
+}
+
+specrelay::provider::fake::capability_supports_explicit_model() {
+  [ "$(specrelay::provider::fake::capability_level)" != "none" ]
+}
+
+specrelay::provider::fake::capability_declared_aliases() {
+  local entry
+  for entry in ${SPECRELAY_FAKE_DECLARED_ALIASES:-}; do
+    printf '%s\n' "${entry%%=*}"
+  done
+}
+
+# specrelay::provider::fake::capability_resolve_alias <alias>
+# Deterministic: "<alias>" resolves to itself (a provider-recognized alias
+# argument); "<alias>=<id>" resolves to that exact model id. Unknown -> fail.
+specrelay::provider::fake::capability_resolve_alias() {
+  local alias="$1" entry
+  for entry in ${SPECRELAY_FAKE_DECLARED_ALIASES:-}; do
+    if [ "${entry%%=*}" = "$alias" ]; then
+      case "$entry" in
+        *=*) printf '%s\n' "${entry#*=}" ;;
+        *) printf '%s\n' "$alias" ;;
+      esac
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Prints: "available <source>" | "unavailable" | "failed <reason>".
+specrelay::provider::fake::capability_discovery_status() {
+  if [ "$(specrelay::provider::fake::capability_level)" != "exact" ]; then
+    printf 'unavailable\n'
+    return 0
+  fi
+  if [ "${SPECRELAY_FAKE_DISCOVERY_FAIL:-0}" = "1" ]; then
+    printf 'failed simulated discovery failure (SPECRELAY_FAKE_DISCOVERY_FAIL=1)\n'
+    return 0
+  fi
+  printf 'available fake capability fixture (SPECRELAY_FAKE_DISCOVERED_MODELS)\n'
+}
+
+# One discovered model id per line; non-zero when discovery is unavailable or
+# failed (a discovery FAILURE is never reported as an invalid user model).
+specrelay::provider::fake::capability_discovered_models() {
+  [ "$(specrelay::provider::fake::capability_level)" = "exact" ] || return 1
+  [ "${SPECRELAY_FAKE_DISCOVERY_FAIL:-0}" != "1" ] || return 1
+  local m
+  for m in ${SPECRELAY_FAKE_DISCOVERED_MODELS:-}; do
+    printf '%s\n' "$m"
+  done
+}
 
 # specrelay::provider::fake::_record_invocation <role> <provider> <model> <agent> <round> <evidence-file>
 # Writes deterministic INVOCATION EVIDENCE for the fake provider (spec 0012,

@@ -87,22 +87,135 @@ specrelay::config::get() {
   ' "$path" "$field" "$default"
 }
 
+# --- role model SELECTION parsing (spec 0014) --------------------------------
+#
+# Spec 0014 introduces three explicit model-selection forms for
+# roles.<role>.model, all parsed here into ONE canonical selection string so
+# every consumer (validation, resolution, capture, doctor, models command)
+# shares a single parser:
+#
+#   provider-default          <- absent key, nil, or the literal string
+#                                "provider-default" (pass no model argument)
+#   alias:<name>              <- structured form  model: { alias: <name> }
+#   id:<provider-model-id>    <- structured form  model: { id: <value> }, OR
+#                                (backward compatibility) any other non-empty
+#                                legacy string, which continues to mean a raw
+#                                provider model id
+#
+# The canonical string is unambiguous because the kind prefix is ADDED here at
+# serialization time: a legacy raw string that itself happens to start with
+# "alias:" or "id:" still serializes as id:<that whole string>, and parsing
+# strips only the FIRST kind prefix — so raw ids survive byte-for-byte.
+
+# specrelay::config::role_model_selection <project-root> <role>
+# Prints the canonical selection string (exit 0), or prints a human-readable
+# error DETAIL (exit 1) when the configured model is structurally invalid.
+# Missing config / role / model key resolves to provider-default. Callers that
+# need the standard error framing use specrelay::config::validate_role_model.
+specrelay::config::role_model_selection() {
+  local root="$1" role="$2" path
+  path="$(specrelay::config::path "$root")"
+
+  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+    printf 'provider-default\n'
+    return 0
+  fi
+
+  ruby -e '
+    require "yaml"
+    path, role = ARGV[0], ARGV[1]
+
+    def ok(selection)
+      puts selection
+      exit 0
+    end
+
+    def bad(detail)
+      puts detail
+      exit 1
+    end
+
+    begin
+      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+    rescue StandardError
+      # Malformed YAML is reported by specrelay::config::validate, not here.
+      ok "provider-default"
+    end
+    ok "provider-default" unless data.is_a?(Hash)
+    roles = data["roles"]
+    ok "provider-default" unless roles.is_a?(Hash)
+    ok "provider-default" unless roles.key?(role)
+    role_cfg = roles[role]
+    ok "provider-default" if role_cfg.nil?
+    unless role_cfg.is_a?(Hash)
+      bad "role configuration for #{role} is not a mapping (got #{role_cfg.class})"
+    end
+    ok "provider-default" unless role_cfg.key?("model")
+    model = role_cfg["model"]
+    ok "provider-default" if model.nil?
+
+    # Legacy string forms (backward compatibility, spec 0014): the literal
+    # provider-default sentinel, or any other non-empty string meaning a raw
+    # provider model id (exactly equivalent to model: { id: <string> }).
+    if model.is_a?(String)
+      if model.empty?
+        bad "model for role #{role} is empty; omit the key to use provider-default, or set an explicit model id"
+      end
+      if model.strip.empty?
+        bad "model for role #{role} is whitespace-only (#{model.inspect}); omit the key to use provider-default, or set an explicit model id"
+      end
+      ok "provider-default" if model == "provider-default"
+      ok "id:#{model}"
+    end
+
+    # Structured forms (spec 0014): a mapping with EXACTLY ONE of alias / id.
+    if model.is_a?(Hash)
+      keys = model.keys
+      unknown = keys - ["alias", "id"]
+      unless unknown.empty?
+        bad "model for role #{role} has unknown key(s) #{unknown.map(&:inspect).join(", ")}; a structured model must set exactly one of alias: <name> or id: <provider-model-id>"
+      end
+      if keys.empty?
+        bad "model for role #{role} is an empty mapping; a model selection must resolve to exactly one of provider-default, alias: <name>, or id: <provider-model-id>"
+      end
+      if keys.length > 1
+        bad "model for role #{role} sets both alias and id; a model selection must resolve to exactly one of provider-default, alias: <name>, or id: <provider-model-id>"
+      end
+      kind = keys.first
+      value = model[kind]
+      unless value.is_a?(String)
+        bad "model #{kind} for role #{role} must be a string (got #{value.class}: #{value.inspect})"
+      end
+      if value.strip.empty?
+        bad "model #{kind} for role #{role} is empty; set a non-empty #{kind}, or use model: provider-default"
+      end
+      ok "#{kind}:#{value}"
+    end
+
+    # Any other type (list, number, boolean, ...) is invalid.
+    bad "model for role #{role} must be a string (got #{model.class}: #{model.inspect}) or a structured alias/id mapping"
+  ' "$path" "$role"
+}
+
 # specrelay::config::validate_role_model <project-root> <role>
 # Validates the SHAPE of roles.<role>.model in .specrelay/config.yml BEFORE any
-# provider execution (spec 0012, "Validation"). A model identifier is an opaque
-# provider-specific string — SpecRelay never checks it against a remote allowlist
-# — but it MUST be structurally valid so a malformed configuration fails clearly
-# up front instead of forwarding garbage (or a non-model value) to a provider CLI.
+# provider execution (spec 0012 string forms; spec 0014 structured forms). A
+# model identifier is an opaque provider-specific string — this check never
+# consults a remote allowlist — but the configuration MUST be structurally
+# valid so a malformed value fails clearly up front instead of forwarding
+# garbage (or a non-model value) to a provider CLI.
 #
-# Rejected (non-zero, with a clear error naming the role, the invalid value, and
-# the config source):
-#   * a non-string model value (e.g. a list, mapping, or number);
-#   * an empty explicit model value;
-#   * a whitespace-only explicit model value;
-#   * a structurally invalid role configuration (roles.<role> is not a mapping).
-# Accepted: an absent/nil model (resolves to provider-default) and any non-empty
-# string (including unknown-but-structurally-valid model ids, which are forwarded
-# to the provider for it to accept or reject with its normal error).
+# Rejected (non-zero, with a clear error naming the role, the invalid value,
+# the config source, and the expected forms):
+#   * a non-string, non-mapping model value (list, number, boolean, ...);
+#   * an empty or whitespace-only explicit model value;
+#   * a structurally invalid role configuration (roles.<role> is not a mapping);
+#   * a structured mapping that is empty, sets both alias and id, has unknown
+#     keys, or has a nil/empty/non-string alias or id value.
+# Accepted: an absent/nil model (provider-default), the provider-default
+# sentinel string, a legacy non-empty raw-id string, and the structured
+# single-key alias/id forms. Provider-AWARE validation (alias membership,
+# discovery) is layered on top in workflow.sh, not here.
 specrelay::config::validate_role_model() {
   local root="$1" role="$2" path msg rc
   path="$(specrelay::config::path "$root")"
@@ -112,46 +225,23 @@ specrelay::config::validate_role_model() {
   [ -f "$path" ] || return 0
   command -v ruby >/dev/null 2>&1 || return 0
 
-  msg="$(ruby -e '
-    require "yaml"
-    path, role = ARGV[0], ARGV[1]
-    begin
-      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
-    rescue StandardError
-      # Malformed YAML is reported by specrelay::config::validate, not here.
-      exit 0
-    end
-    exit 0 unless data.is_a?(Hash)
-    roles = data["roles"]
-    exit 0 unless roles.is_a?(Hash)
-    exit 0 unless roles.key?(role)
-    role_cfg = roles[role]
-    exit 0 if role_cfg.nil?
-    unless role_cfg.is_a?(Hash)
-      puts "role configuration for #{role} is not a mapping (got #{role_cfg.class})"
-      exit 1
-    end
-    exit 0 unless role_cfg.key?("model")
-    model = role_cfg["model"]
-    exit 0 if model.nil?
-    unless model.is_a?(String)
-      puts "model for role #{role} must be a string (got #{model.class}: #{model.inspect})"
-      exit 1
-    end
-    if model.empty?
-      puts "model for role #{role} is empty; omit the key to use provider-default, or set an explicit model id"
-      exit 1
-    end
-    if model.strip.empty?
-      puts "model for role #{role} is whitespace-only (#{model.inspect}); omit the key to use provider-default, or set an explicit model id"
-      exit 1
-    end
-    exit 0
-  ' "$path" "$role")"
+  msg="$(specrelay::config::role_model_selection "$root" "$role")"
   rc=$?
 
   if [ "$rc" -ne 0 ]; then
     specrelay::out::err "invalid model configuration in $path: $msg"
+    {
+      echo "Expected model configuration forms:"
+      echo "  Provider default:"
+      echo "    model: provider-default"
+      echo "  Semantic alias (provider-specific):"
+      echo "    model:"
+      echo "      alias: <alias>"
+      echo "  Exact provider model ID:"
+      echo "    model:"
+      echo "      id: <provider-model-id>"
+      echo "Inspect model options with: specrelay models <provider>"
+    } >&2
     return 1
   fi
   return 0

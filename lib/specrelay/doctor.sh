@@ -83,6 +83,55 @@ specrelay::doctor::_role_model_support() {
   fi
 }
 
+# specrelay::doctor::_role_model_selection <Role-label> <root> <role>
+# Read-only (spec 0014, "Doctor Integration"): reports, for one role, the
+# provider, the CONFIGURED model selection (canonical kind:value form), the
+# RESOLVED model value, the selection kind, the validation level, and the
+# configuration source. Never performs a billable invocation and never claims
+# account availability unless the provider supports reliable non-billable
+# discovery (the validation label is honest about what was actually checked).
+# A structurally malformed or KNOWN-invalid selection is a mandatory failure —
+# every run with this configuration would refuse before role execution.
+specrelay::doctor::_role_model_selection() {
+  local role_label="$1" root="$2" role="$3"
+  local raw_provider provider selection kind resolved label source env_name env_val detail
+
+  raw_provider="$(specrelay::workflow::role_raw_provider "$root" "$role")"
+  if [ "$raw_provider" = "manual" ]; then
+    specrelay::doctor::_info "$role_label model selection: not applicable (manual role — a human decides; model fields are ignored and never executed)"
+    return 0
+  fi
+
+  if ! selection="$(specrelay::workflow::role_model_selection "$root" "$role" 2>/dev/null)"; then
+    detail="$(specrelay::config::role_model_selection "$root" "$role" 2>/dev/null || true)"
+    specrelay::doctor::_fail "$role_label model selection: INVALID — $detail (source: $(specrelay::config::path "$root"))"
+    return 0
+  fi
+
+  provider="$(specrelay::workflow::role_provider "$root" "$role")"
+  if ! specrelay::capability::validate_selection "$provider" "$role" "$selection" >/dev/null 2>&1; then
+    specrelay::doctor::_fail "$role_label model selection: KNOWN-INVALID — configured=$selection is not valid for provider '$provider'; run 'specrelay models $raw_provider' for valid forms and aliases"
+    return 0
+  fi
+
+  kind="$(specrelay::capability::selection_kind "$selection")"
+  resolved="$(specrelay::capability::resolved_display "$provider" "$selection" || true)"
+  label="$(specrelay::capability::validation_label "$provider" "$selection")"
+
+  env_name="$(specrelay::workflow::_role_env "$role" MODEL)"
+  env_val=""
+  [ -n "$env_name" ] && env_val="${!env_name:-}"
+  if [ -n "$env_val" ]; then
+    source="\$$env_name (environment override)"
+  elif [ -n "$(specrelay::config::get "$root" "roles.$role.model" "")" ]; then
+    source="$(specrelay::config::path "$root")"
+  else
+    source="(built-in default)"
+  fi
+
+  specrelay::doctor::_info "$role_label model selection: provider=$provider kind=$kind configured=$selection resolved=$resolved source=$source validation=$label"
+}
+
 # specrelay::doctor::_hook_has_nonascii_shell_punct <hook-file>
 # Returns 0 (true) if the given hook file contains non-ASCII shell punctuation
 # that is DANGEROUS in a shell command (spec 0002): a Unicode en/em dash used
@@ -297,6 +346,12 @@ specrelay::doctor::run() {
   # would fail rather than silently ignore the model, so surface it here.
   specrelay::doctor::_role_model_support "Executor" "$exec_prov_n" "$exec_model"
   specrelay::doctor::_role_model_support "Reviewer" "$rev_prov_n" "$rev_model"
+
+  # Full model-selection report per role (spec 0014, "Doctor Integration"):
+  # configured selection, resolved value, kind, validation level, and source.
+  # A structurally malformed or known-invalid selection is a mandatory failure.
+  specrelay::doctor::_role_model_selection "Executor" "$root" executor
+  specrelay::doctor::_role_model_selection "Reviewer" "$root" reviewer
 
   # --- Claude semantic live events availability (spec 0006) -----------------
   # Informational only: when either role uses a Claude provider, report whether

@@ -78,6 +78,10 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/providers/fake.sh"
 # shellcheck source=lib/specrelay/providers/claude.sh
 . "$LIB_DIR/providers/claude.sh"
+# shellcheck source=lib/specrelay/providers/capability.sh
+. "$LIB_DIR/providers/capability.sh"
+# shellcheck source=lib/specrelay/models.sh
+. "$LIB_DIR/models.sh"
 # shellcheck source=lib/specrelay/context/capability.sh
 . "$LIB_DIR/context/capability.sh"
 # shellcheck source=lib/specrelay/context/none.sh

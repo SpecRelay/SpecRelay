@@ -132,33 +132,122 @@ default shown here.
 
 ### `roles.<role>.model`
 
-- **Purpose:** which provider model id the provider should use for the role
-  (`<role>` is `executor` or `reviewer`).
-- **Type:** string (opaque).
+- **Purpose:** which model the provider should use for the role (`<role>` is
+  `executor` or `reviewer`).
 - **Default:** `provider-default`.
-- **Meaning of `provider-default`:** SpecRelay passes **no explicit model flag**
-  and lets the provider CLI use its own default. Any other value is treated as
-  an opaque model id — SpecRelay does **not** validate it against real vendor
-  model names.
-- **Provider behavior (`claude`):** when the model is anything other than
-  `provider-default`, SpecRelay passes the Claude CLI model flag **only if
-  `claude --help` advertises it** (`--model`). If an explicit model is configured
-  but the installed CLI cannot accept model selection, the run **fails clearly**
-  rather than silently ignoring the model, and `specrelay doctor` reports the
-  mismatch.
-- **Validation (spec 0012):** a malformed model configuration is **rejected
-  before any provider runs**. The following are errors, each reported with the
-  affected role and the config source (`.specrelay/config.yml`):
-  - a **non-string** model value (e.g. a YAML list, mapping, or number);
-  - an **empty** explicit model value (`model: ""`);
-  - a **whitespace-only** explicit model value (`model: "   "`);
-  - a **structurally invalid** role configuration (e.g. `roles.executor` is not a
-    mapping).
+- **Discover the options first:** run `specrelay models` (or
+  `specrelay models <provider>`) to see, per configured provider, the supported
+  configuration forms, the provider's declared aliases, and its honest
+  model-discovery capability — **before** editing this key.
 
-  An **absent** model key is always valid and resolves to `provider-default`. An
-  unknown-but-structurally-valid model id is **not** rejected — SpecRelay
-  forwards it to the provider, which rejects unknown models with its own error
-  (SpecRelay keeps no allowlist of remote model names).
+There are exactly **three** model-selection forms (spec 0014):
+
+1. **Provider default** — let the provider CLI choose its own configured
+   default. SpecRelay passes **no explicit model argument**; the literal string
+   `provider-default` is never sent as a remote model id.
+
+   ```yaml
+   roles:
+     executor:
+       provider: claude
+       model: provider-default
+       agent: none
+   ```
+
+2. **Semantic alias** (structured form) — a provider-recognized alias such as
+   `opus` or `sonnet`. **Aliases are provider-specific**: they are declared by
+   the selected provider's own capability adapter and resolved through it
+   deterministically. An alias declared by one provider is **never** accepted
+   for another, and an alias the provider does not declare is rejected before
+   the role runs.
+
+   ```yaml
+   roles:
+     executor:
+       provider: claude
+       model:
+         alias: opus
+       agent: none
+   ```
+
+3. **Raw provider model ID** (structured form, advanced) — an exact
+   provider-specific model identifier, passed to the provider **byte-for-byte**
+   (never rewritten, prefixed, suffixed, or normalized).
+
+   ```yaml
+   roles:
+     executor:
+       provider: claude
+       model:
+         id: <exact-provider-model-id>
+       agent: none
+   ```
+
+Roles select models fully independently — for example:
+
+```yaml
+roles:
+  executor:
+    provider: claude
+    model:
+      alias: sonnet
+    agent: none
+  reviewer:
+    provider: claude-subagent
+    model:
+      alias: opus
+    agent: ai-reviewer
+```
+
+- **Backward compatibility (legacy string syntax):** any non-`provider-default`
+  plain string remains valid and continues to mean a raw provider model id —
+  `model: some-provider-model-id` is exactly equivalent to
+  `model: { id: some-provider-model-id }`. The structured `id:` form is the
+  recommended syntax for **new** explicit raw identifiers. Existing
+  configuration files and existing task state need no migration.
+- **Provider behavior (`claude`):** for any explicit selection (alias or id),
+  SpecRelay passes the Claude CLI model flag **only if `claude --help`
+  advertises it** (`--model`). If an explicit model is configured but the
+  installed CLI cannot accept model selection, the run **fails clearly** rather
+  than silently ignoring the model, and `specrelay doctor` reports the mismatch.
+- **Validation:** model configuration is validated during task preflight,
+  **before the role is claimed** — a known-invalid selection never enters
+  `EXECUTOR_RUNNING` or `REVIEWER_RUNNING` and the provider is never launched
+  with it. The following are structural errors, each reported with the affected
+  role, the config source (`.specrelay/config.yml`), and the expected forms:
+  - a non-string, non-mapping model value (a YAML list, number, or boolean);
+  - an **empty** or **whitespace-only** explicit model value;
+  - a structurally invalid role configuration (e.g. `roles.executor` is not a
+    mapping);
+  - an invalid structured form: `model: {}`, an empty `alias:`/`id:`, **both**
+    `alias` and `id` at once, an unknown key, or a nested (non-string)
+    alias/id value. A model selection must resolve to exactly one of
+    provider-default, alias, or raw id.
+
+  Provider-aware validation is layered on top of the structural check:
+  - an **unknown alias** is rejected before provider execution, with an
+    actionable error listing the provider's supported aliases (plus a
+    "Did you mean" suggestion when an unambiguous near-match exists) and the
+    valid configuration forms;
+  - a **raw id** is rejected locally only when the provider supports reliable
+    (non-billable) model discovery and the id is not in that list. Otherwise a
+    structurally valid raw id is **forwarded** with an honest note that its
+    availability cannot be verified locally — SpecRelay keeps no global model
+    allowlist and never falsely rejects an id based on an incomplete list. A
+    provider **discovery failure** is reported as a discovery problem, never as
+    an invalid user model.
+
+  An **absent** model key is always valid and resolves to `provider-default`.
+- **Manual roles:** a `manual` role never invokes an automated provider, so
+  model selection is **not executed** for it — configured model fields on a
+  manual role are **ignored** (not rejected), and no billable or automated
+  provider call ever occurs for a manual role.
+- **Configured vs. resolved:** SpecRelay tracks both the *configured* selection
+  (e.g. `alias:opus`, `id:<raw>`, `provider-default`) and the *resolved* model
+  the provider invocation actually receives (`opus` for a Claude alias; the raw
+  id byte-for-byte; "provider-managed default" — no fabricated exact model —
+  for `provider-default`). Both are shown by `specrelay doctor`,
+  `specrelay models`, and `specrelay task show`.
 
 ### `roles.<role>.agent`
 
@@ -232,13 +321,22 @@ roles:
 
 The effective role configuration (provider/model/agent for both roles) is
 **captured once**, into the task's durable `state.json` under `roles_effective`,
-the first time the task reaches an executor iteration. That captured
-configuration is **authoritative for the rest of the task's life**:
+the first time the task reaches an executor iteration. The capture records the
+**resolved** model value (what the provider invocation receives) plus the
+configured selection metadata (`model_configured: {kind, value}` — e.g.
+`{kind: alias, value: opus}`), so diagnostics can always show configured vs.
+resolved. Old state files that captured only a string model remain fully
+readable. That captured configuration is **authoritative for the rest of the
+task's life**:
 
 - If you change `roles.<role>.model` in `.specrelay/config.yml` **after** a task
   has started, resuming that task (`specrelay resume`) **does not** switch it to
   the new model — the executor and reviewer keep using the model captured at
   creation. This keeps a run deterministic and preserves its audit trail.
+- Because the **resolved** value is captured, an alias is never silently
+  re-resolved differently after task creation — even if the provider adapter's
+  alias mappings change later, the existing task keeps the resolution captured
+  when it started.
 - A brand-new task created after the config change picks up the new model
   normally.
 - `specrelay task show` prefers the captured `roles_effective` values over
@@ -338,10 +436,22 @@ configuration for both roles and distinguishes an explicit model from the
 ✓ Reviewer role: provider=claude model=provider-default agent=ai-reviewer
 ✓ Executor model source: explicit model '<claude-model-id>' (SpecRelay will request this exact model; the provider CLI validates that it exists)
 ✓ Reviewer model source: provider-default (delegated to the provider CLI; SpecRelay passes no explicit model-selection argument)
+✓ Executor model selection: provider=claude kind=alias configured=alias:opus resolved=opus source=.specrelay/config.yml validation=provider-declared alias
+✓ Reviewer model selection: provider=claude kind=provider-default configured=provider-default resolved=provider-managed default source=(built-in default) validation=structural (provider-managed default)
 ```
 
+The `model selection` lines (spec 0014) report, per role, the provider, the
+configured selection kind and value, the resolved model, the configuration
+source (config file, environment override, or built-in default), and the
+validation level actually applied. `provider-default` is reported as
+"provider-managed default", never misrepresented as an exact model. A
+structurally malformed or known-invalid selection (e.g. an alias the provider
+does not declare) is a mandatory `doctor` failure, because every run with that
+configuration would refuse before role execution.
+
 `doctor` never performs a billable model invocation and never claims a specific
-model is available — verifying that a model exists is the provider CLI's job.
+model is available — verifying that a model exists is the provider CLI's job
+unless the provider supports reliable non-billable discovery.
 
 ## Minimal example
 

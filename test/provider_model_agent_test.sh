@@ -32,6 +32,10 @@
 . "$SPECRELAY_ROOT/lib/specrelay/providers/provider.sh"
 # shellcheck source=../lib/specrelay/providers/claude.sh
 . "$SPECRELAY_ROOT/lib/specrelay/providers/claude.sh"
+# shellcheck source=../lib/specrelay/providers/fake.sh
+. "$SPECRELAY_ROOT/lib/specrelay/providers/fake.sh"
+# shellcheck source=../lib/specrelay/providers/capability.sh
+. "$SPECRELAY_ROOT/lib/specrelay/providers/capability.sh"
 # shellcheck source=../lib/specrelay/workflow.sh
 . "$SPECRELAY_ROOT/lib/specrelay/workflow.sh"
 

@@ -73,26 +73,51 @@ specrelay::workflow::role_provider() {
   esac
 }
 
-# specrelay::workflow::role_model <root> <role>
-# Effective model: role-specific env override, else configured model, else the
-# `provider-default` sentinel. The model is an opaque string — SpecRelay never
-# validates it against real vendor model names.
-specrelay::workflow::role_model() {
-  local root="$1" role="$2" env_name env_val cfg
+# specrelay::workflow::role_model_selection <root> <role>
+# The effective CONFIGURED model selection, as a canonical selection string
+# (provider-default | alias:<name> | id:<value> — see config.sh, spec 0014):
+# role-specific env override first, else the configured model. An env override
+# is a plain string and keeps the legacy string semantics: the literal
+# provider-default sentinel, or a raw provider model id. Propagates the config
+# parser's failure (non-zero, error detail on stdout) for a malformed
+# structured model.
+specrelay::workflow::role_model_selection() {
+  local root="$1" role="$2" env_name env_val
   env_name="$(specrelay::workflow::_role_env "$role" MODEL)"
   if [ -n "$env_name" ]; then
     env_val="${!env_name:-}"
     if [ -n "$env_val" ]; then
-      printf '%s\n' "$env_val"
+      if [ "$env_val" = "provider-default" ]; then
+        printf 'provider-default\n'
+      else
+        printf 'id:%s\n' "$env_val"
+      fi
       return 0
     fi
   fi
-  cfg="$(specrelay::config::get "$root" "roles.$role.model" "")"
-  if [ -n "$cfg" ]; then
-    printf '%s\n' "$cfg"
+  specrelay::config::role_model_selection "$root" "$role"
+}
+
+# specrelay::workflow::role_model <root> <role>
+# Effective RESOLVED model: the configured selection resolved through the
+# provider's capability adapter (spec 0014) — the provider-default sentinel
+# stays as-is (adapters omit the model argument for it), an alias resolves to
+# the adapter's deterministic argument, and a raw id passes through
+# byte-for-byte. A selection that cannot be parsed or resolved falls back to a
+# best-effort display of the configured value; assert_role_model_valid reports
+# the real error before any provider execution.
+specrelay::workflow::role_model() {
+  local root="$1" role="$2" selection provider resolved
+  if ! selection="$(specrelay::workflow::role_model_selection "$root" "$role" 2>/dev/null)"; then
+    specrelay::config::get "$root" "roles.$role.model" "provider-default"
     return 0
   fi
-  printf 'provider-default\n'
+  provider="$(specrelay::workflow::role_provider "$root" "$role")"
+  if resolved="$(specrelay::capability::resolve_selection "$provider" "$selection" 2>/dev/null)"; then
+    printf '%s\n' "$resolved"
+  else
+    specrelay::capability::selection_value "$selection"
+  fi
 }
 
 # specrelay::workflow::role_agent <root> <role>
@@ -191,18 +216,70 @@ specrelay::workflow::effective_role_agent() {
   specrelay::workflow::role_agent "$root" "$role"
 }
 
+# specrelay::workflow::captured_role_model_configured <root> <task-id> <role>
+# Prints the durable CONFIGURED model selection captured for a role (as the
+# canonical selection string, e.g. provider-default / alias:opus / id:<raw>)
+# from roles_effective.<role>.model_configured. Returns non-zero (prints
+# nothing) when the task predates spec 0014 and captured only the string model
+# — old state files stay fully readable; this metadata is simply absent.
+specrelay::workflow::captured_role_model_configured() {
+  local root="$1" task_id="$2" role="$3" state_file blob
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 1
+  blob="$(specrelay::state::get "$state_file" roles_effective 2>/dev/null || true)"
+  [ -n "$blob" ] && [ "$blob" != "null" ] || return 1
+  printf '%s' "$blob" | ROLE="$role" python3 -c '
+import json, os, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if not isinstance(data, dict):
+    sys.exit(1)
+role = data.get(os.environ["ROLE"])
+if not isinstance(role, dict):
+    sys.exit(1)
+mc = role.get("model_configured")
+if not isinstance(mc, dict):
+    sys.exit(1)
+kind = mc.get("kind")
+value = mc.get("value")
+if not kind:
+    sys.exit(1)
+if kind == "provider-default":
+    print("provider-default")
+else:
+    print(f"{kind}:{value}")
+'
+}
+
 # specrelay::workflow::assert_role_model_valid <root> <task-id> <role>
-# Fails (non-zero, clear error) when the role's CONFIGURED model is malformed
-# (spec 0012, "Validation"). A task that has already captured a model for the
-# role is authoritative and was validated at capture time, so a later
-# (possibly now-malformed) config change must NOT retroactively fail a
+# Fails (non-zero, clear actionable error) when the role's CONFIGURED model is
+# KNOWN-invalid (spec 0012 structural shape; spec 0014 provider-aware rules:
+# unknown alias, unsupported explicit model, unknown id under exact
+# discovery). Runs during task preflight BEFORE the role is claimed, so a
+# known-invalid model never enters EXECUTOR_RUNNING / REVIEWER_RUNNING and the
+# provider is never launched with it. A task that has already captured a model
+# for the role is authoritative and was validated at capture time, so a later
+# (possibly now-invalid) config change must NOT retroactively fail a
 # deterministic resume — the captured value is skipped here.
 specrelay::workflow::assert_role_model_valid() {
-  local root="$1" task_id="$2" role="$3"
+  local root="$1" task_id="$2" role="$3" selection provider
   if specrelay::workflow::captured_role "$root" "$task_id" "$role" model >/dev/null 2>&1; then
     return 0
   fi
-  specrelay::config::validate_role_model "$root" "$role"
+  # 1. Structural shape of the configured model (string + structured forms).
+  if ! specrelay::config::validate_role_model "$root" "$role"; then
+    return 1
+  fi
+  # 2. Provider-aware validation of the EFFECTIVE selection (env included),
+  #    through the provider's own capability adapter.
+  if ! selection="$(specrelay::workflow::role_model_selection "$root" "$role")"; then
+    specrelay::out::err "invalid model configuration for role $role: $selection"
+    return 1
+  fi
+  provider="$(specrelay::workflow::role_provider "$root" "$role")"
+  specrelay::capability::validate_selection "$provider" "$role" "$selection"
 }
 
 # specrelay::workflow::record_effective_roles <root> <task-id>
@@ -228,22 +305,53 @@ specrelay::workflow::record_effective_roles() {
     return 0
   fi
 
+  # The captured "model" is the RESOLVED value (what the provider invocation
+  # receives; the provider-default sentinel stays distinguishable from a known
+  # exact model). "model_configured" additionally preserves the user's
+  # configured selection — kind (provider-default | alias | id) and value —
+  # so an alias is never silently re-resolved differently after task creation
+  # and diagnostics can show configured vs resolved (spec 0014, "Task State").
+  local exec_sel rev_sel
+  exec_sel="$(specrelay::workflow::_role_selection_for_capture "$root" executor)"
+  rev_sel="$(specrelay::workflow::_role_selection_for_capture "$root" reviewer)"
+
   local set_json
   set_json="$(
     EP="$(specrelay::workflow::role_provider "$root" executor)" \
     EM="$(specrelay::workflow::role_model "$root" executor)" \
     EA="$(specrelay::workflow::role_agent "$root" executor)" \
+    EK="$(specrelay::capability::selection_kind "$exec_sel")" \
+    EV="$(specrelay::capability::selection_value "$exec_sel")" \
     RP="$(specrelay::workflow::role_provider "$root" reviewer)" \
     RM="$(specrelay::workflow::role_model "$root" reviewer)" \
     RA="$(specrelay::workflow::role_agent "$root" reviewer)" \
+    RK="$(specrelay::capability::selection_kind "$rev_sel")" \
+    RV="$(specrelay::capability::selection_value "$rev_sel")" \
     python3 -c '
 import json, os
 print(json.dumps({"roles_effective": {
-    "executor": {"provider": os.environ["EP"], "model": os.environ["EM"], "agent": os.environ["EA"]},
-    "reviewer": {"provider": os.environ["RP"], "model": os.environ["RM"], "agent": os.environ["RA"]},
+    "executor": {"provider": os.environ["EP"], "model": os.environ["EM"], "agent": os.environ["EA"],
+                 "model_configured": {"kind": os.environ["EK"], "value": os.environ["EV"]}},
+    "reviewer": {"provider": os.environ["RP"], "model": os.environ["RM"], "agent": os.environ["RA"],
+                 "model_configured": {"kind": os.environ["RK"], "value": os.environ["RV"]}},
 }}))
 ')"
   specrelay::state::set "$state_file" "$set_json" >/dev/null
+}
+
+# specrelay::workflow::_role_selection_for_capture <root> <role>
+# The effective selection for capture, with a best-effort fallback for a
+# selection that cannot be parsed (only reachable for a role whose validation
+# is intentionally skipped, e.g. a manual reviewer whose model fields are
+# documented as ignored): the raw configured value is preserved as an id-kind
+# record rather than losing it.
+specrelay::workflow::_role_selection_for_capture() {
+  local root="$1" role="$2" selection
+  if selection="$(specrelay::workflow::role_model_selection "$root" "$role" 2>/dev/null)"; then
+    printf '%s\n' "$selection"
+  else
+    printf 'id:%s\n' "$(specrelay::config::get "$root" "roles.$role.model" "provider-default")"
+  fi
 }
 
 specrelay::workflow::context_adapter() {

@@ -122,6 +122,55 @@ executor and reviewer keep using the captured model, so a run stays
 deterministic. See
 [Configuration → Model configuration for existing tasks](configuration.md#model-configuration-for-existing-tasks-resume).
 
+## Provider model-selection capabilities (spec 0014)
+
+Provider-specific model knowledge — which semantic aliases exist, how they
+resolve, whether the provider's models can be discovered locally — lives in
+each provider adapter's **capability functions**, dispatched through the
+generic layer in `lib/specrelay/providers/capability.sh`. Generic workflow and
+CLI code (`workflow.sh`, `models.sh`, `doctor.sh`) consumes only that
+capability result and never embeds provider-specific conditionals.
+
+Each provider declares exactly one practical **discovery level**:
+
+| Level | Meaning |
+|---|---|
+| `exact` | A reliable, non-billable, machine-readable model list exists; raw ids may be validated (and rejected) locally against it |
+| `aliases` | No reliable complete list, but a small adapter-owned set of provider-recognized aliases is validated locally ("Declared Aliases Only") |
+| `structural` | Neither reliable discovery nor safe aliases; only configuration shape and forwarding are validated — availability is validated by the provider |
+| `none` | The provider does not support explicit model selection; explicit alias/raw-id configuration fails before role execution |
+
+**Alias contract.** Aliases are provider-scoped, explicitly declared by the
+adapter, resolved deterministically (to either a provider-recognized alias
+argument or an exact provider model id), visible in diagnostics, and covered by
+tests. SpecRelay never invents an alias because a model family name sounds
+plausible, and an alias never crosses provider boundaries — an alias declared
+by the `claude` adapter is not accepted for `fake` (or any future provider) and
+vice versa.
+
+**The `claude` adapter** declares level `aliases` with the provider-recognized
+aliases `opus` and `sonnet`, each resolving to itself as the `--model` argument
+(the Claude CLI maps the alias to its latest concrete model — SpecRelay never
+fabricates an exact id for it). Claude model discovery is reported as
+`unavailable`: no reliable non-billable model list exists, so `specrelay
+models claude` says so honestly and points at the provider's own
+documentation/CLI for exact ids. The legacy `claude-subagent` provider name
+reuses this capability data (same underlying adapter) while reporting the
+configured name.
+
+**Unknown alias errors** are actionable: they name the role, provider, and
+invalid value; suggest an unambiguous near-match ("Did you mean: opus") when
+one exists; list the provider's supported aliases; and show the valid
+configuration forms plus `specrelay models <provider>`. Suggestions never
+rewrite configuration.
+
+**Manual roles** never execute model selection: configured model fields on a
+`manual` role are ignored (not rejected), and no billable or automated provider
+call occurs for them.
+
+Run `specrelay models [provider]` for the user-facing view of all of this; see
+[Commands → `specrelay models`](commands.md).
+
 ## Role environment overrides (spec 0009)
 
 A role's `model` and `agent` can be overridden from the environment. These take
@@ -475,6 +524,10 @@ Environment hooks (exact names from `fake.sh`):
 | `SPECRELAY_FAKE_IMPL_FILE` | Fixture file the executor "implements" into (default `<project-root>/specrelay-fake-impl.txt`) |
 | `SPECRELAY_FAKE_EXECUTOR_SLEEP` | Test-only: sleep after the claim to widen the race window for concurrency tests |
 | `SPECRELAY_FAKE_INVOCATION_LOG` | Optional path; when set, each fake invocation appends a `role=… provider=… model=… agent=… round=…` line here (in addition to the per-role `fake-<role>-invocation.txt` files) so a test can watch both roles' forwarding history (spec 0012) |
+| `SPECRELAY_FAKE_CAPABILITY_LEVEL` | Capability simulation (spec 0014): `exact` \| `aliases` \| `structural` (default) \| `none` — lets tests exercise every discovery/validation level without a live provider |
+| `SPECRELAY_FAKE_DECLARED_ALIASES` | Space-separated alias entries: `<alias>` (resolves to itself) or `<alias>=<resolved-model-id>` (resolves to that exact id); empty means no aliases declared |
+| `SPECRELAY_FAKE_DISCOVERED_MODELS` | Space-separated exact model ids "discovered" when the level is `exact` |
+| `SPECRELAY_FAKE_DISCOVERY_FAIL` | When `=1`, model discovery FAILS — reported as a discovery failure, distinct from an invalid model configuration |
 
 On the reviewer side, `fake` writes `09-consultant-review.md`, then writes
 `10-business-summary.md` and prints `ACCEPT`, or writes

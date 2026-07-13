@@ -23,6 +23,7 @@ from a standalone source checkout, or the installed `specrelay ...` on your
 | `specrelay task block <task-ref> "<reason>"` | `EXECUTOR_RUNNING` → `BLOCKED` | `0` transitioned; non-zero refused |
 | `specrelay task authorize-submit <task-ref>` | Runner-owned `EXECUTOR_RUNNING` → `READY_FOR_REVIEW` | `0` submitted; non-zero refused |
 | `specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]` | SpecRelay-native interrupted-task recovery | `0` recovered; non-zero refused (live owner / wrong state / not owned / no reason) |
+| `specrelay models [<provider>]` | Read-only model-selection guidance for configured automated providers | `0` on success; `1` unknown provider |
 
 ## Direct CLI (`bin/specrelay` / installed `specrelay`)
 
@@ -92,6 +93,36 @@ root accessible, executor/reviewer provider availability, context
 capability, current engine mode, compatibility shims installed, rollback
 engine exists, no conflicting active engine lock. Returns non-zero if any
 mandatory check fails.
+
+```
+specrelay models [<provider>]
+```
+Read-only model-selection guidance (spec 0014), for inspecting the options
+**before** editing `roles.<role>.model` in `.specrelay/config.yml`. With no
+argument it covers every configured automated provider; with a provider name
+(`claude`, `claude-subagent`, `fake`) it inspects that provider only. For each
+provider it prints:
+
+- the three supported configuration forms — `model: provider-default`, the
+  structured semantic alias (`model:` / `alias: <alias>`), and the structured
+  exact model id (`model:` / `id: <provider-model-id>`) — as copyable YAML;
+- the provider's **SpecRelay-declared, provider-scoped aliases** (aliases are
+  owned by each provider's capability adapter and never cross providers);
+- the provider's honest **model discovery** capability: dynamically discovered
+  models are listed only when the provider exposes a reliable, non-billable
+  list; otherwise the output states plainly that SpecRelay cannot enumerate the
+  account's models and points at the provider's own documentation/CLI. A
+  discovery *failure* is reported as a discovery problem, distinct from an
+  invalid configuration;
+- this project's currently configured selections per role, with both the
+  configured and the resolved value.
+
+The output is stream-friendly, append-only, copyable, non-interactive, and
+usable without color. It performs no billable or remote provider call. The
+legacy `claude-subagent` name reuses the `claude` adapter's capability data and
+says so. An unknown provider produces an actionable error listing the
+configured and supported provider names. `manual` reports that a human performs
+the role and model fields are ignored.
 
 ```
 specrelay task create <spec-path> [--task-id <id>] [--allow-dirty-baseline]

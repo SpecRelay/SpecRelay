@@ -33,6 +33,16 @@
 . "$SPECRELAY_ROOT/lib/specrelay/task.sh"
 # shellcheck source=../lib/specrelay/state.sh
 . "$SPECRELAY_ROOT/lib/specrelay/state.sh"
+# workflow.sh's model resolution goes through the provider capability layer
+# (spec 0014), which dispatches to the provider adapters' capability functions.
+# shellcheck source=../lib/specrelay/providers/provider.sh
+. "$SPECRELAY_ROOT/lib/specrelay/providers/provider.sh"
+# shellcheck source=../lib/specrelay/providers/fake.sh
+. "$SPECRELAY_ROOT/lib/specrelay/providers/fake.sh"
+# shellcheck source=../lib/specrelay/providers/claude.sh
+. "$SPECRELAY_ROOT/lib/specrelay/providers/claude.sh"
+# shellcheck source=../lib/specrelay/providers/capability.sh
+. "$SPECRELAY_ROOT/lib/specrelay/providers/capability.sh"
 # shellcheck source=../lib/specrelay/workflow.sh
 . "$SPECRELAY_ROOT/lib/specrelay/workflow.sh"
 

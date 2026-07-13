@@ -34,10 +34,17 @@ Discovery (read-only):
                          AI workflow discovered on disk.
   doctor                 Read-only readiness diagnostics: git repo, config,
                          spec root, task runtime root, executor/reviewer
-                         provider availability, context capability, active
-                         engine mode, compatibility shims, rollback engine,
-                         and engine-lock conflicts. Exits non-zero if any
-                         mandatory check fails.
+                         provider availability, role model selection
+                         (configured/resolved/validation level), context
+                         capability, active engine mode, compatibility shims,
+                         rollback engine, and engine-lock conflicts. Exits
+                         non-zero if any mandatory check fails.
+  models [<provider>]    Model-selection guidance for configured automated
+                         providers: the supported configuration forms
+                         (provider-default, semantic alias, exact model id),
+                         each provider's declared aliases, and its honest
+                         model-discovery capability. With a provider name,
+                         inspects that provider only.
 
 Workflow engine:
   run <spec-path> [--task-id <id>] [--allow-dirty-baseline]
@@ -276,6 +283,16 @@ specrelay::cli::cmd_run() {
   specrelay::workflow::run "$root" "$spec" "$task_id_override" "$allow_dirty"
 }
 
+specrelay::cli::cmd_models() {
+  local root
+  root="$(specrelay::cli::require_project_root)" || return 1
+  if [ "$#" -gt 1 ]; then
+    specrelay::out::err "usage: specrelay models [<provider>]"
+    return 2
+  fi
+  specrelay::models::run "$root" "${1:-}"
+}
+
 specrelay::cli::cmd_resume() {
   local root ref task_id
   root="$(specrelay::cli::require_project_root)" || return 1
@@ -370,11 +387,21 @@ specrelay::cli::task_show() {
   # changed) project configuration — this preserves the audit trail for runs
   # created before a config change (spec 0012, "Status and Diagnostic Output").
   # A task that predates capture falls back to the live resolved config.
+  # The captured "model" is the RESOLVED value; "model configured" additionally
+  # shows the durable configured selection (kind:value) when the task captured
+  # the spec-0014 structured metadata. An old task that captured only a string
+  # model remains fully displayable — the configured line reports the metadata
+  # as not recorded rather than re-resolving current project configuration.
+  local exec_cfg rev_cfg
+  exec_cfg="$(specrelay::workflow::captured_role_model_configured "$root" "$task_id" executor 2>/dev/null || true)"
+  rev_cfg="$(specrelay::workflow::captured_role_model_configured "$root" "$task_id" reviewer 2>/dev/null || true)"
   echo "Executor provider: $(specrelay::workflow::effective_role_provider "$root" "$task_id" executor)"
   echo "Executor model: $(specrelay::workflow::effective_role_model "$root" "$task_id" executor)"
+  echo "Executor model configured: ${exec_cfg:-(not recorded — captured before structured model metadata)}"
   echo "Executor agent: $(specrelay::workflow::effective_role_agent "$root" "$task_id" executor)"
   echo "Reviewer provider: $(specrelay::workflow::effective_role_provider "$root" "$task_id" reviewer)"
   echo "Reviewer model: $(specrelay::workflow::effective_role_model "$root" "$task_id" reviewer)"
+  echo "Reviewer model configured: ${rev_cfg:-(not recorded — captured before structured model metadata)}"
   echo "Reviewer agent: $(specrelay::workflow::effective_role_agent "$root" "$task_id" reviewer)"
   echo "Created: ${created:-(unknown)}"
   echo "Updated: ${updated:-(unknown)}"
@@ -702,6 +729,9 @@ specrelay::cli::main() {
       ;;
     doctor)
       specrelay::doctor::run "$home"
+      ;;
+    models)
+      specrelay::cli::cmd_models "$@"
       ;;
     review)
       specrelay::cli::unimplemented "$cmd"
