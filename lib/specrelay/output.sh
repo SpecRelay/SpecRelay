@@ -15,6 +15,10 @@
 # plain text by default — content is byte-for-byte identical to the uncolored
 # form, so evidence, greps, and machine parsing are unaffected.
 
+# Path to the shared Unicode card renderer (spec 0013). Resolved once at source
+# time from this file's own location, mirroring state.sh's state_lib.py path.
+SPECRELAY_RENDER_CARD_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/py/render_card.py"
+
 # specrelay::color::mode -> echoes auto|always|never (unrecognized -> auto).
 specrelay::color::mode() {
   local m
@@ -115,5 +119,69 @@ specrelay::out::log() {
     printf '%s%s%s\n' "$body_color" "$line" "$reset"
   else
     printf '%s\n' "$line"
+  fi
+}
+
+# --- stream-friendly cards (spec 0013) --------------------------------------
+#
+# The card helpers below add the spec 0013 visual hierarchy (major sections,
+# transitions, role headers, result/summary cards) WITHOUT changing execution
+# semantics. They are strictly APPEND-ONLY: they only ever write complete lines
+# through render_card.py, never a cursor/redraw/clear sequence, so every card
+# stays visible in scrollback and survives piping/redirection. Color (when
+# enabled) accents only the box borders/title; the state, provider and result
+# names are always present as plain text inside the card, so existing log
+# parsers keep working and the hierarchy stays obvious with color disabled.
+
+# specrelay::out::card <color> <title> [body...]
+# Render a titled Unicode card. <color> is one of green|blue|magenta|yellow|
+# red|none. Falls back to a plain (still append-only) block when python3 / the
+# renderer is unavailable, so no card ever hides information.
+specrelay::out::card() {
+  local color="$1" title="$2"
+  shift 2
+  if command -v python3 >/dev/null 2>&1 && [ -f "$SPECRELAY_RENDER_CARD_PY" ]; then
+    python3 "$SPECRELAY_RENDER_CARD_PY" card "$color" "$title" "$@"
+    return 0
+  fi
+  echo "== $title =="
+  local b
+  for b in "$@"; do
+    echo "  $b"
+  done
+}
+
+# specrelay::out::transition_card <from-state> <to-state>
+# Render the Level 2 transition card (source ─────▶ destination). The border
+# color is derived from the DESTINATION state (green = a completed/human-review
+# terminal, yellow = rework requested, red = blocked, blue = an in-flight
+# running/handoff state); the state names themselves are always plain text.
+specrelay::out::transition_card() {
+  local from="$1" to="$2" color
+  case "$to" in
+    READY_FOR_HUMAN_REVIEW) color=green ;;
+    CHANGES_REQUESTED)      color=yellow ;;
+    BLOCKED)                color=red ;;
+    *)                      color=blue ;;
+  esac
+  if command -v python3 >/dev/null 2>&1 && [ -f "$SPECRELAY_RENDER_CARD_PY" ]; then
+    python3 "$SPECRELAY_RENDER_CARD_PY" transition "$color" "$from" "$to"
+    return 0
+  fi
+  echo "== Transition: $from -> $to =="
+}
+
+# specrelay::out::format_duration <seconds>
+# Human-friendly elapsed time for result cards ("3s", "1m 5s"). A non-integer
+# value is printed unchanged (never guesses).
+specrelay::out::format_duration() {
+  local s="$1"
+  case "$s" in
+    ''|*[!0-9]*) printf '%s\n' "$s"; return 0 ;;
+  esac
+  if [ "$s" -lt 60 ]; then
+    printf '%ds\n' "$s"
+  else
+    printf '%dm %ds\n' "$((s / 60))" "$((s % 60))"
   fi
 }

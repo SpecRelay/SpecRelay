@@ -68,8 +68,32 @@ specrelay::state::set() {
   python3 "$SPECRELAY_STATE_LIB_PY" set "$1" "$2"
 }
 
+# specrelay::state::_csv_contains <csv> <value>
+# True when <value> is one of the comma-separated entries in <csv>.
+specrelay::state::_csv_contains() {
+  local csv="$1" value="$2" item
+  local IFS=,
+  for item in $csv; do
+    [ "$item" = "$value" ] && return 0
+  done
+  return 1
+}
+
 # specrelay::state::transition <state-file> <allowed-states-csv> <target-state> <set-json> [<clear-json>]
+#
+# Presentation (spec 0013): when the current state is actually an allowed source
+# state, a Level 2 transition card is emitted just before the transition. The
+# card is the enhanced VISUAL for a lifecycle transition; the authoritative
+# machine-parseable "Transitioned: <from> -> <to>" line still comes from
+# state_lib.py below (unchanged), so existing log parsers keep working. A
+# refused transition (source state not allowed) prints no card, so a card never
+# implies a transition that did not happen.
 specrelay::state::transition() {
   specrelay::state::require_python || return 1
+  local file="$1" allowed_csv="$2" target="$3" from
+  from="$(specrelay::state::canonical "$file")"
+  if [ -n "$from" ] && specrelay::state::_csv_contains "$allowed_csv" "$from"; then
+    specrelay::out::transition_card "$from" "$target"
+  fi
   python3 "$SPECRELAY_STATE_LIB_PY" transition "$@"
 }

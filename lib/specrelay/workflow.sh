@@ -428,19 +428,41 @@ specrelay::workflow::executor_iteration() {
   # "Runtime evidence"): provider/model/agent for both roles.
   specrelay::workflow::record_effective_roles "$root" "$task_id"
 
-  local round rc
+  local round rc started ended duration
   round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
   [ -n "$round" ] || round=1
 
+  # Level 3 (spec 0013): the executor role-execution header. Provider output
+  # (Level 4) continues exactly as today, immediately below this card.
+  specrelay::out::card blue "Executor · Round $round" \
+    "$(printf '%-10s%s' Provider "$provider")" \
+    "$(printf '%-10s%s' Model "$model")" \
+    "$(printf '%-10s%s' Agent "$agent")"
+
   specrelay::out::log "[executor] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent)"
+  started="$(date +%s 2>/dev/null || echo '')"
   if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md" "$model" "$agent"; then
     rc=0
   else
     rc=$?
   fi
+  ended="$(date +%s 2>/dev/null || echo '')"
 
   specrelay::out::log "[executor] task '$task_id': capturing evidence"
   specrelay::evidence::capture "$root" "$task_dir"
+
+  # Result card (spec 0013): the executor's completion, with elapsed time. Shown
+  # for both success and failure so a finished provider is always obvious.
+  if [ -n "$started" ] && [ -n "$ended" ]; then
+    duration="$(specrelay::out::format_duration "$((ended - started))")"
+  else
+    duration="unknown"
+  fi
+  if [ "$rc" -eq 0 ]; then
+    specrelay::out::card green "Executor Result" "SUCCESS" "Duration $duration"
+  else
+    specrelay::out::card red "Executor Result" "FAILED (exit $rc)" "Duration $duration"
+  fi
 
   if [ "$rc" -ne 0 ]; then
     specrelay::out::err "[executor] task '$task_id': provider exited non-zero ($rc); not submitted for review"
@@ -559,6 +581,13 @@ specrelay::workflow::reviewer_iteration() {
   [ -n "$round" ] || round=1
   prompt_file="$(specrelay::workflow::build_reviewer_prompt "$root" "$task_id")"
 
+  # Level 3 (spec 0013): the reviewer role-execution header (magenta = review).
+  # Provider output (Level 4) continues exactly as today, below this card.
+  specrelay::out::card magenta "Reviewer · Round $round" \
+    "$(printf '%-10s%s' Provider "$provider")" \
+    "$(printf '%-10s%s' Model "$model")" \
+    "$(printf '%-10s%s' Agent "$agent")"
+
   specrelay::out::log "[reviewer] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent, isolated context)"
   if decision="$(specrelay::provider::reviewer_run "$provider" "$root" "$task_dir" "$round" "$prompt_file" "$model" "$agent")"; then
     rc=0
@@ -573,6 +602,15 @@ specrelay::workflow::reviewer_iteration() {
   fi
 
   decision="$(printf '%s\n' "$decision" | tail -n1 | tr -d '[:space:]')"
+
+  # Result card (spec 0013): the reviewer's completion decision. Emitted only
+  # for a recognized decision (ACCEPT green = completed, REQUEST_CHANGES yellow
+  # = rework); an unrecognized/failed decision is reported by the log line below
+  # instead, so a card never asserts a decision that was not actually made.
+  case "$decision" in
+    ACCEPT)          specrelay::out::card green  "Reviewer Result" "ACCEPT" ;;
+    REQUEST_CHANGES) specrelay::out::card yellow "Reviewer Result" "REQUEST_CHANGES" ;;
+  esac
 
   # Re-read the canonical state AFTER the reviewer provider ran. A real
   # reviewer agent runs under `claude --print --dangerously-skip-permissions`
@@ -677,11 +715,15 @@ specrelay::workflow::drive() {
     case "$current" in
       READY_FOR_HUMAN_REVIEW)
         specrelay::out::log "[specrelay] task '$task_id' reached READY_FOR_HUMAN_REVIEW."
+        # Final summary card (spec 0013): the terminal task result.
+        specrelay::out::card green "SpecRelay Result" "READY_FOR_HUMAN_REVIEW"
         rc=0
         break
         ;;
       BLOCKED)
         specrelay::out::err "[specrelay] task '$task_id' is BLOCKED."
+        # Final summary card (spec 0013): the terminal task result.
+        specrelay::out::card red "SpecRelay Result" "BLOCKED"
         rc=3
         break
         ;;
@@ -862,6 +904,12 @@ specrelay::workflow::resume() {
     specrelay::out::err "task not found: $task_dir"
     return 1
   fi
+
+  # Level 1 (spec 0013): the major execution-section banner for this resume.
+  local resume_spec
+  resume_spec="$(specrelay::state::get "$(specrelay::state::path "$task_dir")" spec_source 2>/dev/null || true)"
+  specrelay::out::card blue "SpecRelay Task" "Task $task_id" "Spec ${resume_spec:-(resumed)}"
+
   if ! specrelay::workflow::assert_engine_compat "$(specrelay::state::path "$task_dir")"; then
     return 1
   fi
@@ -906,6 +954,9 @@ specrelay::workflow::run() {
   fi
 
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
+
+  # Level 1 (spec 0013): the major execution-section banner for this run.
+  specrelay::out::card blue "SpecRelay Task" "Task $task_id" "Spec $spec_rel"
 
   if ! specrelay::lock::acquire "$root" "$task_id"; then
     return 1
