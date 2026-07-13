@@ -47,6 +47,21 @@ specrelay::doctor::_provider_unavailable() {
   fi
 }
 
+# specrelay::doctor::_role_model_source <Role-label> <model>
+# Read-only (spec 0012, "Doctor Command"): report whether the role's effective
+# model is an EXPLICIT provider-specific model id or the `provider-default`
+# sentinel, so an operator can tell at a glance whether SpecRelay will request a
+# specific model or delegate model selection to the provider CLI. This never
+# performs a billable model invocation and never claims a model is "available".
+specrelay::doctor::_role_model_source() {
+  local role="$1" model="$2"
+  if [ "$model" = "provider-default" ]; then
+    specrelay::doctor::_info "$role model source: provider-default (delegated to the provider CLI; SpecRelay passes no explicit model-selection argument)"
+  else
+    specrelay::doctor::_info "$role model source: explicit model '$model' (SpecRelay will request this exact model; the provider CLI validates that it exists)"
+  fi
+}
+
 # specrelay::doctor::_role_model_support <Role-label> <normalized-provider> <model>
 # Read-only advisory (spec 0009, "Doctor"): when an EXPLICIT model is configured
 # for a Claude role (anything other than the `provider-default` sentinel), report
@@ -270,6 +285,12 @@ specrelay::doctor::run() {
   rev_agent="$(specrelay::workflow::role_agent "$root" reviewer)"
   specrelay::doctor::_info "Executor role: provider=$exec_prov_n model=$exec_model agent=$exec_agent"
   specrelay::doctor::_info "Reviewer role: provider=$rev_prov_n model=$rev_model agent=$rev_agent"
+
+  # Distinguish an EXPLICIT model from the provider-default sentinel (spec 0012,
+  # "Doctor Command"): doctor must make it unambiguous whether SpecRelay will
+  # request a specific model or delegate model selection to the provider CLI.
+  specrelay::doctor::_role_model_source "Executor" "$exec_model"
+  specrelay::doctor::_role_model_source "Reviewer" "$rev_model"
 
   # If an explicit model is configured for a Claude role but the installed CLI
   # does not advertise a --model flag, report it clearly (spec 0009): the run

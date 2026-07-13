@@ -33,6 +33,30 @@
 # above, so a scenario that only cares about round 1 need not specify later
 # rounds explicitly.
 
+# specrelay::provider::fake::_record_invocation <role> <provider> <model> <agent> <round> <evidence-file>
+# Writes deterministic INVOCATION EVIDENCE for the fake provider (spec 0012,
+# "Fake Provider Support"): the resolved role, provider, model, and agent for
+# this call. This is what lets a test PROVE model/agent forwarding — that each
+# configured model actually reached the correct role — without any live Claude
+# or Codex call. The file is truncated each round, so it always reflects the
+# MOST RECENT invocation of that role (e.g. the post-config-change round after a
+# resume). When SPECRELAY_FAKE_INVOCATION_LOG is set, a one-line-per-invocation
+# record is ALSO appended there, so a single test can watch both roles' history.
+specrelay::provider::fake::_record_invocation() {
+  local role="$1" provider="$2" model="$3" agent="$4" round="$5" evidence_file="$6"
+  {
+    printf 'role=%s\n' "$role"
+    printf 'provider=%s\n' "$provider"
+    printf 'model=%s\n' "$model"
+    printf 'agent=%s\n' "$agent"
+    printf 'round=%s\n' "$round"
+  } > "$evidence_file"
+  if [ -n "${SPECRELAY_FAKE_INVOCATION_LOG:-}" ]; then
+    printf 'role=%s provider=%s model=%s agent=%s round=%s\n' \
+      "$role" "$provider" "$model" "$agent" "$round" >> "$SPECRELAY_FAKE_INVOCATION_LOG"
+  fi
+}
+
 specrelay::provider::fake::_plan_line() {
   local file="$1" round="$2"
   [ -n "$file" ] && [ -f "$file" ] || { printf ''; return 0; }
@@ -51,15 +75,24 @@ specrelay::provider::fake::_field() {
 # captured raw to 12-executor-stdout.txt. Deliberately small and deterministic
 # so the test suite stays non-flaky and non-noisy.
 specrelay::provider::fake::_executor_emit() {
-  local round="$1" prompt_file="$2" exit_code="$3" outputs="$4" touch_flag="$5"
+  local round="$1" prompt_file="$2" exit_code="$3" outputs="$4" touch_flag="$5" model="${6:-provider-default}" agent="${7:-none}"
   echo "[fake-executor] round $round"
   echo "[fake-executor] prompt file: $prompt_file"
   echo "[fake-executor] plan: exit=$exit_code outputs=$outputs touch=$touch_flag"
+  # Make the resolved model/agent visible in the streamed/captured output too,
+  # so operator logs and 12-executor-stdout.txt carry the forwarding evidence.
+  echo "[fake-executor] resolved: provider=fake model=$model agent=$agent"
 }
 
 specrelay::provider::fake::executor_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:fake}"
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:fake}" model="${6:-provider-default}" agent="${7:-none}"
   local plan_line exit_code outputs touch_flag impl_file
+
+  # Record the forwarded role/provider/model/agent as durable invocation
+  # evidence (spec 0012). Written before the streamed emit so it exists even if
+  # a later step in this function fails.
+  specrelay::provider::fake::_record_invocation executor fake "$model" "$agent" "$round" \
+    "$task_dir/fake-executor-invocation.txt"
 
   plan_line="$(specrelay::provider::fake::_plan_line "${SPECRELAY_FAKE_EXECUTOR_PLAN:-}" "$round")"
   exit_code="$(specrelay::provider::fake::_field "$plan_line" exit "0")"
@@ -75,7 +108,7 @@ specrelay::provider::fake::executor_run() {
 
   specrelay::provider::run_streamed "$label" \
     "$task_dir/12-executor-stdout.txt" "$task_dir/13-executor-stderr.txt" "$root" -- \
-    specrelay::provider::fake::_executor_emit "$round" "$prompt_file" "$exit_code" "$outputs" "$touch_flag"
+    specrelay::provider::fake::_executor_emit "$round" "$prompt_file" "$exit_code" "$outputs" "$touch_flag" "$model" "$agent"
 
   if [ "$touch_flag" = "1" ]; then
     impl_file="${SPECRELAY_FAKE_IMPL_FILE:-$root/specrelay-fake-impl.txt}"
@@ -92,15 +125,22 @@ specrelay::provider::fake::executor_run() {
 }
 
 specrelay::provider::fake::_reviewer_emit() {
-  local round="$1" prompt_file="$2" exit_code="$3" decision="$4"
+  local round="$1" prompt_file="$2" exit_code="$3" decision="$4" model="${5:-provider-default}" agent="${6:-none}"
   echo "[fake-reviewer] round $round"
   echo "[fake-reviewer] prompt file: $prompt_file"
   echo "[fake-reviewer] plan: exit=$exit_code decision=$decision"
+  echo "[fake-reviewer] resolved: provider=fake model=$model agent=$agent"
 }
 
 specrelay::provider::fake::reviewer_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:fake}"
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:fake}" model="${6:-provider-default}" agent="${7:-none}"
   local plan_line exit_code decision
+
+  # Durable invocation evidence for the reviewer role (spec 0012). Recorded
+  # before anything else so a failed reviewer round still leaves proof of which
+  # model/agent was forwarded to it.
+  specrelay::provider::fake::_record_invocation reviewer fake "$model" "$agent" "$round" \
+    "$task_dir/fake-reviewer-invocation.txt"
 
   plan_line="$(specrelay::provider::fake::_plan_line "${SPECRELAY_FAKE_REVIEWER_PLAN:-}" "$round")"
   exit_code="$(specrelay::provider::fake::_field "$plan_line" exit "0")"
@@ -112,7 +152,7 @@ specrelay::provider::fake::reviewer_run() {
   # command substitution — kept strictly separate from the streamed copy.
   specrelay::provider::run_streamed "$label" \
     "$task_dir/15-reviewer-stdout.txt" "$task_dir/16-reviewer-stderr.txt" "$root" -- \
-    specrelay::provider::fake::_reviewer_emit "$round" "$prompt_file" "$exit_code" "$decision"
+    specrelay::provider::fake::_reviewer_emit "$round" "$prompt_file" "$exit_code" "$decision" "$model" "$agent"
 
   if [ "$exit_code" != "0" ]; then
     return "$exit_code"

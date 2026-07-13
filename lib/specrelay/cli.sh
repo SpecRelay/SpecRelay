@@ -365,8 +365,17 @@ specrelay::cli::task_show() {
   echo "Engine: ${engine:-(none recorded)}"
   echo "Engine version: ${engine_version:-(none recorded)}"
   echo "Schema version: ${schema_version:-1 (implicit; historical task)}"
-  echo "Executor provider: $(specrelay::workflow::executor_provider "$root")"
-  echo "Reviewer provider: $(specrelay::workflow::reviewer_provider "$root")"
+  # Role configuration for an EXISTING task prefers the durable roles_effective
+  # values captured at task creation over silently re-resolving (possibly
+  # changed) project configuration — this preserves the audit trail for runs
+  # created before a config change (spec 0012, "Status and Diagnostic Output").
+  # A task that predates capture falls back to the live resolved config.
+  echo "Executor provider: $(specrelay::workflow::effective_role_provider "$root" "$task_id" executor)"
+  echo "Executor model: $(specrelay::workflow::effective_role_model "$root" "$task_id" executor)"
+  echo "Executor agent: $(specrelay::workflow::effective_role_agent "$root" "$task_id" executor)"
+  echo "Reviewer provider: $(specrelay::workflow::effective_role_provider "$root" "$task_id" reviewer)"
+  echo "Reviewer model: $(specrelay::workflow::effective_role_model "$root" "$task_id" reviewer)"
+  echo "Reviewer agent: $(specrelay::workflow::effective_role_agent "$root" "$task_id" reviewer)"
   echo "Created: ${created:-(unknown)}"
   echo "Updated: ${updated:-(unknown)}"
   echo "Last decision: $last_decision"

@@ -146,6 +146,19 @@ default shown here.
   but the installed CLI cannot accept model selection, the run **fails clearly**
   rather than silently ignoring the model, and `specrelay doctor` reports the
   mismatch.
+- **Validation (spec 0012):** a malformed model configuration is **rejected
+  before any provider runs**. The following are errors, each reported with the
+  affected role and the config source (`.specrelay/config.yml`):
+  - a **non-string** model value (e.g. a YAML list, mapping, or number);
+  - an **empty** explicit model value (`model: ""`);
+  - a **whitespace-only** explicit model value (`model: "   "`);
+  - a **structurally invalid** role configuration (e.g. `roles.executor` is not a
+    mapping).
+
+  An **absent** model key is always valid and resolves to `provider-default`. An
+  unknown-but-structurally-valid model id is **not** rejected — SpecRelay
+  forwards it to the provider, which rejects unknown models with its own error
+  (SpecRelay keeps no allowlist of remote model names).
 
 ### `roles.<role>.agent`
 
@@ -190,6 +203,49 @@ The full resolution precedence for a role's effective `model`/`agent` is:
 An empty env override (set but blank) is treated as unset and falls through to
 the config. Provider-specific env overrides may be added as future work; they
 are intentionally not introduced here.
+
+### Executor and reviewer models are independent
+
+The executor and reviewer resolve their `provider` / `model` / `agent` fully
+independently — they may use **different providers and different models**, and
+neither role ever inherits the other's model. A mixed-provider example:
+
+```yaml
+roles:
+  executor:
+    provider: claude
+    model: <claude-model-id>     # opaque, provider-specific — may change
+    agent: none
+  reviewer:
+    provider: claude-subagent    # legacy shorthand for claude + ai-reviewer
+    model: <claude-model-id>     # a DIFFERENT model id is allowed here
+    agent: ai-reviewer
+```
+
+> Concrete model identifiers (like `claude-...` or a Codex model id) are
+> **provider-specific and may change over time**. The placeholders
+> `<claude-model-id>` / `<codex-model-id>` stand in for whatever your provider
+> currently offers; SpecRelay treats them as opaque strings and never presents
+> any identifier as permanently valid.
+
+### Model configuration for existing tasks (resume)
+
+The effective role configuration (provider/model/agent for both roles) is
+**captured once**, into the task's durable `state.json` under `roles_effective`,
+the first time the task reaches an executor iteration. That captured
+configuration is **authoritative for the rest of the task's life**:
+
+- If you change `roles.<role>.model` in `.specrelay/config.yml` **after** a task
+  has started, resuming that task (`specrelay resume`) **does not** switch it to
+  the new model — the executor and reviewer keep using the model captured at
+  creation. This keeps a run deterministic and preserves its audit trail.
+- A brand-new task created after the config change picks up the new model
+  normally.
+- `specrelay task show` prefers the captured `roles_effective` values over
+  re-resolving the (possibly changed) live configuration, for the same reason.
+
+If you deliberately want a task to adopt new model configuration, start a new
+task rather than resuming the old one.
 
 ### `context.adapter`
 
@@ -262,6 +318,30 @@ In short: SpecRelay gives you clear errors for a missing or malformed file,
 rejects a non-mapping top level, and never runs arbitrary code from your config.
 It does not currently validate value ranges or reject typo'd keys, so a
 misspelled key falls back to its default rather than raising.
+
+Beyond this general shape check, SpecRelay additionally validates the **shape of
+each role's `model`** before running a provider (spec 0012): a non-string,
+empty, or whitespace-only explicit model, or a structurally invalid role
+mapping, is rejected up front with an error naming the role and the config file
+(see [`roles.<role>.model`](#rolesrolemodel) above). This is the one value-level
+check the loader performs; it never validates a model id against a remote
+allowlist.
+
+### Doctor output for role models
+
+`SPECRELAY_PROVIDER_OPTIONAL=1 specrelay doctor` reports the resolved execution
+configuration for both roles and distinguishes an explicit model from the
+`provider-default` sentinel — for example:
+
+```
+✓ Executor role: provider=claude model=<claude-model-id> agent=none
+✓ Reviewer role: provider=claude model=provider-default agent=ai-reviewer
+✓ Executor model source: explicit model '<claude-model-id>' (SpecRelay will request this exact model; the provider CLI validates that it exists)
+✓ Reviewer model source: provider-default (delegated to the provider CLI; SpecRelay passes no explicit model-selection argument)
+```
+
+`doctor` never performs a billable model invocation and never claims a specific
+model is available — verifying that a model exists is the provider CLI's job.
 
 ## Minimal example
 

@@ -216,7 +216,7 @@ specrelay::provider::executor_run() {
   local label="executor:$provider"
   case "$provider" in
     fake)
-      specrelay::provider::fake::executor_run "$root" "$task_dir" "$round" "$prompt_file" "$label"
+      specrelay::provider::fake::executor_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent"
       ;;
     claude)
       specrelay::provider::claude::executor_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent"
@@ -233,7 +233,7 @@ specrelay::provider::reviewer_run() {
   local label="reviewer:$provider"
   case "$provider" in
     fake)
-      specrelay::provider::fake::reviewer_run "$root" "$task_dir" "$round" "$prompt_file" "$label"
+      specrelay::provider::fake::reviewer_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent"
       ;;
     claude|claude-subagent)
       specrelay::provider::claude::reviewer_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent"

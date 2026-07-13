@@ -106,6 +106,22 @@ adapter passing its own CLI's model flag help-driven in exactly this way. No
 Codex adapter is implemented until one exists and can be tested deterministically
 with fake binaries.
 
+**Validation (spec 0012).** A malformed model configuration — a non-string,
+empty, or whitespace-only explicit model, or a structurally invalid role mapping
+— is **rejected before any provider runs**, with an error naming the affected
+role and the config source. An unknown-but-structurally-valid model id is *not*
+rejected: it is forwarded to the provider, which rejects unknown models with its
+own error. See
+[Configuration → `roles.<role>.model`](configuration.md#rolesrolemodel).
+
+**Captured models are authoritative on resume (spec 0012).** The effective
+provider/model/agent for both roles is captured once into the task's durable
+`state.json` (`roles_effective`) at the first executor iteration. Resuming a task
+after `.specrelay/config.yml` changed does **not** switch it to a new model — the
+executor and reviewer keep using the captured model, so a run stays
+deterministic. See
+[Configuration → Model configuration for existing tasks](configuration.md#model-configuration-for-existing-tasks-resume).
+
 ## Role environment overrides (spec 0009)
 
 A role's `model` and `agent` can be overridden from the environment. These take
@@ -458,12 +474,31 @@ Environment hooks (exact names from `fake.sh`):
 | `SPECRELAY_FAKE_REVIEWER_PLAN` | Path to the reviewer plan file (optional) |
 | `SPECRELAY_FAKE_IMPL_FILE` | Fixture file the executor "implements" into (default `<project-root>/specrelay-fake-impl.txt`) |
 | `SPECRELAY_FAKE_EXECUTOR_SLEEP` | Test-only: sleep after the claim to widen the race window for concurrency tests |
+| `SPECRELAY_FAKE_INVOCATION_LOG` | Optional path; when set, each fake invocation appends a `role=… provider=… model=… agent=… round=…` line here (in addition to the per-role `fake-<role>-invocation.txt` files) so a test can watch both roles' forwarding history (spec 0012) |
 
 On the reviewer side, `fake` writes `09-consultant-review.md`, then writes
 `10-business-summary.md` and prints `ACCEPT`, or writes
 `11-next-executor-prompt.md` and prints `REQUEST_CHANGES`, according to the
 plan's `decision` field. A non-zero `exit` returns immediately with no
 decision.
+
+**Invocation evidence (spec 0012).** So a test can *prove* model/agent
+forwarding without any live Claude/Codex call, the `fake` adapter records the
+role, provider, model, and agent it was invoked with into a per-role evidence
+file in the task directory, overwritten each round (so it always reflects the
+most recent invocation of that role — e.g. the post-config-change round after a
+resume):
+
+| File | Contents |
+|---|---|
+| `fake-executor-invocation.txt` | `role=` / `provider=` / `model=` / `agent=` / `round=` for the executor call |
+| `fake-reviewer-invocation.txt` | the same for the reviewer call |
+
+When `SPECRELAY_FAKE_INVOCATION_LOG` is set, a one-line-per-invocation record is
+*also* appended there, so a single test can watch both roles' history across
+rounds. This is what lets the spec-0012 tests assert that each configured model
+reaches the correct role and that the executor and reviewer models stay isolated
+(never leak into each other).
 
 Because `fake` is a fully independent adapter, tests that use it exercise the
 generic lifecycle **without touching any Claude-specific code path**. Provider

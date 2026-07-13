@@ -122,17 +122,111 @@ specrelay::workflow::role_agent() {
   printf 'none\n'
 }
 
+# --- durable (captured) role configuration — spec 0012 resume determinism ---
+#
+# The accessors above (role_provider/role_model/role_agent) resolve the effective
+# config from env + .specrelay/config.yml + normalization on EVERY call. That is
+# correct at task creation, but a task that has already captured its effective
+# role configuration must keep using THAT captured configuration for the rest of
+# its life — resume must not silently re-resolve possibly-changed project config
+# and switch a running task to a different model (spec 0012, "Resume Behavior").
+# The captured_* / effective_* helpers below implement "captured is
+# authoritative, live config is only the fallback for a task that has not
+# captured yet".
+
+# specrelay::workflow::captured_role <root> <task-id> <role> <field>
+# Prints the durable roles_effective.<role>.<field> from the task's state.json
+# when present and non-empty; returns non-zero (prints nothing) otherwise. This
+# is the AUTHORITATIVE source for a task that has already captured its effective
+# role configuration.
+specrelay::workflow::captured_role() {
+  local root="$1" task_id="$2" role="$3" field="$4" state_file blob
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 1
+  blob="$(specrelay::state::get "$state_file" roles_effective 2>/dev/null || true)"
+  [ -n "$blob" ] && [ "$blob" != "null" ] || return 1
+  printf '%s' "$blob" | ROLE="$role" FIELD="$field" python3 -c '
+import json, os, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if not isinstance(data, dict):
+    sys.exit(1)
+role = data.get(os.environ["ROLE"])
+if not isinstance(role, dict):
+    sys.exit(1)
+val = role.get(os.environ["FIELD"])
+if val is None or val == "":
+    sys.exit(1)
+print(val)
+'
+}
+
+# specrelay::workflow::effective_role_provider|model|agent <root> <task-id> <role>
+# Durable-first resolution: the task's captured roles_effective value when it has
+# already been captured, otherwise the freshly resolved value. Both the executor
+# and reviewer iterations dispatch through these, so a resumed task deterministically
+# reuses its captured provider/model/agent even if .specrelay/config.yml changed
+# after the task was created (spec 0012).
+specrelay::workflow::effective_role_provider() {
+  local root="$1" task_id="$2" role="$3" v
+  if v="$(specrelay::workflow::captured_role "$root" "$task_id" "$role" provider)"; then
+    printf '%s\n' "$v"; return 0
+  fi
+  specrelay::workflow::role_provider "$root" "$role"
+}
+specrelay::workflow::effective_role_model() {
+  local root="$1" task_id="$2" role="$3" v
+  if v="$(specrelay::workflow::captured_role "$root" "$task_id" "$role" model)"; then
+    printf '%s\n' "$v"; return 0
+  fi
+  specrelay::workflow::role_model "$root" "$role"
+}
+specrelay::workflow::effective_role_agent() {
+  local root="$1" task_id="$2" role="$3" v
+  if v="$(specrelay::workflow::captured_role "$root" "$task_id" "$role" agent)"; then
+    printf '%s\n' "$v"; return 0
+  fi
+  specrelay::workflow::role_agent "$root" "$role"
+}
+
+# specrelay::workflow::assert_role_model_valid <root> <task-id> <role>
+# Fails (non-zero, clear error) when the role's CONFIGURED model is malformed
+# (spec 0012, "Validation"). A task that has already captured a model for the
+# role is authoritative and was validated at capture time, so a later
+# (possibly now-malformed) config change must NOT retroactively fail a
+# deterministic resume — the captured value is skipped here.
+specrelay::workflow::assert_role_model_valid() {
+  local root="$1" task_id="$2" role="$3"
+  if specrelay::workflow::captured_role "$root" "$task_id" "$role" model >/dev/null 2>&1; then
+    return 0
+  fi
+  specrelay::config::validate_role_model "$root" "$role"
+}
+
 # specrelay::workflow::record_effective_roles <root> <task-id>
 # Persists the effective, NORMALIZED role metadata (provider/model/agent for
 # both roles) into the task's state.json under "roles_effective" (spec 0009,
 # "Runtime evidence"). Based strictly on the normalized effective config above,
-# never the raw legacy config. Idempotent metadata update (not a lifecycle
-# transition), so re-running a round refreshes it. A missing state.json is a
-# no-op (nothing to annotate yet).
+# never the raw legacy config. A missing state.json is a no-op (nothing to
+# annotate yet).
+#
+# CAPTURE-ONCE (spec 0012, "Resume Behavior"): the effective role configuration
+# is captured the FIRST time a task reaches an executor iteration and is
+# AUTHORITATIVE thereafter. Once roles_effective is present it is NEVER
+# overwritten here, so resuming a task after project configuration changed does
+# not silently switch it to a different model — the durable value captured at
+# creation remains the one used by every subsequent executor/reviewer step.
 specrelay::workflow::record_effective_roles() {
-  local root="$1" task_id="$2" state_file
+  local root="$1" task_id="$2" state_file existing
   state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
   [ -f "$state_file" ] || return 0
+
+  existing="$(specrelay::state::get "$state_file" roles_effective 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+    return 0
+  fi
 
   local set_json
   set_json="$(
@@ -289,15 +383,30 @@ specrelay::workflow::executor_iteration() {
     return 1
   fi
 
+  # Reject malformed model configuration BEFORE any provider execution (spec
+  # 0012, "Validation"). The executor's own model always, and the reviewer's
+  # model when an automated reviewer is configured — record_effective_roles
+  # captures BOTH roles at this iteration, so a garbage reviewer model must be
+  # caught before it is captured and later reused on resume. A task that already
+  # captured its models skips this (captured config is authoritative on resume).
+  if ! specrelay::workflow::assert_role_model_valid "$root" "$task_id" executor; then
+    return 1
+  fi
+  if [ "$(specrelay::workflow::reviewer_provider "$root")" != "manual" ]; then
+    if ! specrelay::workflow::assert_role_model_valid "$root" "$task_id" reviewer; then
+      return 1
+    fi
+  fi
+
   specrelay::out::log "[executor] task '$task_id': checking working-tree guard"
   if ! specrelay::git_guard::check "$root" "$task_dir"; then
     return 1
   fi
 
   local provider model agent context_adapter context_required
-  provider="$(specrelay::workflow::executor_provider "$root")"
-  model="$(specrelay::workflow::role_model "$root" executor)"
-  agent="$(specrelay::workflow::role_agent "$root" executor)"
+  provider="$(specrelay::workflow::effective_role_provider "$root" "$task_id" executor)"
+  model="$(specrelay::workflow::effective_role_model "$root" "$task_id" executor)"
+  agent="$(specrelay::workflow::effective_role_agent "$root" "$task_id" executor)"
   context_adapter="$(specrelay::workflow::context_adapter "$root")"
   context_required="$(specrelay::workflow::context_required "$root")"
 
@@ -409,6 +518,13 @@ specrelay::workflow::reviewer_iteration() {
     return 2
   fi
 
+  # Reject malformed reviewer model configuration before launching the reviewer
+  # provider (spec 0012, "Validation"). Skipped once the task has captured its
+  # reviewer model (captured config is authoritative on resume).
+  if ! specrelay::workflow::assert_role_model_valid "$root" "$task_id" reviewer; then
+    return 1
+  fi
+
   context_adapter="$(specrelay::workflow::context_adapter "$root")"
   context_required="$(specrelay::workflow::context_required "$root")"
 
@@ -437,8 +553,8 @@ specrelay::workflow::reviewer_iteration() {
   fi
 
   local round prompt_file decision rc model agent
-  model="$(specrelay::workflow::role_model "$root" reviewer)"
-  agent="$(specrelay::workflow::role_agent "$root" reviewer)"
+  model="$(specrelay::workflow::effective_role_model "$root" "$task_id" reviewer)"
+  agent="$(specrelay::workflow::effective_role_agent "$root" "$task_id" reviewer)"
   round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
   [ -n "$round" ] || round=1
   prompt_file="$(specrelay::workflow::build_reviewer_prompt "$root" "$task_id")"
