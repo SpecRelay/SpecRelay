@@ -13,7 +13,7 @@ tasks:
 roles:
   executor:
     provider: claude
-    model: fable-5
+    model: provider-default
     agent: none
 
   reviewer:
