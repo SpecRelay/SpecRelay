@@ -354,12 +354,413 @@ specrelay::workflow::_role_selection_for_capture() {
   fi
 }
 
+# --- context capability configuration (spec 0015) ---------------------------
+#
+# Context adapters are role-aware: the executor and reviewer each resolve
+# their OWN adapter and required policy (role-specific config -> global
+# config -> adapter: none / required: false; see config.sh). Like role
+# models (spec 0012/0014), the effective context configuration is captured
+# into durable task state the first time a task runs, and the CAPTURED
+# configuration is authoritative thereafter — resume never silently switches
+# adapters because the project config changed.
+
+# specrelay::workflow::context_adapter / context_required <root>
+# The GLOBAL configured values (kept for read-only diagnostics and backward
+# compatibility); role execution always goes through the role-aware
+# accessors below.
 specrelay::workflow::context_adapter() {
   specrelay::config::get "$1" "context.adapter" "none"
 }
 
 specrelay::workflow::context_required() {
   specrelay::config::get "$1" "context.required" "false"
+}
+
+# specrelay::workflow::role_context_field <root> <role> <adapter|required>
+# One resolved field from the role's LIVE context configuration. Propagates
+# the parser's failure (non-zero) for a structurally invalid context section.
+specrelay::workflow::role_context_field() {
+  local root="$1" role="$2" field="$3" parsed
+  parsed="$(specrelay::config::role_context "$root" "$role")" || return 1
+  printf '%s\n' "$parsed" | sed -n "s/^${field}=//p"
+}
+
+# specrelay::workflow::captured_context <root> <task-id> <role> <field>
+# Prints the durable context_effective.<role>.<field> from the task's
+# state.json when present; returns non-zero (prints nothing) otherwise.
+# Booleans are printed as JSON (true/false), never Python's True/False.
+specrelay::workflow::captured_context() {
+  local root="$1" task_id="$2" role="$3" field="$4" state_file blob
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 1
+  blob="$(specrelay::state::get "$state_file" context_effective 2>/dev/null || true)"
+  [ -n "$blob" ] && [ "$blob" != "null" ] || return 1
+  printf '%s' "$blob" | ROLE="$role" FIELD="$field" python3 -c '
+import json, os, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if not isinstance(data, dict):
+    sys.exit(1)
+role = data.get(os.environ["ROLE"])
+if not isinstance(role, dict):
+    sys.exit(1)
+if os.environ["FIELD"] not in role:
+    sys.exit(1)
+val = role[os.environ["FIELD"]]
+if val is None or val == "":
+    sys.exit(1)
+if isinstance(val, bool):
+    print("true" if val else "false")
+else:
+    print(val)
+'
+}
+
+# specrelay::workflow::effective_role_context_adapter|required <root> <task-id> <role>
+# Durable-first resolution (spec 0015, "Resume Behavior"): the task's captured
+# context_effective value when present, otherwise the live resolved config.
+specrelay::workflow::effective_role_context_adapter() {
+  local root="$1" task_id="$2" role="$3" v
+  if v="$(specrelay::workflow::captured_context "$root" "$task_id" "$role" adapter)"; then
+    printf '%s\n' "$v"; return 0
+  fi
+  specrelay::workflow::role_context_field "$root" "$role" adapter || printf 'none\n'
+}
+specrelay::workflow::effective_role_context_required() {
+  local root="$1" task_id="$2" role="$3" v
+  if v="$(specrelay::workflow::captured_context "$root" "$task_id" "$role" required)"; then
+    printf '%s\n' "$v"; return 0
+  fi
+  specrelay::workflow::role_context_field "$root" "$role" required || printf 'false\n'
+}
+
+# specrelay::workflow::assert_role_context_valid <root> <task-id> <role>
+# Fails (non-zero, actionable error naming the role, the adapter, the config
+# source, the expected syntax, and the inspection command) when the role's
+# context configuration is KNOWN-invalid: a structurally malformed context
+# section, an unknown adapter, or an unsupported role/adapter combination.
+# Runs BEFORE the role's running-state transition, so a known-invalid context
+# configuration never enters EXECUTOR_RUNNING / REVIEWER_RUNNING. A task that
+# already captured its context configuration is authoritative (validated at
+# capture time) and is skipped here — a later config change must not
+# retroactively fail a deterministic resume.
+specrelay::workflow::assert_role_context_valid() {
+  local root="$1" task_id="$2" role="$3" parsed adapter
+  if specrelay::workflow::captured_context "$root" "$task_id" "$role" adapter >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! parsed="$(specrelay::config::role_context "$root" "$role")"; then
+    specrelay::out::err "invalid $role context configuration in $(specrelay::config::path "$root"): $parsed"
+    {
+      echo "Expected context configuration forms:"
+      echo "  Global:"
+      echo "    context:"
+      echo "      adapter: <adapter-name>"
+      echo "      required: false"
+      echo "  Role-specific override:"
+      echo "    context:"
+      echo "      $role:"
+      echo "        adapter: <adapter-name>"
+      echo "        required: true"
+      echo "Inspect adapters with:"
+      echo "  bin/specrelay contexts"
+    } >&2
+    return 1
+  fi
+  adapter="$(printf '%s\n' "$parsed" | sed -n 's/^adapter=//p')"
+  if ! specrelay::context::known "$adapter"; then
+    specrelay::out::err "invalid $role context adapter '$adapter'"
+    {
+      echo "Configuration source: $(specrelay::config::path "$root")"
+      echo "Known adapters:"
+      local a
+      while IFS= read -r a; do
+        [ -n "$a" ] && echo "  $a"
+      done < <(specrelay::context::adapters)
+      echo "Inspect adapters with:"
+      echo "  bin/specrelay contexts"
+    } >&2
+    return 1
+  fi
+  if ! specrelay::context::role_supported "$adapter" "$role"; then
+    specrelay::out::err "context adapter '$adapter' does not support the $role role (configuration source: $(specrelay::config::path "$root")); inspect it with: bin/specrelay contexts $adapter"
+    return 1
+  fi
+  specrelay::context::validate_config "$adapter" "$root" "$role"
+}
+
+# specrelay::workflow::record_effective_context <root> <task-id>
+# CAPTURE-ONCE (spec 0015, "Durable Task State" / "Resume Behavior"): persists
+# both roles' effective context adapter + required policy into the task's
+# state.json under "context_effective" the first time the task reaches an
+# executor context step. Once present it is never overwritten here, so resume
+# deterministically reuses the captured adapters even if the project
+# configuration changed. Preparation status/artifact fields are updated per
+# role by record_context_result below. Never stores secrets — adapter names,
+# booleans, statuses, and artifact references only.
+specrelay::workflow::record_effective_context() {
+  local root="$1" task_id="$2" state_file existing
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 0
+
+  existing="$(specrelay::state::get "$state_file" context_effective 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+    return 0
+  fi
+
+  local ea er ra rr set_json
+  ea="$(specrelay::workflow::role_context_field "$root" executor adapter 2>/dev/null)" || ea="none"
+  er="$(specrelay::workflow::role_context_field "$root" executor required 2>/dev/null)" || er="false"
+  ra="$(specrelay::workflow::role_context_field "$root" reviewer adapter 2>/dev/null)" || ra="none"
+  rr="$(specrelay::workflow::role_context_field "$root" reviewer required 2>/dev/null)" || rr="false"
+
+  set_json="$(EA="$ea" ER="$er" RA="$ra" RR="$rr" python3 -c '
+import json, os
+print(json.dumps({"context_effective": {
+    "executor": {"adapter": os.environ["EA"], "required": os.environ["ER"] == "true", "status": "pending"},
+    "reviewer": {"adapter": os.environ["RA"], "required": os.environ["RR"] == "true", "status": "pending"},
+}}))
+')"
+  specrelay::state::set "$state_file" "$set_json" >/dev/null
+}
+
+# specrelay::workflow::record_context_result <root> <task-id> <role> <adapter>
+#     <required(true|false)> <status> <prepared_at> <artifact_kind>
+#     <artifact_reference> <freshness>
+# Updates ONE role's durable context result in state.json (merging with the
+# other role's entry) and writes the role's context evidence file
+# (14-executor-context.json / 17-reviewer-context.json — 15/16 are the
+# reviewer stdout/stderr captures in this repository's numbering). The
+# captured adapter/required are preserved once present (capture-once); only
+# the preparation result fields are updated. Evidence contains metadata only:
+# no credentials, no secrets, no environment dumps.
+specrelay::workflow::record_context_result() {
+  local root="$1" task_id="$2" role="$3" adapter="$4" required="$5" status="$6"
+  local prepared_at="$7" kind="$8" ref="$9" freshness="${10}"
+  local task_dir state_file existing set_json evidence_file
+  task_dir="$(specrelay::task::dir "$root" "$task_id")"
+  state_file="$(specrelay::state::path "$task_dir")"
+  [ -f "$state_file" ] || return 0
+
+  existing="$(specrelay::state::get "$state_file" context_effective 2>/dev/null || true)"
+  [ "$existing" = "null" ] && existing=""
+
+  set_json="$(printf '%s' "$existing" | \
+    ROLE="$role" ADAPTER="$adapter" REQUIRED="$required" STATUS="$status" \
+    PREPARED_AT="$prepared_at" KIND="$kind" REF="$ref" FRESHNESS="$freshness" \
+    python3 -c '
+import json, os, sys
+raw = sys.stdin.read().strip()
+try:
+    data = json.loads(raw) if raw else {}
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+role = os.environ["ROLE"]
+entry = data.get(role)
+if not isinstance(entry, dict):
+    entry = {}
+# capture-once: adapter/required stick once recorded
+entry.setdefault("adapter", os.environ["ADAPTER"])
+entry.setdefault("required", os.environ["REQUIRED"] == "true")
+entry["status"] = os.environ["STATUS"]
+for key, env in (("prepared_at", "PREPARED_AT"), ("artifact_kind", "KIND"),
+                 ("artifact_reference", "REF"), ("freshness", "FRESHNESS")):
+    val = os.environ[env]
+    if val:
+        entry[key] = val
+    else:
+        entry.pop(key, None)
+data[role] = entry
+print(json.dumps({"context_effective": data}))
+')"
+  specrelay::state::set "$state_file" "$set_json" >/dev/null
+
+  # Context evidence is written for real context outcomes (prepared, degraded,
+  # failed); the none adapter's "nothing was requested" produces no evidence
+  # file — evidence never implies external context that was not involved.
+  [ "$status" != "none" ] || return 0
+  case "$role" in
+    executor) evidence_file="$task_dir/14-executor-context.json" ;;
+    reviewer) evidence_file="$task_dir/17-reviewer-context.json" ;;
+    *) return 0 ;;
+  esac
+  ROLE="$role" ADAPTER="$adapter" REQUIRED="$required" STATUS="$status" \
+    PREPARED_AT="$prepared_at" KIND="$kind" REF="$ref" FRESHNESS="$freshness" \
+    python3 -c '
+import json, os, sys
+doc = {
+    "role": os.environ["ROLE"],
+    "adapter": os.environ["ADAPTER"],
+    "required": os.environ["REQUIRED"] == "true",
+    "status": os.environ["STATUS"],
+}
+for key, env in (("prepared_at", "PREPARED_AT"), ("artifact_kind", "KIND"),
+                 ("artifact_reference", "REF"), ("freshness", "FRESHNESS")):
+    val = os.environ[env]
+    if val:
+        doc[key] = val
+print(json.dumps(doc, indent=2))
+' > "$evidence_file"
+}
+
+# specrelay::workflow::_context_role_failure <root> <task-id> <role> <adapter>
+#     <required(true|false)> <what-failed>
+# Applies the required/optional policy to a context availability, preflight,
+# or preparation failure (spec 0015, "Required and Optional Policy"):
+#   required -> the role must not enter its running state (return 1);
+#   optional -> degrade HONESTLY: log that SpecRelay is continuing WITHOUT
+#               external context (never pretending preparation succeeded) and
+#               record status=degraded durably (return 0).
+specrelay::workflow::_context_role_failure() {
+  local root="$1" task_id="$2" role="$3" adapter="$4" required="$5" what="$6"
+  if [ "$required" = "true" ]; then
+    specrelay::out::err "[$role] context: required context $what for adapter '$adapter'; refusing to launch the $role"
+    specrelay::workflow::record_context_result "$root" "$task_id" "$role" \
+      "$adapter" "$required" "failed" "" "" "" ""
+    return 1
+  fi
+  specrelay::out::log "[$role] context: adapter '$adapter' $what"
+  specrelay::out::log "[$role] context: continuing without external context because required=false"
+  specrelay::workflow::record_context_result "$root" "$task_id" "$role" \
+    "$adapter" "$required" "degraded" "" "" "" ""
+  return 0
+}
+
+# specrelay::workflow::run_role_context <root> <task-id> <role> <provider>
+# The full per-role context step (spec 0015, "Preflight Contract"), run BEFORE
+# the role's running-state transition:
+#   context validation -> availability -> preflight -> preparation (when the
+#   adapter supports it, with the documented reuse/reprepare resume policy)
+# On success, sets the global SPECRELAY_CONTEXT_HANDOFF to the normalized
+# handoff for this role ("<artifact-kind>:<artifact-reference>", or "none"
+# when there is no prepared context) — the ONLY context value the provider
+# invocation receives. Returns 0 to proceed (including honest optional
+# degradation) and 1 when a required context failure must block the role.
+specrelay::workflow::run_role_context() {
+  local root="$1" task_id="$2" role="$3" provider="$4"
+  local task_dir adapter required
+  task_dir="$(specrelay::task::dir "$root" "$task_id")"
+  SPECRELAY_CONTEXT_HANDOFF="none"
+
+  if ! specrelay::workflow::assert_role_context_valid "$root" "$task_id" "$role"; then
+    return 1
+  fi
+
+  adapter="$(specrelay::workflow::effective_role_context_adapter "$root" "$task_id" "$role")"
+  required="$(specrelay::workflow::effective_role_context_required "$root" "$task_id" "$role")"
+  [ "$required" = "true" ] || required="false"
+
+  specrelay::out::log "[$role] task '$task_id': context validation and preflight (adapter: $adapter, required=$required)"
+
+  # Availability (read-only, never billable).
+  local avail_out avail_reason
+  if ! avail_out="$(specrelay::context::availability "$adapter" "$root")"; then
+    avail_reason="$(printf '%s\n' "$avail_out" | sed -n '2p')"
+    specrelay::out::err "[$role] context: adapter '$adapter' unavailable${avail_reason:+: $avail_reason}"
+    specrelay::workflow::_context_role_failure "$root" "$task_id" "$role" "$adapter" "$required" "unavailable"
+    return $?
+  fi
+
+  # Preflight.
+  if ! specrelay::context::preflight "$adapter" "$role" "$root" "$task_id" "$provider"; then
+    specrelay::workflow::_context_role_failure "$root" "$task_id" "$role" "$adapter" "$required" "preflight failed"
+    return $?
+  fi
+
+  # Preparation (adapters that support it), with the documented resume policy.
+  if ! specrelay::context::supports_prepare "$adapter"; then
+    # Nothing is prepared and SpecRelay says so — no artifact, no handoff.
+    specrelay::workflow::record_context_result "$root" "$task_id" "$role" \
+      "$adapter" "$required" "none" "" "none" "" "not-applicable"
+    return 0
+  fi
+
+  local prev_status prev_kind prev_ref prev_fresh prev_at decision
+  prev_status="$(specrelay::workflow::captured_context "$root" "$task_id" "$role" status 2>/dev/null || true)"
+  prev_kind="$(specrelay::workflow::captured_context "$root" "$task_id" "$role" artifact_kind 2>/dev/null || true)"
+  prev_ref="$(specrelay::workflow::captured_context "$root" "$task_id" "$role" artifact_reference 2>/dev/null || true)"
+  prev_fresh="$(specrelay::workflow::captured_context "$root" "$task_id" "$role" freshness 2>/dev/null || true)"
+  prev_at="$(specrelay::workflow::captured_context "$root" "$task_id" "$role" prepared_at 2>/dev/null || true)"
+
+  if [ "$prev_status" = "prepared" ] && [ -n "$prev_ref" ]; then
+    decision="$(specrelay::context::reuse_decision "$adapter" "$role" "$root" "$task_dir" \
+      "$prev_kind" "$prev_ref" "$prev_fresh" 2>/dev/null || printf 'reprepare\n')"
+    if [ "$decision" = "reuse" ]; then
+      specrelay::out::log "[$role] context: reusing previously prepared artifact ($prev_kind: $prev_ref)"
+      specrelay::workflow::record_context_result "$root" "$task_id" "$role" \
+        "$adapter" "$required" "prepared" "$prev_at" "$prev_kind" "$prev_ref" "$prev_fresh"
+      SPECRELAY_CONTEXT_HANDOFF="$prev_kind:$prev_ref"
+      specrelay::workflow::_context_card "$role" "$adapter" "$required" "prepared" "$prev_ref" "$prev_fresh"
+      return 0
+    fi
+    specrelay::out::log "[$role] context: previously prepared artifact is not reusable (adapter decision: $decision); re-preparing"
+  fi
+
+  local prep_out prepared_at kind ref freshness status
+  if ! prep_out="$(specrelay::context::prepare "$adapter" "$role" "$root" "$task_dir" "$task_id" "$provider")"; then
+    specrelay::workflow::_context_role_failure "$root" "$task_id" "$role" "$adapter" "$required" "preparation failed"
+    return $?
+  fi
+  status="$(printf '%s\n' "$prep_out" | sed -n 's/^status=//p')"
+  kind="$(printf '%s\n' "$prep_out" | sed -n 's/^artifact_kind=//p')"
+  ref="$(printf '%s\n' "$prep_out" | sed -n 's/^artifact_reference=//p')"
+  freshness="$(printf '%s\n' "$prep_out" | sed -n 's/^freshness=//p')"
+  [ -n "$status" ] || status="prepared"
+  [ -n "$freshness" ] || freshness="unknown"
+  prepared_at="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo '')"
+
+  # A prepared-but-missing/unreadable required artifact must block (spec 0015,
+  # "Required Context"): never hand a provider a reference that is not there.
+  if [ "$status" = "prepared" ] && [ "$kind" = "file" ] && [ ! -r "$root/$ref" ]; then
+    specrelay::workflow::_context_role_failure "$root" "$task_id" "$role" "$adapter" "$required" "artifact missing or unreadable ($ref)"
+    return $?
+  fi
+
+  # Freshness policy (spec 0015, "Context Freshness"): stale blocks only a
+  # REQUIRED role whose adapter declares freshness mandatory; an optional
+  # stale artifact warns and continues. Never guessed — the value comes from
+  # the adapter's own report.
+  if [ "$freshness" = "stale" ]; then
+    if [ "$required" = "true" ] && specrelay::context::freshness_mandatory "$adapter"; then
+      specrelay::workflow::_context_role_failure "$root" "$task_id" "$role" "$adapter" "$required" "artifact is stale (adapter policy: freshness is mandatory)"
+      return $?
+    fi
+    specrelay::out::log "[$role] context: adapter '$adapter' reports a STALE artifact; continuing (freshness is not mandatory for this role)"
+  fi
+
+  specrelay::workflow::record_context_result "$root" "$task_id" "$role" \
+    "$adapter" "$required" "$status" "$prepared_at" "$kind" "$ref" "$freshness"
+
+  if [ "$status" = "prepared" ] && [ -n "$ref" ]; then
+    SPECRELAY_CONTEXT_HANDOFF="$kind:$ref"
+  fi
+  specrelay::workflow::_context_card "$role" "$adapter" "$required" "$status" "$ref" "$freshness"
+  return 0
+}
+
+# specrelay::workflow::_context_card <role> <adapter> <required> <status> <ref> <freshness>
+# The pre-execution context card (spec 0015, "Logging"). The none adapter
+# announces itself with its own single log line instead, so a card never
+# implies external context that was not requested.
+specrelay::workflow::_context_card() {
+  local role="$1" adapter="$2" required="$3" status="$4" ref="$5" freshness="$6" title req_label
+  [ "$adapter" = "none" ] && return 0
+  case "$role" in
+    executor) title="Executor Context" ;;
+    reviewer) title="Reviewer Context" ;;
+    *) title="Context" ;;
+  esac
+  if [ "$required" = "true" ]; then req_label="yes"; else req_label="no"; fi
+  specrelay::out::card blue "$title" \
+    "$(printf '%-10s%s' Adapter "$adapter")" \
+    "$(printf '%-10s%s' Required "$req_label")" \
+    "$(printf '%-10s%s' Status "$status")" \
+    "$(printf '%-10s%s' Artifact "${ref:-(none)}")" \
+    "$(printf '%-10s%s' Freshness "${freshness:-not-applicable}")"
 }
 
 specrelay::workflow::max_iterations() {
@@ -511,21 +912,35 @@ specrelay::workflow::executor_iteration() {
     return 1
   fi
 
-  local provider model agent context_adapter context_required
+  local provider model agent
   provider="$(specrelay::workflow::effective_role_provider "$root" "$task_id" executor)"
   model="$(specrelay::workflow::effective_role_model "$root" "$task_id" executor)"
   agent="$(specrelay::workflow::effective_role_agent "$root" "$task_id" executor)"
-  context_adapter="$(specrelay::workflow::context_adapter "$root")"
-  context_required="$(specrelay::workflow::context_required "$root")"
 
-  specrelay::out::log "[executor] task '$task_id': context-capability preflight (adapter: $context_adapter)"
-  if ! specrelay::context::preflight "$context_adapter" "executor" "$root" "$task_id" "$provider"; then
-    if specrelay::workflow::_truthy "$context_required"; then
-      specrelay::out::err "[executor] context-capability preflight failed; refusing to claim/launch the executor"
+  # Context capability step (spec 0015): validation -> preflight -> preparation,
+  # all BEFORE the claim below, so a known context failure never enters
+  # EXECUTOR_RUNNING and the provider is never launched for it. Both roles'
+  # context configuration is validated here (like role models above) because
+  # record_effective_context captures BOTH roles' effective adapters at this
+  # iteration — a garbage reviewer context must be caught before it is captured
+  # and later reused on resume. Validation is skipped for a task that already
+  # captured its context configuration (captured config is authoritative).
+  if ! specrelay::workflow::assert_role_context_valid "$root" "$task_id" executor; then
+    return 1
+  fi
+  if [ "$(specrelay::workflow::reviewer_provider "$root")" != "manual" ]; then
+    if ! specrelay::workflow::assert_role_context_valid "$root" "$task_id" reviewer; then
       return 1
     fi
-    specrelay::out::log "[executor] context-capability preflight failed but is not required by policy; proceeding"
   fi
+  specrelay::workflow::record_effective_context "$root" "$task_id"
+
+  local executor_context_handoff
+  if ! specrelay::workflow::run_role_context "$root" "$task_id" executor "$provider"; then
+    specrelay::out::err "[executor] context capability failed and is required; refusing to claim/launch the executor"
+    return 1
+  fi
+  executor_context_handoff="${SPECRELAY_CONTEXT_HANDOFF:-none}"
 
   specrelay::out::log "[executor] task '$task_id': claiming"
   if ! specrelay::transitions::claim "$root" "$task_id"; then
@@ -549,7 +964,7 @@ specrelay::workflow::executor_iteration() {
 
   specrelay::out::log "[executor] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent)"
   started="$(date +%s 2>/dev/null || echo '')"
-  if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md" "$model" "$agent"; then
+  if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md" "$model" "$agent" "$executor_context_handoff"; then
     rc=0
   else
     rc=$?
@@ -640,7 +1055,7 @@ specrelay::workflow::reviewer_iteration() {
       ;;
   esac
 
-  local provider context_adapter context_required
+  local provider
   provider="$(specrelay::workflow::reviewer_provider "$root")"
 
   if [ "$provider" = "manual" ]; then
@@ -655,17 +1070,18 @@ specrelay::workflow::reviewer_iteration() {
     return 1
   fi
 
-  context_adapter="$(specrelay::workflow::context_adapter "$root")"
-  context_required="$(specrelay::workflow::context_required "$root")"
-
-  specrelay::out::log "[reviewer] task '$task_id': independent context-capability preflight (adapter: $context_adapter)"
-  if ! specrelay::context::preflight "$context_adapter" "reviewer" "$root" "$task_id" "$provider"; then
-    if specrelay::workflow::_truthy "$context_required"; then
-      specrelay::out::err "[reviewer] context-capability preflight failed; refusing to launch the reviewer"
-      return 1
-    fi
-    specrelay::out::log "[reviewer] context-capability preflight failed but is not required by policy; proceeding"
+  # INDEPENDENT reviewer context step (spec 0015): validation -> preflight ->
+  # preparation, all BEFORE the REVIEWER_RUNNING transition below, so a known
+  # context failure never enters REVIEWER_RUNNING and the reviewer provider is
+  # never launched for it. This is a separate, role-specific preparation event —
+  # never a reuse of the executor's transient context session.
+  specrelay::out::log "[reviewer] task '$task_id': independent context capability step"
+  local reviewer_context_handoff
+  if ! specrelay::workflow::run_role_context "$root" "$task_id" reviewer "$provider"; then
+    specrelay::out::err "[reviewer] context capability failed and is required; refusing to launch the reviewer"
+    return 1
   fi
+  reviewer_context_handoff="${SPECRELAY_CONTEXT_HANDOFF:-none}"
 
   # Enter REVIEWER_RUNNING before executing the reviewer (spec 0011). Only when
   # the task is still READY_FOR_REVIEW: when resuming an interrupted review the
@@ -697,7 +1113,7 @@ specrelay::workflow::reviewer_iteration() {
     "$(printf '%-10s%s' Agent "$agent")"
 
   specrelay::out::log "[reviewer] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent, isolated context)"
-  if decision="$(specrelay::provider::reviewer_run "$provider" "$root" "$task_dir" "$round" "$prompt_file" "$model" "$agent")"; then
+  if decision="$(specrelay::provider::reviewer_run "$provider" "$root" "$task_dir" "$round" "$prompt_file" "$model" "$agent" "$reviewer_context_handoff")"; then
     rc=0
   else
     rc=$?

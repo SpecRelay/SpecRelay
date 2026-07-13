@@ -347,24 +347,54 @@ task rather than resuming the old one.
 
 ### `context.adapter`
 
-- **Purpose:** an optional context-retrieval capability run as a preflight
-  before a role does substantive work.
+- **Purpose:** the context capability adapter run for a role (validation →
+  preflight → preparation) before that role does substantive work. See
+  `context-adapters.md` for the full adapter contract.
 - **Type:** string.
 - **Default:** `none`.
-- **Accepted values (recognized by the capability dispatch and `doctor`):**
-  `none` performs no preflight; `contextplus` runs the Context Plus preflight
-  adapter. An unknown adapter name is reported as an error by `specrelay
-  doctor`.
+- **Accepted values:** an adapter known to the installed SpecRelay version
+  (`none`, `fake`, `contextplus`). Inspect them with `specrelay contexts`. A
+  known-invalid adapter name fails **before** role execution and is reported
+  as an error by `specrelay doctor`.
 
 ### `context.required`
 
-- **Purpose:** whether a failed context preflight is fatal. When required and
-  the preflight fails, the role does not proceed; when not required, a failed
-  preflight is a warning and work continues.
-- **Type:** boolean.
+- **Purpose:** whether a context failure (adapter unavailable, preflight
+  failure, preparation failure, missing/unreadable required artifact) blocks
+  the role. When required, the role never enters its running state on a
+  context failure; when not required, the same failure degrades to an
+  explicit warning (`continuing without external context because
+  required=false`) and is recorded durably as `status: degraded`.
+- **Type:** boolean (`true` / `false`). A non-boolean value is rejected
+  before role execution.
 - **Default:** `false`.
-- **Accepted truthy values:** `1`, `true`, `True`, `TRUE`, `yes` are treated as
-  true; anything else (including `false`) is treated as false.
+
+### `context.executor` / `context.reviewer` (role-specific overrides)
+
+- **Purpose:** give the executor and reviewer DIFFERENT context adapters or
+  required policies. Each subsection accepts the same `adapter` / `required`
+  keys; resolution order per field is role-specific value → global value →
+  built-in default (`adapter: none`, `required: false`).
+- **Example:**
+
+  ```yaml
+  context:
+    executor:
+      adapter: contextplus
+      required: true
+    reviewer:
+      adapter: none
+      required: false
+  ```
+
+- Unknown keys under `context:` (or under a role subsection), a non-string or
+  empty adapter name, and a non-boolean `required` are all rejected before
+  role execution, with an error naming the role, the configuration source,
+  the expected syntax, and the inspection command (`specrelay contexts`).
+- The effective context configuration is **captured** into a task's durable
+  state (`context_effective`) at its first executor iteration; resuming an
+  existing task never silently switches adapters when the project
+  configuration changes later (same principle as `roles_effective` above).
 
 ### `validation.full_test_command`
 

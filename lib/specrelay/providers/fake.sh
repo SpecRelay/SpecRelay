@@ -111,27 +111,30 @@ specrelay::provider::fake::capability_discovered_models() {
   done
 }
 
-# specrelay::provider::fake::_record_invocation <role> <provider> <model> <agent> <round> <evidence-file>
+# specrelay::provider::fake::_record_invocation <role> <provider> <model> <agent> <round> <evidence-file> [context]
 # Writes deterministic INVOCATION EVIDENCE for the fake provider (spec 0012,
 # "Fake Provider Support"): the resolved role, provider, model, and agent for
-# this call. This is what lets a test PROVE model/agent forwarding — that each
-# configured model actually reached the correct role — without any live Claude
-# or Codex call. The file is truncated each round, so it always reflects the
-# MOST RECENT invocation of that role (e.g. the post-config-change round after a
-# resume). When SPECRELAY_FAKE_INVOCATION_LOG is set, a one-line-per-invocation
-# record is ALSO appended there, so a single test can watch both roles' history.
+# this call, plus (spec 0015) the normalized context handoff the invocation
+# received. This is what lets a test PROVE model/agent/context forwarding —
+# that each configured value actually reached the correct role — without any
+# live Claude or Codex call. The file is truncated each round, so it always
+# reflects the MOST RECENT invocation of that role (e.g. the post-config-change
+# round after a resume). When SPECRELAY_FAKE_INVOCATION_LOG is set, a
+# one-line-per-invocation record is ALSO appended there, so a single test can
+# watch both roles' history.
 specrelay::provider::fake::_record_invocation() {
-  local role="$1" provider="$2" model="$3" agent="$4" round="$5" evidence_file="$6"
+  local role="$1" provider="$2" model="$3" agent="$4" round="$5" evidence_file="$6" context="${7:-none}"
   {
     printf 'role=%s\n' "$role"
     printf 'provider=%s\n' "$provider"
     printf 'model=%s\n' "$model"
     printf 'agent=%s\n' "$agent"
     printf 'round=%s\n' "$round"
+    printf 'context=%s\n' "$context"
   } > "$evidence_file"
   if [ -n "${SPECRELAY_FAKE_INVOCATION_LOG:-}" ]; then
-    printf 'role=%s provider=%s model=%s agent=%s round=%s\n' \
-      "$role" "$provider" "$model" "$agent" "$round" >> "$SPECRELAY_FAKE_INVOCATION_LOG"
+    printf 'role=%s provider=%s model=%s agent=%s round=%s context=%s\n' \
+      "$role" "$provider" "$model" "$agent" "$round" "$context" >> "$SPECRELAY_FAKE_INVOCATION_LOG"
   fi
 }
 
@@ -163,14 +166,14 @@ specrelay::provider::fake::_executor_emit() {
 }
 
 specrelay::provider::fake::executor_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:fake}" model="${6:-provider-default}" agent="${7:-none}"
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:fake}" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}"
   local plan_line exit_code outputs touch_flag impl_file
 
-  # Record the forwarded role/provider/model/agent as durable invocation
-  # evidence (spec 0012). Written before the streamed emit so it exists even if
-  # a later step in this function fails.
+  # Record the forwarded role/provider/model/agent/context as durable
+  # invocation evidence (spec 0012, spec 0015). Written before the streamed
+  # emit so it exists even if a later step in this function fails.
   specrelay::provider::fake::_record_invocation executor fake "$model" "$agent" "$round" \
-    "$task_dir/fake-executor-invocation.txt"
+    "$task_dir/fake-executor-invocation.txt" "$context"
 
   plan_line="$(specrelay::provider::fake::_plan_line "${SPECRELAY_FAKE_EXECUTOR_PLAN:-}" "$round")"
   exit_code="$(specrelay::provider::fake::_field "$plan_line" exit "0")"
@@ -211,14 +214,14 @@ specrelay::provider::fake::_reviewer_emit() {
 }
 
 specrelay::provider::fake::reviewer_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:fake}" model="${6:-provider-default}" agent="${7:-none}"
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:fake}" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}"
   local plan_line exit_code decision
 
-  # Durable invocation evidence for the reviewer role (spec 0012). Recorded
-  # before anything else so a failed reviewer round still leaves proof of which
-  # model/agent was forwarded to it.
+  # Durable invocation evidence for the reviewer role (spec 0012, spec 0015).
+  # Recorded before anything else so a failed reviewer round still leaves proof
+  # of which model/agent/context was forwarded to it.
   specrelay::provider::fake::_record_invocation reviewer fake "$model" "$agent" "$round" \
-    "$task_dir/fake-reviewer-invocation.txt"
+    "$task_dir/fake-reviewer-invocation.txt" "$context"
 
   plan_line="$(specrelay::provider::fake::_plan_line "${SPECRELAY_FAKE_REVIEWER_PLAN:-}" "$round")"
   exit_code="$(specrelay::provider::fake::_field "$plan_line" exit "0")"

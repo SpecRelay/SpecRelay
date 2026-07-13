@@ -86,8 +86,12 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/context/capability.sh"
 # shellcheck source=lib/specrelay/context/none.sh
 . "$LIB_DIR/context/none.sh"
+# shellcheck source=lib/specrelay/context/fake.sh
+. "$LIB_DIR/context/fake.sh"
 # shellcheck source=lib/specrelay/context/contextplus.sh
 . "$LIB_DIR/context/contextplus.sh"
+# shellcheck source=lib/specrelay/contexts.sh
+. "$LIB_DIR/contexts.sh"
 # shellcheck source=lib/specrelay/workflow.sh
 . "$LIB_DIR/workflow.sh"
 # shellcheck source=lib/specrelay/doctor.sh

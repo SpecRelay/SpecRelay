@@ -18,6 +18,54 @@
 #   SPECRELAY_CONTEXTPLUS_SERVER_NAME     registered MCP server name (default: contextplus)
 #   SPECRELAY_CONTEXTPLUS_MAX_BUDGET_USD  spend cap for the one bounded call (default: 0.50)
 
+# --- capability contract (spec 0015) -----------------------------------------
+#
+# Honest capability reporting: this adapter can prove installation and perform
+# a bounded retrieval during preflight, but it produces NO durable context
+# artifact — so it reports the "preflight" capability level, never "indexed"
+# or "prepared" (SpecRelay must not infer a higher level from branding).
+
+specrelay::context::contextplus::describe() {
+  printf 'Context Plus capability preflight (MCP health check + one bounded retrieval).\n'
+}
+
+# Availability is a LOCAL, non-billable check only (`contexts` and `doctor`
+# must never spend): the configured Claude-compatible binary must exist on
+# PATH. The deeper MCP registration/connection health check happens in the
+# preflight at run time, where a real invocation is about to be paid for
+# anyway.
+specrelay::context::contextplus::availability() {
+  local claude_bin
+  claude_bin="${SPECRELAY_CONTEXTPLUS_CLAUDE_BIN:-claude}"
+  if ! command -v "$claude_bin" >/dev/null 2>&1; then
+    printf 'unavailable\n'
+    printf 'required executable or configuration was not found\n'
+    return 1
+  fi
+  printf 'available\n'
+}
+
+specrelay::context::contextplus::capability_level() {
+  printf 'preflight\n'
+}
+
+specrelay::context::contextplus::capabilities() {
+  printf 'preflight=yes\n'
+  printf 'prepare=no\n'
+  printf 'durable_artifact=no\n'
+  printf 'role_isolation=yes\n'
+  printf 'network=yes\n'
+  printf 'freshness_check=no\n'
+}
+
+specrelay::context::contextplus::supported_roles() {
+  printf 'executor reviewer\n'
+}
+
+specrelay::context::contextplus::validate_config() {
+  return 0
+}
+
 specrelay::context::contextplus::preflight() {
   local role="$1" root="$2" task_id="$3" provider="$4" rc tmp_dir=""
   specrelay::context::contextplus::_run "$role" "$root" "$task_id" "$provider"

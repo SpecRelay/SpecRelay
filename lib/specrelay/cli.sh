@@ -45,6 +45,13 @@ Discovery (read-only):
                          each provider's declared aliases, and its honest
                          model-discovery capability. With a provider name,
                          inspects that provider only.
+  contexts [<adapter>]   Context-adapter discovery and diagnostics: the
+                         adapters known to this SpecRelay version, each one's
+                         availability, and this project's configured
+                         executor/reviewer context adapters. With an adapter
+                         name, inspects that adapter's description,
+                         availability, capability level, and capabilities.
+                         Never performs a billable provider invocation.
 
 Workflow engine:
   run <spec-path> [--task-id <id>] [--allow-dirty-baseline]
@@ -293,6 +300,16 @@ specrelay::cli::cmd_models() {
   specrelay::models::run "$root" "${1:-}"
 }
 
+specrelay::cli::cmd_contexts() {
+  local root
+  root="$(specrelay::cli::require_project_root)" || return 1
+  if [ "$#" -gt 1 ]; then
+    specrelay::out::err "usage: specrelay contexts [<adapter>]"
+    return 2
+  fi
+  specrelay::contexts::run "$root" "${1:-}"
+}
+
 specrelay::cli::cmd_resume() {
   local root ref task_id
   root="$(specrelay::cli::require_project_root)" || return 1
@@ -403,6 +420,24 @@ specrelay::cli::task_show() {
   echo "Reviewer model: $(specrelay::workflow::effective_role_model "$root" "$task_id" reviewer)"
   echo "Reviewer model configured: ${rev_cfg:-(not recorded — captured before structured model metadata)}"
   echo "Reviewer agent: $(specrelay::workflow::effective_role_agent "$root" "$task_id" reviewer)"
+  # Durable context metadata (spec 0015): adapter/required prefer the captured
+  # context_effective values (falling back to live config for a task created
+  # before capture); status/artifact exist ONLY as durable metadata — an old
+  # task without them remains fully displayable and reports them as not
+  # recorded rather than fabricating a preparation that never happened.
+  local r label status kind ref
+  for r in executor reviewer; do
+    if [ "$r" = "executor" ]; then label="Executor"; else label="Reviewer"; fi
+    echo "$label context adapter: $(specrelay::workflow::effective_role_context_adapter "$root" "$task_id" "$r")"
+    echo "$label context required: $(specrelay::workflow::effective_role_context_required "$root" "$task_id" "$r")"
+    status="$(specrelay::workflow::captured_context "$root" "$task_id" "$r" status 2>/dev/null || true)"
+    echo "$label context status: ${status:-(not recorded — legacy/default behavior)}"
+    ref="$(specrelay::workflow::captured_context "$root" "$task_id" "$r" artifact_reference 2>/dev/null || true)"
+    if [ -n "$ref" ]; then
+      kind="$(specrelay::workflow::captured_context "$root" "$task_id" "$r" artifact_kind 2>/dev/null || true)"
+      echo "$label context artifact: ${kind:-unknown}:$ref"
+    fi
+  done
   echo "Created: ${created:-(unknown)}"
   echo "Updated: ${updated:-(unknown)}"
   echo "Last decision: $last_decision"
@@ -732,6 +767,9 @@ specrelay::cli::main() {
       ;;
     models)
       specrelay::cli::cmd_models "$@"
+      ;;
+    contexts)
+      specrelay::cli::cmd_contexts "$@"
       ;;
     review)
       specrelay::cli::unimplemented "$cmd"

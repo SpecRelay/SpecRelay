@@ -149,8 +149,22 @@ specrelay::provider::claude::_resolve_model_args() {
   return 1
 }
 
+# specrelay::provider::claude::_context_fragment <context>
+# The normalized context handoff (spec 0015) rendered as a provider-readable
+# prompt fragment. The handoff is an opaque "<kind>:<reference>" string
+# produced by the generic context step; this adapter never parses
+# adapter-specific context formats — it only tells the agent where the
+# prepared, role-specific context artifact lives. Prints nothing for "none".
+specrelay::provider::claude::_context_fragment() {
+  local context="$1"
+  [ -n "$context" ] && [ "$context" != "none" ] || return 0
+  printf '\n\n=== Prepared role context (SpecRelay context adapter handoff) ===\n'
+  printf 'A role-specific context artifact was prepared for this run: %s\n' "$context"
+  printf 'Consult it (relative to the repository root) before implementation.\n'
+}
+
 specrelay::provider::claude::executor_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:claude}" model="${6:-provider-default}" agent="${7:-none}" bin prompt stream_args model_args
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:claude}" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}" bin prompt stream_args model_args
   bin="$(specrelay::provider::claude::_bin)"
 
   if ! command -v "$bin" >/dev/null 2>&1; then
@@ -164,7 +178,7 @@ specrelay::provider::claude::executor_run() {
     return 1
   fi
 
-  prompt="$(cat "$prompt_file")"
+  prompt="$(cat "$prompt_file")$(specrelay::provider::claude::_context_fragment "$context")"
 
   # Preferred: semantic live events (structured stream-json). The renderer
   # persists raw events to 19-executor-events.jsonl, shows human-readable live
@@ -198,7 +212,7 @@ specrelay::provider::claude::executor_run() {
 # claude --help, never by guessing flags"). Uses the same semantic stream-json
 # layer as the executor when available, else the generic fallback.
 specrelay::provider::claude::reviewer_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:claude}" model="${6:-provider-default}" agent="${7:-}" bin prompt rc out stream_args model_args
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:claude}" model="${6:-provider-default}" agent="${7:-}" context="${8:-none}" bin prompt rc out stream_args model_args
   bin="$(specrelay::provider::claude::_bin)"
 
   if ! command -v "$bin" >/dev/null 2>&1; then
@@ -212,7 +226,9 @@ specrelay::provider::claude::reviewer_run() {
     return 1
   fi
 
-  prompt="$(cat "$prompt_file")"
+  # The reviewer receives ITS OWN independently prepared context handoff (spec
+  # 0015, role isolation) — never the executor's.
+  prompt="$(cat "$prompt_file")$(specrelay::provider::claude::_context_fragment "$context")"
 
   # Reviewer subagent selection (help-driven; never guess flags). The effective
   # agent comes from the normalized role config (spec 0009). An empty value is

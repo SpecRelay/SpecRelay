@@ -1,242 +1,317 @@
 # SpecRelay Context Adapters
 
-A **context adapter** is a capability preflight that SpecRelay runs for a role
-(executor or reviewer) *before* that role does any substantive work. Its only
-job is to prove — or decline to prove — that the role has real, working access
-to whatever context/retrieval capability the project requires. It does not
-supply model context by itself; it is a gate that runs first and either clears
-the role to proceed or refuses.
+A **context adapter** is a first-class, provider-independent capability that
+prepares (or declines to prepare) task-relevant context for a role — executor
+or reviewer — *before* that role does any substantive work. As of spec 0015
+this is a stable capability contract, not just a preflight hook: adapters can
+be discovered and inspected (`specrelay contexts`), validated before role
+execution, asked to prepare role-specific context, and their results are
+captured as durable task provenance.
 
-This is a generic capability-gating seam in the engine core. SpecRelay's
-lifecycle code calls exactly one entry point,
-`specrelay::context::preflight`, and never hardcodes any branded provider (see
-`architecture.md`, and `knowledge-boundaries.md` for why this is kept generic).
-Which adapter runs, and whether a failed preflight is fatal, come purely from
-project configuration.
+This is a generic capability seam in the engine core. SpecRelay's lifecycle
+code calls only the generic dispatcher (`lib/specrelay/context/capability.sh`)
+and never hardcodes any branded provider; there are no adapter-specific
+branches in workflow code (see `architecture.md` and
+`knowledge-boundaries.md`). Which adapter runs, per role, and whether a
+failure is fatal come purely from project configuration.
+
+## Provider independence
+
+Context selection is independent from AI-provider selection. Any adapter may
+be combined with any executor or reviewer provider — a Claude executor with
+the `contextplus` adapter, a fake provider with the `fake` context adapter, a
+Claude reviewer with `none`, and so on. Nothing in the context layer consults
+the provider adapters, and a context failure is always reported as a context
+failure, never confused with a provider failure.
 
 ## Configuration
 
-Two keys under `context:` in a project's `.specrelay/config.yml` control this
-seam:
+The `context:` section of `.specrelay/config.yml` supports a global form plus
+role-specific overrides:
 
-| Key | Default | Meaning |
+```yaml
+context:
+  adapter: none        # global adapter
+  required: false      # global required policy
+  executor:            # optional role-specific override
+    adapter: contextplus
+    required: true
+  reviewer:
+    adapter: none
+    required: false
+```
+
+Resolution order, per field: role-specific value → global value → the
+built-in default (`adapter: none`, `required: false`). The executor and
+reviewer may use entirely different adapters.
+
+Known-invalid configuration fails **before** role execution: an empty or
+non-string adapter name, an unknown adapter, a non-boolean `required`, a
+malformed role subsection, or unrecognized keys. Errors name the role, the
+adapter, the configuration source, the expected syntax, and the inspection
+command (`specrelay contexts`).
+
+## Discovery: `specrelay contexts [adapter]`
+
+```
+specrelay contexts            # list known adapters, availability, configured adapters
+specrelay contexts none       # inspect one adapter's capabilities
+specrelay contexts fake
+specrelay contexts contextplus
+```
+
+The command is non-interactive, append-only, copyable, CI-safe, and works
+without color. It never performs a billable AI-provider invocation and never
+runs an adapter's preflight or preparation; availability is a read-only local
+check, and an unavailable adapter is reported honestly (`This adapter was not
+invoked.`) rather than presumed usable. See `commands.md` for the output
+shape.
+
+## The adapter capability contract
+
+Every adapter implements the same contract (dispatched by
+`lib/specrelay/context/capability.sh`); generic engine code never contains
+`if adapter == …` branches outside that central dispatcher:
+
+| Contract function | Meaning |
+|---|---|
+| `describe` | one-line human description |
+| `availability <root>` | `available` / `unavailable` + reason; local, never billable |
+| `capability_level` | honest level: `none`, `preflight`, `prepared`, `indexed`, `freshness` |
+| `capabilities` | matrix: preflight, prepare, durable_artifact, role_isolation, network, freshness_check |
+| `supported_roles` | which roles the adapter may serve |
+| `validate_config <root> <role>` | adapter-specific configuration validation |
+| `preflight <role> <root> <task-id> <provider>` | observable, non-secret progress; non-zero = not proven |
+| `prepare <role> <root> <task-dir> <task-id> <provider>` | role-specific preparation; structured result (status, artifact_kind, artifact_reference, freshness, warnings) |
+| `reuse_decision …` | deterministic resume policy: prints `reuse` or `reprepare`, never silent |
+| `freshness_mandatory` | whether a stale artifact must block a *required* role |
+
+**Capability levels are reported honestly** — SpecRelay never infers a higher
+level from an adapter's name or branding, and never claims `indexed`, `ready`,
+`fresh`, or `complete` unless the adapter can verify that state. Artifact
+kinds include `none`, `file`, `directory`, `manifest`, `provider-reference`,
+and `opaque-handle`; SpecRelay never assumes every adapter returns a text
+file.
+
+## Preflight ordering
+
+Context runs **before** a role's running-state transition:
+
+```
+Executor:  READY_FOR_EXECUTOR → context validation → context preflight
+           → context preparation (when supported) → EXECUTOR_RUNNING
+Reviewer:  READY_FOR_REVIEW → context validation → context preflight
+           → independent reviewer context preparation → REVIEWER_RUNNING
+```
+
+A known context failure therefore never occurs after `EXECUTOR_RUNNING` /
+`REVIEWER_RUNNING`, and a blocked role's provider is never invoked. (If the
+reviewer provider is `manual`, the reviewer iteration returns before any
+context step — no automated review runs.)
+
+## Required vs. optional policy
+
+- **`required: true`** — any of: adapter unavailable, invalid configuration,
+  preflight failure, preparation failure, or a missing/unreadable required
+  artifact **blocks** the role before its running state. The durable state
+  records `status: failed`.
+- **`required: false`** — the same failures degrade to an explicit warning:
+
+  ```
+  [executor] context: continuing without external context because required=false
+  ```
+
+  SpecRelay never pretends preparation succeeded; the durable task state
+  records `status: degraded`, and the role's provider is invoked with **no**
+  context handoff.
+
+## Role isolation
+
+The executor and reviewer receive **separately prepared** context results.
+Each preparation event is role-specific and independently logged, evidence is
+per-role, and the reviewer never reuses the executor's transient context
+session — the reviewer additionally reconstructs its prompt from durable task
+evidence, never from the executor's conversation (see `task-lifecycle.md`).
+Even when a durable index could be shared, the role-specific preparation
+metadata remains distinct.
+
+## Normalized context handoff
+
+A prepared context reaches the provider invocation through one stable,
+normalized handoff string per role — `<artifact-kind>:<artifact-reference>`
+(or `none` when nothing was prepared). The generic workflow never parses
+adapter-specific context formats, and the provider layer receives only the
+handoff for its own role. The fake provider records the handoff in its
+invocation evidence (which is how tests *prove* delivery); the Claude
+provider renders it as a short prompt fragment pointing at the prepared
+artifact.
+
+## Durable task state and evidence
+
+The effective context configuration and per-role results are captured in the
+task's `state.json` under `context_effective`:
+
+```json
+{
+  "context_effective": {
+    "executor": {
+      "adapter": "fake",
+      "required": true,
+      "status": "prepared",
+      "prepared_at": "2026-07-13T10:00:00Z",
+      "artifact_kind": "file",
+      "artifact_reference": ".specrelay-runs/tasks/0015-x/fake-context-executor.txt",
+      "freshness": "fresh"
+    },
+    "reviewer": { "...": "..." }
+  }
+}
+```
+
+- The adapter and required policy are captured **once** (at the first
+  executor iteration) and are authoritative thereafter.
+- Statuses: `pending`, `prepared`, `degraded`, `failed`, `none` (no external
+  context requested / no preparation capability).
+- Real context outcomes (prepared/degraded/failed) also write per-role
+  evidence files: `14-executor-context.json` and `17-reviewer-context.json`
+  (15/16 are the reviewer stdout/stderr captures in this repository's
+  numbering). Evidence contains metadata only.
+- Old tasks without context metadata remain fully readable and displayable
+  (missing metadata means legacy/default behavior).
+- **No secrets are persisted** — no API keys, tokens, cookies, environment
+  dumps, or provider credentials, in state or evidence. Artifact references
+  are project-relative where possible.
+
+`specrelay task show` displays the durable context metadata (adapter,
+required, status, artifact) per role; `specrelay doctor` reports each role's
+configured adapter, required policy, availability, capability level, and
+network requirement read-only (a required-but-unavailable adapter is a
+mandatory doctor failure; an optional one is an advisory warning). Doctor
+never mutates task state, never prepares context, and never performs a
+billable provider call.
+
+## Resume behavior
+
+An existing task retains its captured context configuration — changing the
+project configuration never silently switches a resumed task's adapters. For
+a previously prepared durable artifact the behavior is deterministic and
+explicit, never silent:
+
+- **reuse** — only when the adapter's `reuse_decision` permits it, the
+  artifact reference is still valid, and freshness is satisfied; logged as
+  `reusing previously prepared artifact`.
+- **reprepare** — when the artifact is missing, the adapter forbids reuse, or
+  the artifact is stale; logged as `re-preparing`.
+- **degrade** — a re-preparation failure under `required: false` records
+  `status: degraded` and continues without context.
+- **fail** — a re-preparation failure under `required: true` blocks before
+  the running state.
+
+## Context freshness
+
+Adapters report freshness as `unknown`, `fresh`, `stale`, or
+`not-applicable`. SpecRelay never fabricates freshness (and never infers it
+from file timestamps unless the adapter's own contract defines that method).
+A `stale` report blocks a **required** role only when the adapter declares
+freshness mandatory; for optional roles (or non-mandatory adapters) stale
+context produces a warning and continues.
+
+## Built-in adapters
+
+### `none` (default)
+
+A real adapter implemented through the same contract — not a special case in
+workflow code. Always available, no network, no preparation, no artifact,
+freshness not-applicable, valid for both roles. Its preflight prints:
+
+```
+[<role>] context: adapter 'none'; no external context requested
+```
+
+### `fake` (deterministic, for tests)
+
+Everything is driven by env knobs (no network, no provider):
+
+| Variable | Default | Simulates |
 |---|---|---|
-| `context.adapter` | `none` | Which context adapter runs the preflight. |
-| `context.required` | `false` | Whether a failed preflight blocks the role. |
+| `SPECRELAY_FAKE_CONTEXT_AVAILABLE` | `1` | `0` = adapter unavailable |
+| `SPECRELAY_FAKE_CONTEXT_PREFLIGHT` | `ok` | `fail` = preflight failure |
+| `SPECRELAY_FAKE_CONTEXT_PREPARE` | `ok` | `fail` = preparation failure |
+| `SPECRELAY_FAKE_CONTEXT_ARTIFACT` | `ok` | `missing` = prepared reference whose file does not exist |
+| `SPECRELAY_FAKE_CONTEXT_FRESHNESS` | `fresh` | `stale` / `unknown` |
+| `SPECRELAY_FAKE_CONTEXT_REUSABLE` | `1` | `0` = never reuse on resume |
+| `SPECRELAY_FAKE_CONTEXT_FRESHNESS_MANDATORY` | `0` | `1` = stale blocks a required role |
 
-The defaults (`adapter: none`, `required: false`) mean that, out of the box,
-**SpecRelay requires no context capability at all** — the preflight is a no-op
-that always succeeds. A consumer project opts in to a stricter policy by
-setting these keys; it is never assumed for you.
+Every knob has per-role overrides
+(`SPECRELAY_FAKE_CONTEXT_EXECUTOR_<KNOB>` /
+`SPECRELAY_FAKE_CONTEXT_REVIEWER_<KNOB>`) so one run can give the roles
+different behavior — this is how the executor/reviewer isolation tests work.
+Its `prepare` writes a role-specific artifact file into the task's runtime
+directory and reports `artifact_kind: file` with a project-relative
+reference.
 
-> A consumer project **may** choose to require an adapter by setting
-> `context.required: true` (optionally alongside a concrete
-> `context.adapter`). That is a per-project policy decision expressed in that
-> project's own `.specrelay/config.yml`, not a SpecRelay default.
+### `contextplus` (optional, configured)
 
-## The context-adapter contract
+`lib/specrelay/context/contextplus.sh` proves real access to a Context Plus
+retrieval tool. Its honest capability level is **preflight** — it verifies
+installation and performs one bounded retrieval, but produces no durable
+artifact. Its `availability` (used by `contexts`/`doctor`) is a local,
+non-billable check for the configured Claude-compatible binary; the deeper
+MCP health check and the single scoped, budget-capped retrieval run in its
+preflight at `run` time:
 
-Every adapter implements one function with this signature (from
-`lib/specrelay/context/capability.sh`):
+1. **Not-applicable short-circuit** for `manual` / `fake` role providers.
+2. **Binary present** on `PATH`.
+3. **Availability via a real health check** — `<claude-bin> mcp list` must
+   list the configured server as connected.
+4. **One bounded, real retrieval** constrained to the server's
+   `semantic_code_search` tool, failing unless the tool call is evidenced.
 
-```
-preflight <role> <project-root> <task-id> <provider>
-```
-
-The dispatcher `specrelay::context::preflight <adapter> <role> <root>
-<task-id> <provider>` routes to the configured adapter (`none` or
-`contextplus`); an unknown adapter name is a hard error (it prints
-`no context-capability adapter is defined for '<adapter>'` and returns
-non-zero).
-
-The contract each adapter honors:
-
-- **Availability.** The adapter prints observable, non-secret progress
-  (checking → available → initialized → retrieval) and returns `0` when the
-  capability requirement is satisfied (or not applicable), non-zero otherwise.
-- **No silent fallback.** A non-zero return means the capability could not be
-  proven. The adapter never quietly downgrades or substitutes a different
-  capability; the decision about what to do next belongs to the caller.
-- **Required-vs-optional policy is the caller's, not the adapter's.** The
-  adapter only reports success/failure. The workflow then applies
-  `context.required`:
-  - If the preflight **fails** and `context.required` is truthy
-    (`1`/`true`/`True`/`TRUE`/`yes`), the workflow **refuses to launch that
-    role** and stops. For the executor it refuses to claim/launch; for the
-    reviewer it refuses to launch the reviewer.
-  - If the preflight **fails** and `context.required` is not truthy (the
-    default `false`), the workflow prints that the preflight failed but is not
-    required by policy, and **proceeds** with that role anyway.
-  - If the preflight **succeeds**, the role proceeds normally.
-
-### Executor preflight
-
-In `specrelay::workflow::executor_iteration` (`workflow.sh`), the context
-preflight runs **after** the working-tree guard and **before** the task is
-claimed and the executor provider is launched. On a required-and-failed
-preflight the executor is never claimed or run. On success (or on a
-non-required failure) the executor proceeds to claim, run, capture evidence,
-and submit.
-
-### Reviewer preflight (independent)
-
-The reviewer runs its **own, separate** context preflight in
-`specrelay::workflow::reviewer_iteration`. It is not a continuation of, and
-does not reuse, the executor's preflight — it is invoked independently with
-`role = reviewer` and the reviewer's own provider, consistent with the
-reviewer being a fresh, isolated context (it reconstructs its prompt from the
-task/evidence files, never from the executor's session). The same
-required-vs-optional policy is applied independently to the reviewer's result.
-
-Note: if the reviewer provider is `manual`, the reviewer iteration returns
-before any preflight — no automated review (and therefore no reviewer
-preflight) runs, because a human decides accept/request-changes.
-
-### Context retrieval
-
-An adapter that proves a real retrieval capability performs its retrieval as
-part of the preflight itself (see `contextplus` below). The core does not
-define a separate "retrieve context" step; retrieval, where it happens, is the
-adapter's own bounded action performed while proving availability.
-
-### Failure behavior
-
-Failure is always surfaced (an error line is printed) and always returns
-non-zero. What happens next is decided entirely by `context.required` as
-described above. An adapter never masks a failure as success.
-
-## The `none` adapter (default)
-
-`lib/specrelay/context/none.sh` is the "no context capability required"
-adapter and is the configured default. Its preflight performs **no checks**:
-it prints a single line —
-
-```
-[<role>] context: adapter 'none' configured; no preflight required
-```
-
-— and returns `0`. Use it for any project (or test run) that has no
-context-retrieval requirement, or that deliberately does not want to spend on
-a real retrieval call.
-
-## The `contextplus` adapter (optional, configured)
-
-`lib/specrelay/context/contextplus.sh` is an **optional** adapter that a
-project may configure (`context.adapter: contextplus`) when it wants roles to
-prove real access to a Context Plus retrieval tool before working. It is not
-enabled unless a project's config selects it.
-
-What its preflight does, in order:
-
-1. **Not-applicable short-circuit.** If the role's `provider` is `manual` or
-   `fake`, the adapter prints that it is not applicable (that provider runs no
-   automated agent) and returns `0`.
-2. **Binary present.** It requires the configured Claude-compatible binary on
-   `PATH`; if it is missing, it fails.
-3. **Availability via a real health check.** It runs `<claude-bin> mcp list`
-   and fails if that command errors, produces no output, does not list the
-   configured server, or lists it as registered but **not connected**. This is
-   a live check, not an inference from `.mcp.json` being present.
-4. **One bounded, real retrieval.** On success it performs exactly one scoped,
-   budget-capped Claude `--print` call constrained to the server's
-   `semantic_code_search` tool, and fails unless the response shows evidence
-   that the tool was actually called. On success it prints
-   `query completed` / `context loaded` and returns `0`.
-
-Any failed step is a hard refusal (non-zero return, no silent fallback);
-whether that refusal blocks the role is then governed by `context.required`.
-
-### Environment variables
-
-These are **test-only hooks**; normal operation needs none of them (quoted
-verbatim from `contextplus.sh`):
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `SPECRELAY_CONTEXTPLUS_CLAUDE_BIN` | `claude` | Claude-compatible binary to invoke. |
-| `SPECRELAY_CONTEXTPLUS_SERVER_NAME` | `contextplus` | Registered MCP server name to look for. |
-| `SPECRELAY_CONTEXTPLUS_MAX_BUDGET_USD` | `0.50` | Spend cap for the single bounded retrieval call. |
-
-(The adapter also uses an internal `SPECRELAY_CONTEXTPLUS_TMP_DIR` for
-temporary files, which it sets and cleans up itself; it is not an operator
-setting.)
-
-## `doctor` reporting
-
-`specrelay doctor` reports the configured context capability read-only, based
-on `context.adapter` / `context.required`:
-
-- `none` → informational: `Context capability: none (no context adapter
-  configured)`.
-- `contextplus` → `Context capability: contextplus (adapter registered;
-  required=<value>)`.
-- any other adapter name → a mandatory-check failure: `Context capability:
-  unknown adapter '<name>'`.
-
-`doctor` inspects configuration only; it does not run the adapter's preflight.
-It therefore reports the **configured** adapter and the `required` flag, not a
-live MCP registration check — the live "server not registered/connected"
-detection happens in the `contextplus` preflight at `run` time (see below).
+Any failed step is a hard refusal; `required` decides whether that blocks the
+role. Test-only env hooks: `SPECRELAY_CONTEXTPLUS_CLAUDE_BIN` (default
+`claude`), `SPECRELAY_CONTEXTPLUS_SERVER_NAME` (default `contextplus`),
+`SPECRELAY_CONTEXTPLUS_MAX_BUDGET_USD` (default `0.50`).
 
 ## MCP setup policy (ContextPlus)
 
-ContextPlus is an **optional** adapter. From the core product's perspective the
-defaults are `context.adapter: none` and `context.required: false`; a project
-opts in explicitly. Two policies are non-negotiable:
+ContextPlus is an **optional** adapter. Two policies are non-negotiable:
 
-- **Generic `install` / `init` must never silently mutate your Claude MCP
-  configuration.** Installing SpecRelay or initializing a project does not
-  register, unregister, or edit any MCP server. Any MCP/provider-specific setup
-  must be **explicit, user-approved, and provider-specific**.
-- **A required-but-missing adapter fails loudly, not silently.** If a project
-  sets `context.adapter: contextplus` and `context.required: true` but the
-  `contextplus` MCP server is not registered/connected, the `contextplus`
-  preflight fails its `claude mcp list` health check and `run` refuses to launch
-  the role with an actionable error — it does not proceed as if context were
-  available. This is the bootstrap failure this policy exists to prevent.
+- **Generic `install` / `init` never silently mutates your Claude MCP
+  configuration.** Any MCP/provider-specific setup must be explicit,
+  user-approved, and provider-specific.
+- **A required-but-missing adapter fails loudly, not silently.** With
+  `context.adapter: contextplus` and `required: true` but no
+  registered/connected server, the preflight fails its health check and the
+  run refuses to launch the role with an actionable error.
 
-There is **no** built-in command today that registers the ContextPlus MCP
-server for you. A future explicit, user-approved command such as
-`specrelay setup contextplus` or `specrelay doctor --fix-contextplus` may be
-added, but none exists yet. Until then, register the server manually.
+There is no built-in command that registers the ContextPlus MCP server for
+you. Register it manually:
 
-### Manual ContextPlus MCP setup
+```sh
+claude mcp add contextplus <server-launch-command>
+claude mcp list        # contextplus … ✔ Connected
+```
 
-To make the `contextplus` preflight's health check pass, register a
-`contextplus` MCP server in your own Claude MCP configuration, then verify it:
+Only then set `context.adapter: contextplus` (and `required: true` if a
+missing capability should block work). If you cannot or do not want to
+register ContextPlus, keep the default `adapter: none`.
 
-1. Register the server under the name the adapter looks for (default
-   `contextplus`, overridable with `SPECRELAY_CONTEXTPLUS_SERVER_NAME`) using
-   the Claude CLI, e.g.:
+## Security requirements
 
-   ```sh
-   claude mcp add contextplus <server-launch-command>
-   ```
-
-2. Confirm it is listed **and connected**:
-
-   ```sh
-   claude mcp list
-   # contextplus … ✔ Connected
-   ```
-
-   The adapter fails if the server is missing, listed but not connected, or if
-   `claude mcp list` produces no output.
-
-3. Only then set `context.adapter: contextplus` (and, if a missing capability
-   should block work, `context.required: true`) in your project's
-   `.specrelay/config.yml`.
-
-If you cannot or do not want to register ContextPlus, keep the default
-`context.adapter: none` — SpecRelay then requires no context capability at all.
-Requiring the adapter without registering the server is the misconfiguration
-that blocks a run before it can claim a task.
+The context layer never persists API keys, authentication tokens, session
+cookies, environment dumps, provider credentials, or secrets embedded in
+adapter configuration — in task state, context evidence, or logs. Adapter
+errors must redact sensitive values, and context artifacts never
+automatically copy arbitrary private external data into the repository or
+task evidence.
 
 ## Testing adapters
 
-Adapters are testable without spending on any real retrieval: configure
-`context.adapter: none` for a deterministic, always-succeeds preflight. The
-`contextplus` adapter additionally treats the `manual` and `fake` role
-providers as not-applicable, so a `fake`-provider run exercises the workflow's
-preflight wiring without making a real Context Plus call, and its test-only
-environment hooks above let a test point it at a substitute binary.
+Use `context.adapter: none` for a deterministic no-op, and the `fake` adapter
+(above) to exercise the full behavior matrix — availability, required
+blocking, optional degradation, preparation, handoff delivery, reuse,
+staleness, and role isolation — without any network or provider spend. The
+provider-independence tests in `test/context_adapters_test.sh` prove context
+behavior does not depend on the AI provider (including that a
+Claude-configured executor is never launched when its required context
+fails).

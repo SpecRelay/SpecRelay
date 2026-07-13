@@ -125,6 +125,26 @@ configured and supported provider names. `manual` reports that a human performs
 the role and model fields are ignored.
 
 ```
+specrelay contexts [<adapter>]
+```
+Read-only context-adapter discovery and diagnostics (spec 0015), for
+inspecting the options **before** editing `context:` in
+`.specrelay/config.yml`. With no argument it lists every adapter known to the
+installed SpecRelay version (built-in), each one's availability, and this
+project's configured executor/reviewer adapters — a configured-but-unknown
+adapter is explicitly marked not usable, never presumed ready because its name
+appears in configuration. With an adapter name it prints that adapter's
+description, availability, honest capability level (`none`, `preflight`,
+`prepared`, `indexed`, `freshness`), capability matrix (preflight, prepare,
+durable artifact, role isolation, network requirement, freshness check),
+supported roles, and a copyable configuration snippet. An unavailable adapter
+reports its reason and states `This adapter was not invoked.`; an unknown
+adapter produces guidance listing the known adapters. The output is
+non-interactive, append-only, copyable, CI-safe, and color-free, and the
+command never performs a billable AI-provider invocation and never runs an
+adapter's preflight or preparation. See `context-adapters.md`.
+
+```
 specrelay task create <spec-path> [--task-id <id>] [--allow-dirty-baseline]
 specrelay task show <task-ref>
 specrelay task status [<task-ref>]

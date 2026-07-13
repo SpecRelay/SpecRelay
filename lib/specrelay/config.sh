@@ -87,6 +87,134 @@ specrelay::config::get() {
   ' "$path" "$field" "$default"
 }
 
+# --- role context configuration parsing (spec 0015) --------------------------
+#
+# The context section supports a global form plus role-specific overrides:
+#
+#   context:
+#     adapter: none          # global adapter
+#     required: false        # global required policy
+#     executor:              # optional role-specific override
+#       adapter: fake
+#       required: true
+#     reviewer:
+#       adapter: none
+#       required: false
+#
+# Resolution order, PER FIELD (spec 0015, "Configuration Contract"):
+#   role-specific value -> global value -> built-in default
+#   (adapter: none, required: false)
+# so the executor and reviewer may use entirely different adapters and
+# policies. All structural validation happens here, in one parser, so every
+# consumer (workflow validation, doctor, contexts) shares it.
+
+# specrelay::config::role_context <project-root> <role>
+# Prints two lines on success (exit 0):
+#   adapter=<name>
+#   required=<true|false>
+# On a structurally invalid context configuration prints a human-readable
+# error DETAIL (exit 1). Missing config / context section resolves to the
+# defaults. Rejected here (spec 0015, "Configuration Validation"): a context
+# section that is not a mapping, unknown context keys, a non-string or empty
+# adapter name, a non-boolean required value, and a malformed role-specific
+# subsection. Adapter EXISTENCE is validated by the caller against the
+# adapter registry, not here.
+specrelay::config::role_context() {
+  local root="$1" role="$2" path
+  path="$(specrelay::config::path "$root")"
+
+  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+    printf 'adapter=none\nrequired=false\n'
+    return 0
+  fi
+
+  ruby -e '
+    require "yaml"
+    path, role = ARGV[0], ARGV[1]
+
+    def ok(adapter, required)
+      puts "adapter=#{adapter}"
+      puts "required=#{required}"
+      exit 0
+    end
+
+    def bad(detail)
+      puts detail
+      exit 1
+    end
+
+    begin
+      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+    rescue StandardError
+      # Malformed YAML is reported by specrelay::config::validate, not here.
+      ok("none", "false")
+    end
+    ok("none", "false") unless data.is_a?(Hash)
+    ok("none", "false") unless data.key?("context")
+    ctx = data["context"]
+    ok("none", "false") if ctx.nil?
+    unless ctx.is_a?(Hash)
+      bad "context configuration is not a mapping (got #{ctx.class})"
+    end
+
+    known_role_keys = ["adapter", "required"]
+    known_top_keys = known_role_keys + ["executor", "reviewer"]
+    unknown = ctx.keys - known_top_keys
+    unless unknown.empty?
+      bad "context configuration has unknown key(s) #{unknown.map(&:inspect).join(", ")}; recognized keys: adapter, required, executor, reviewer"
+    end
+
+    # check_block <hash> <label> -> validates adapter/required shapes in one
+    # (global or role-specific) context mapping.
+    check_block = lambda do |block, label|
+      if block.key?("adapter") && !block["adapter"].nil?
+        a = block["adapter"]
+        unless a.is_a?(String)
+          bad "#{label} context adapter must be a string (got #{a.class}: #{a.inspect})"
+        end
+        if a.strip.empty?
+          bad "#{label} context adapter is empty; set a known adapter name (e.g. none) or omit the key"
+        end
+      end
+      if block.key?("required") && !block["required"].nil?
+        r = block["required"]
+        unless r == true || r == false
+          bad "#{label} context required must be a boolean true or false (got #{r.class}: #{r.inspect})"
+        end
+      end
+    end
+
+    check_block.call(ctx, "global")
+
+    ["executor", "reviewer"].each do |r|
+      next unless ctx.key?(r)
+      sub = ctx[r]
+      next if sub.nil?
+      unless sub.is_a?(Hash)
+        bad "role-specific context configuration for #{r} is not a mapping (got #{sub.class}: #{sub.inspect})"
+      end
+      sub_unknown = sub.keys - known_role_keys
+      unless sub_unknown.empty?
+        bad "role-specific context configuration for #{r} has unknown key(s) #{sub_unknown.map(&:inspect).join(", ")}; recognized keys: adapter, required"
+      end
+      check_block.call(sub, r)
+    end
+
+    role_cfg = ctx[role].is_a?(Hash) ? ctx[role] : {}
+    adapter = nil
+    adapter = role_cfg["adapter"] if role_cfg.key?("adapter") && !role_cfg["adapter"].nil?
+    adapter = ctx["adapter"] if adapter.nil? && ctx.key?("adapter") && !ctx["adapter"].nil?
+    adapter = "none" if adapter.nil?
+
+    required = nil
+    required = role_cfg["required"] if role_cfg.key?("required") && !role_cfg["required"].nil?
+    required = ctx["required"] if required.nil? && ctx.key?("required") && !ctx["required"].nil?
+    required = false if required.nil?
+
+    ok(adapter, required ? "true" : "false")
+  ' "$path" "$role"
+}
+
 # --- role model SELECTION parsing (spec 0014) --------------------------------
 #
 # Spec 0014 introduces three explicit model-selection forms for

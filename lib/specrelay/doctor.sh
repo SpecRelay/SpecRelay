@@ -132,6 +132,50 @@ specrelay::doctor::_role_model_selection() {
   specrelay::doctor::_info "$role_label model selection: provider=$provider kind=$kind configured=$selection resolved=$resolved source=$source validation=$label"
 }
 
+# specrelay::doctor::_role_context <Role-label> <root> <role>
+# Read-only (spec 0015, "Doctor Integration"): reports one role's context
+# configuration through the adapter capability contract — configured adapter,
+# required policy, availability, capability level, and network requirement.
+# Known-invalid configuration (structural errors, an unknown adapter, an
+# unsupported role/adapter combination) is a MANDATORY failure: every run
+# with this configuration would refuse before role execution. Availability is
+# an honest, local, non-billable check; doctor never runs a preflight,
+# never prepares context, and never mutates task state.
+specrelay::doctor::_role_context() {
+  local role_label="$1" root="$2" role="$3" parsed adapter required
+  local avail_out avail reason level network
+
+  if ! parsed="$(specrelay::config::role_context "$root" "$role")"; then
+    specrelay::doctor::_fail "$role_label context: INVALID configuration — $parsed (source: $(specrelay::config::path "$root"); inspect adapters with 'specrelay contexts')"
+    return 0
+  fi
+  adapter="$(printf '%s\n' "$parsed" | sed -n 's/^adapter=//p')"
+  required="$(printf '%s\n' "$parsed" | sed -n 's/^required=//p')"
+
+  if ! specrelay::context::known "$adapter"; then
+    specrelay::doctor::_fail "$role_label context: unknown adapter '$adapter' (known: $(specrelay::context::adapters | tr '\n' ' ' | sed 's/ $//'); inspect with 'specrelay contexts')"
+    return 0
+  fi
+  if ! specrelay::context::role_supported "$adapter" "$role"; then
+    specrelay::doctor::_fail "$role_label context: adapter '$adapter' does not support the $role role"
+    return 0
+  fi
+
+  level="$(specrelay::context::capability_level "$adapter")"
+  network="$(specrelay::context::capability "$adapter" network)"
+  avail_out="$(specrelay::context::availability "$adapter" "$root")"
+  avail="$(printf '%s\n' "$avail_out" | sed -n '1p')"
+  reason="$(printf '%s\n' "$avail_out" | sed -n '2p')"
+
+  if [ "$avail" = "available" ]; then
+    specrelay::doctor::_info "$role_label context: adapter=$adapter required=$required availability=available level=$level network=$network validation=valid"
+  elif [ "$required" = "true" ]; then
+    specrelay::doctor::_fail "$role_label context: adapter=$adapter required=true availability=unavailable (${reason:-reason unknown}) — a required run would refuse before role execution"
+  else
+    specrelay::doctor::_warn "$role_label context: adapter=$adapter required=false availability=unavailable (${reason:-reason unknown}) — runs will degrade honestly without external context"
+  fi
+}
+
 # specrelay::doctor::_hook_has_nonascii_shell_punct <hook-file>
 # Returns 0 (true) if the given hook file contains non-ASCII shell punctuation
 # that is DANGEROUS in a shell command (spec 0002): a Unicode en/em dash used
@@ -370,21 +414,14 @@ specrelay::doctor::run() {
       ;;
   esac
 
-  # --- Context capability adapter available ---------------------------------
-  local context_adapter context_required
-  context_adapter="$(specrelay::workflow::context_adapter "$root")"
-  context_required="$(specrelay::workflow::context_required "$root")"
-  case "$context_adapter" in
-    none)
-      specrelay::doctor::_info "Context capability: none (no context adapter configured)"
-      ;;
-    contextplus)
-      specrelay::doctor::_ok "Context capability: contextplus (adapter registered; required=$context_required)"
-      ;;
-    *)
-      specrelay::doctor::_fail "Context capability: unknown adapter '$context_adapter'"
-      ;;
-  esac
+  # --- Context capability adapters (spec 0015) ------------------------------
+  # Per-role, read-only report through the adapter capability contract:
+  # configured adapter, resolved adapter, required policy, availability,
+  # capability level, network requirement, and validation result. Doctor
+  # never runs a preflight or preparation and never mutates task state, and
+  # adapter availability is a local, non-billable check.
+  specrelay::doctor::_role_context "Executor" "$root" executor
+  specrelay::doctor::_role_context "Reviewer" "$root" reviewer
 
   # --- SpecRelay installation (tool) root -----------------------------------
   # Report WHERE SpecRelay itself is installed, kept explicitly distinct from
