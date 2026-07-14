@@ -250,3 +250,27 @@ specrelay::provider::reviewer_run() {
       ;;
   esac
 }
+
+# specrelay::provider::reviewer_recover_marker <provider> <root> <task-dir>
+#     <narrow-prompt-file> <model> <agent>
+# The ONE corrective, marker-only attempt (spec 0019, "Smart Marker
+# Recovery" / "Corrective Attempt Limits"). Adapters MUST NOT grant this call
+# any repository tool access and MUST NOT receive the original review prompt
+# — only the narrow prompt file the caller (marker_recovery.sh) built from
+# already-written artifacts. Prints ACCEPT|REQUEST_CHANGES on success.
+specrelay::provider::reviewer_recover_marker() {
+  local provider="$1" root="$2" task_dir="$3" prompt_file="$4" model="${5:-provider-default}" agent="${6:-none}"
+  local label="reviewer-recovery:$provider"
+  case "$provider" in
+    fake)
+      specrelay::provider::fake::reviewer_recover_marker "$root" "$task_dir" "$prompt_file" "$label" "$model" "$agent"
+      ;;
+    claude|claude-subagent)
+      specrelay::provider::claude::reviewer_recover_marker "$root" "$task_dir" "$prompt_file" "$label" "$model" "$agent"
+      ;;
+    *)
+      specrelay::out::err "unsupported reviewer provider: $provider"
+      return 1
+      ;;
+  esac
+}

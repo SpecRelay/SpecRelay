@@ -399,6 +399,228 @@ specrelay::config::role_model_selection() {
 # sentinel string, a legacy non-empty raw-id string, and the structured
 # single-key alias/id forms. Provider-AWARE validation (alias membership,
 # discovery) is layered on top in workflow.sh, not here.
+# --- bounded verification policy configuration (spec 0019) -------------------
+#
+# The `verification:` section configures how many times each verification
+# operation (focused/targeted/full-suite/smoke/doctor/version) an Executor or
+# Reviewer may run BY DEFAULT before a recorded reason is required for an
+# additional run (see verification.sh, "Bounded Verification Policy"). Missing
+# configuration resolves entirely to the built-in defaults below, so every
+# existing project (with no `verification:` section at all) keeps working
+# unchanged (spec: "missing configuration remains backward compatible").
+
+# specrelay::config::_verification_defaults
+# One `key=value` per line — the built-in defaults (spec 0019, "Verification
+# Policy Configuration"). The single source of truth for every consumer
+# (parser below, doctor, verification.sh).
+specrelay::config::_verification_defaults() {
+  cat <<'DEFAULTS'
+executor_full_suite_max_runs=1
+executor_smoke_max_runs=1
+executor_doctor_max_runs=1
+executor_version_max_runs=1
+reviewer_default_mode=targeted
+reviewer_focused_max_runs=3
+reviewer_targeted_max_runs=1
+reviewer_full_suite_max_runs=0
+reviewer_smoke_max_runs=0
+reviewer_doctor_max_runs=1
+reviewer_version_max_runs=1
+DEFAULTS
+}
+
+# specrelay::config::verification_policy <project-root>
+# Prints the EFFECTIVE, flat `key=value` verification policy (one line per
+# field, defaults merged with any configured overrides) on success (exit 0).
+# On a structurally invalid `verification:` section, prints a human-readable
+# error DETAIL on stdout and returns 1 (mirrors role_context's ok/bad
+# convention). Rejected: a non-mapping section/subsection, unknown keys,
+# negative limits, non-integer limits, and an unknown reviewer default_mode.
+specrelay::config::verification_policy() {
+  local root="$1" path
+  path="$(specrelay::config::path "$root")"
+
+  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+    specrelay::config::_verification_defaults
+    return 0
+  fi
+
+  ruby -e '
+    require "yaml"
+    path = ARGV[0]
+
+    defaults = {}
+    STDIN.each_line do |line|
+      k, v = line.strip.split("=", 2)
+      defaults[k] = v if k && v
+    end
+
+    def bad(detail)
+      puts detail
+      exit 1
+    end
+
+    begin
+      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+    rescue StandardError
+      data = nil
+    end
+    data = {} unless data.is_a?(Hash)
+    verification = data["verification"]
+
+    if verification.nil?
+      defaults.each { |k, v| puts "#{k}=#{v}" }
+      exit 0
+    end
+    unless verification.is_a?(Hash)
+      bad "verification configuration is not a mapping (got #{verification.class})"
+    end
+
+    known_top = ["executor", "reviewer"]
+    unknown_top = verification.keys - known_top
+    unless unknown_top.empty?
+      bad "verification configuration has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: executor, reviewer"
+    end
+
+    int_keys = {
+      "executor" => ["full_suite_max_runs", "smoke_max_runs", "doctor_max_runs", "version_max_runs"],
+      "reviewer" => ["focused_max_runs", "targeted_max_runs", "full_suite_max_runs", "smoke_max_runs", "doctor_max_runs", "version_max_runs"],
+    }
+    reviewer_string_keys = ["default_mode"]
+    known_modes = ["focused", "targeted", "full"]
+
+    result = defaults.dup
+
+    ["executor", "reviewer"].each do |role|
+      block = verification[role]
+      next if block.nil?
+      unless block.is_a?(Hash)
+        bad "verification.#{role} is not a mapping (got #{block.class})"
+      end
+      allowed = int_keys[role] + (role == "reviewer" ? reviewer_string_keys : [])
+      unknown = block.keys - allowed
+      unless unknown.empty?
+        bad "verification.#{role} has unknown key(s) #{unknown.map(&:inspect).join(", ")}; recognized keys: #{allowed.join(", ")}"
+      end
+      int_keys[role].each do |k|
+        next unless block.key?(k)
+        v = block[k]
+        unless v.is_a?(Integer)
+          bad "verification.#{role}.#{k} must be a non-negative integer (got #{v.inspect})"
+        end
+        if v < 0
+          bad "verification.#{role}.#{k} must be a non-negative integer (got #{v})"
+        end
+        result["#{role}_#{k}"] = v.to_s
+      end
+      if role == "reviewer" && block.key?("default_mode")
+        v = block["default_mode"]
+        unless v.is_a?(String) && known_modes.include?(v)
+          bad "verification.reviewer.default_mode must be one of #{known_modes.join(", ")} (got #{v.inspect})"
+        end
+        result["reviewer_default_mode"] = v
+      end
+    end
+
+    result.each { |k, v| puts "#{k}=#{v}" }
+  ' "$path" <<< "$(specrelay::config::_verification_defaults)"
+}
+
+# --- phase budget configuration (spec 0019) ----------------------------------
+#
+# The `performance.phase_budgets` section configures SOFT (advisory) per-phase
+# duration budgets (spec 0019, "Phase Budgets"). Exceeding a budget only ever
+# produces a warning in the final execution-timeline report — it NEVER alters
+# task state. Missing configuration resolves entirely to the built-in defaults.
+
+specrelay::config::_phase_budget_defaults() {
+  cat <<'DEFAULTS'
+executor_context_preflight_seconds=30
+executor_evidence_capture_seconds=120
+reviewer_context_preflight_seconds=30
+reviewer_provider_seconds=900
+reviewer_marker_recovery_seconds=60
+finalization_seconds=30
+DEFAULTS
+}
+
+# specrelay::config::phase_budgets <project-root>
+# Prints the effective `key=value` phase-budget seconds (one per line) on
+# success (exit 0). On a structurally invalid `performance:` section, prints a
+# human-readable error DETAIL on stdout and returns 1. Rejected: a non-mapping
+# section, unknown keys, negative values, and non-integer values.
+specrelay::config::phase_budgets() {
+  local root="$1" path
+  path="$(specrelay::config::path "$root")"
+
+  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+    specrelay::config::_phase_budget_defaults
+    return 0
+  fi
+
+  ruby -e '
+    require "yaml"
+    path = ARGV[0]
+
+    defaults = {}
+    STDIN.each_line do |line|
+      k, v = line.strip.split("=", 2)
+      defaults[k] = v if k && v
+    end
+
+    def bad(detail)
+      puts detail
+      exit 1
+    end
+
+    begin
+      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+    rescue StandardError
+      data = nil
+    end
+    data = {} unless data.is_a?(Hash)
+    perf = data["performance"]
+
+    if perf.nil?
+      defaults.each { |k, v| puts "#{k}=#{v}" }
+      exit 0
+    end
+    unless perf.is_a?(Hash)
+      bad "performance configuration is not a mapping (got #{perf.class})"
+    end
+    unless perf.keys == ["phase_budgets"] || perf.key?("phase_budgets")
+      bad "performance configuration has unknown key(s) #{(perf.keys - ["phase_budgets"]).map(&:inspect).join(", ")}; recognized keys: phase_budgets"
+    end
+    unknown_top = perf.keys - ["phase_budgets"]
+    unless unknown_top.empty?
+      bad "performance configuration has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: phase_budgets"
+    end
+
+    budgets = perf["phase_budgets"]
+    result = defaults.dup
+    unless budgets.nil?
+      unless budgets.is_a?(Hash)
+        bad "performance.phase_budgets is not a mapping (got #{budgets.class})"
+      end
+      unknown = budgets.keys - defaults.keys
+      unless unknown.empty?
+        bad "performance.phase_budgets has unknown key(s) #{unknown.map(&:inspect).join(", ")}; recognized keys: #{defaults.keys.join(", ")}"
+      end
+      budgets.each do |k, v|
+        unless v.is_a?(Integer)
+          bad "performance.phase_budgets.#{k} must be a non-negative integer number of seconds (got #{v.inspect})"
+        end
+        if v < 0
+          bad "performance.phase_budgets.#{k} must be a non-negative integer number of seconds (got #{v})"
+        end
+        result[k] = v.to_s
+      end
+    end
+
+    result.each { |k, v| puts "#{k}=#{v}" }
+  ' "$path" <<< "$(specrelay::config::_phase_budget_defaults)"
+}
+
 specrelay::config::validate_role_model() {
   local root="$1" role="$2" path msg rc
   path="$(specrelay::config::path "$root")"

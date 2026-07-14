@@ -295,6 +295,41 @@ specrelay::workflow::assert_role_model_valid() {
 # overwritten here, so resuming a task after project configuration changed does
 # not silently switch it to a different model — the durable value captured at
 # creation remains the one used by every subsequent executor/reviewer step.
+# specrelay::workflow::record_effective_verification_policy <root> <task-id>
+# CAPTURE-ONCE (spec 0019, "Verification Policy Configuration" — "policy is
+# captured durably for each task"), mirroring record_effective_roles above:
+# persists the effective verification policy (executor/reviewer limits) into
+# state.json under "verification_policy_effective" the first time a task
+# reaches an executor iteration. Never overwritten thereafter, so a later
+# project-config change never silently changes the budget an in-flight
+# task's Reviewer is held to mid-review.
+specrelay::workflow::record_effective_verification_policy() {
+  local root="$1" task_id="$2" state_file existing blob
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 0
+
+  existing="$(specrelay::state::get "$state_file" verification_policy_effective 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+    return 0
+  fi
+
+  blob="$(specrelay::config::verification_policy "$root" 2>/dev/null)" || return 0
+  local set_json
+  set_json="$(printf '%s' "$blob" | python3 -c '
+import json, sys
+policy = {}
+for line in sys.stdin:
+    line = line.strip()
+    if "=" not in line:
+        continue
+    k, v = line.split("=", 1)
+    policy[k] = int(v) if v.isdigit() else v
+print(json.dumps({"verification_policy_effective": policy}))
+' 2>/dev/null)"
+  [ -n "$set_json" ] || return 0
+  specrelay::state::set "$state_file" "$set_json" >/dev/null
+}
+
 specrelay::workflow::record_effective_roles() {
   local root="$1" task_id="$2" state_file existing
   state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
@@ -786,20 +821,64 @@ specrelay::workflow::build_reviewer_prompt() {
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
   task_rel="${task_dir#"$root"/}"
   tmp="$(mktemp "${TMPDIR:-/tmp}/specrelay-reviewer-prompt.XXXXXX")"
+
+  # The plain (non-Claude-subagent) reviewer prompt carries the SAME critical
+  # policy as templates/claude/agents/ai-reviewer.md (spec 0019, "Reviewer
+  # Prompt Contract" — this must not depend exclusively on Claude sub-agent
+  # installation): risk classification, evidence inspection, bounded
+  # verification, structured artifacts, a mandatory marker, and a stop
+  # condition.
+  local focused_max targeted_max full_max smoke_max
+  focused_max="$(specrelay::verification::reviewer_limit "$root" focused_max_runs 2>/dev/null || echo 3)"
+  targeted_max="$(specrelay::verification::reviewer_limit "$root" targeted_max_runs 2>/dev/null || echo 1)"
+  full_max="$(specrelay::verification::reviewer_limit "$root" full_suite_max_runs 2>/dev/null || echo 0)"
+  smoke_max="$(specrelay::verification::reviewer_limit "$root" smoke_max_runs 2>/dev/null || echo 0)"
+
   {
     echo "You are an INDEPENDENT reviewer for SpecRelay task '$task_id'."
     echo "You are a fresh context: you are NOT a continuation of the executor's session."
-    echo "Verify the executor's evidence against the real working tree, not just its narrative."
-    echo "Decide exactly one of ACCEPT or REQUEST_CHANGES."
+    echo "You are NOT a second executor: do not repeat every executor command"
+    echo "automatically, and do not run the complete test suite merely because it"
+    echo "is available. Inspect executor evidence, assess RISK, and independently"
+    echo "verify only the highest-risk claims."
+    echo
+    echo "1. Classify this change's risk level: low | medium | high | critical"
+    echo "   (state-machine/orchestrator/provider/git-guard/test-runner/security"
+    echo "   changes are high or critical; docs/formatting/narrow non-behavioral"
+    echo "   changes are low)."
+    echo "2. Inspect the real working tree and current diff (git status --short,"
+    echo "   git diff) — never only the executor's narrative."
+    echo "3. Inspect the executor evidence below."
+    echo "4. Select the MINIMUM sufficient independent verification for that risk"
+    echo "   level. Your default verification budget for this review:"
+    echo "     Focused test runs: $focused_max"
+    echo "     Targeted runs:     $targeted_max"
+    echo "     Full-suite runs:   $full_max by default"
+    echo "     Smoke runs:        $smoke_max by default"
+    echo "   Exceeding this budget requires recording, BEFORE the extra run:"
+    echo "     ADDITIONAL_VERIFICATION_REASON: <why>"
+    echo "   Running the full suite 'because it is available' is never sufficient."
+    echo "5. Evaluate every acceptance criterion in the spec below explicitly."
+    echo "6. Decide exactly one of ACCEPT or REQUEST_CHANGES. Use severities"
+    echo "   BLOCKER/HIGH -> REQUEST_CHANGES, MEDIUM -> your judgment (explain),"
+    echo "   LOW/NOTE -> ACCEPT. Never reject solely for style preference."
+    echo "7. STOP once every acceptance criterion is assessed, sufficient"
+    echo "   independent evidence exists, and a decision is justified — do not"
+    echo "   keep exploring the repository past that point."
     echo
     echo "Before you answer, write your review to $task_rel/09-consultant-review.md"
-    echo "(your findings, in your own words)."
+    echo "(risk level, acceptance-criteria table, independent verification"
+    echo "performed, findings by severity, residual risks, and the verification"
+    echo "budget you actually used)."
     echo "If you decide ACCEPT, also write $task_rel/10-business-summary.md (a short"
     echo "plain-language summary of what changed, for a non-technical reader)."
     echo "If you decide REQUEST_CHANGES, also write"
     echo "$task_rel/11-next-executor-prompt.md (the next executor prompt, explaining"
     echo "exactly what must change)."
-    echo "End your reply with exactly one line, verbatim: 'DECISION: ACCEPT' or 'DECISION: REQUEST_CHANGES'."
+    echo "End your reply with exactly one line, verbatim, as the FINAL non-empty"
+    echo "line of your entire response: 'DECISION: ACCEPT' or"
+    echo "'DECISION: REQUEST_CHANGES'. Never emit both, never emit it twice, and"
+    echo "never guess a decision from prose."
     echo
     echo "=== User request (00-user-request.md) ==="
     cat "$task_dir/00-user-request.md" 2>/dev/null
@@ -855,6 +934,12 @@ specrelay::workflow::seed_task_from_spec() {
     echo "single source of truth; this file only records that fact."
   } > "$task_dir/01-consultant-analysis.md"
 
+  local full_max smoke_max doctor_max version_max
+  full_max="$(specrelay::verification::executor_limit "$root" full_suite_max_runs 2>/dev/null || echo 1)"
+  smoke_max="$(specrelay::verification::executor_limit "$root" smoke_max_runs 2>/dev/null || echo 1)"
+  doctor_max="$(specrelay::verification::executor_limit "$root" doctor_max_runs 2>/dev/null || echo 1)"
+  version_max="$(specrelay::verification::executor_limit "$root" version_max_runs 2>/dev/null || echo 1)"
+
   {
     echo "Prompt #1 — Implement Spec Task $task_id"
     echo
@@ -867,6 +952,14 @@ specrelay::workflow::seed_task_from_spec() {
     echo "  - $task_rel/03-executor-log.md"
     echo "  - $task_rel/07-tests.txt"
     echo "  - $task_rel/08-executor-summary.md"
+    echo
+    echo "Verification policy (spec 0019, 'Bounded Verification Policy'): prefer"
+    echo "focused/targeted tests during implementation; run the full standalone"
+    echo "suite once at the end, not after every edit. Default limits without a"
+    echo "recorded reason: full-suite runs <= $full_max, smoke runs <= $smoke_max,"
+    echo "doctor runs <= $doctor_max, version runs <= $version_max. Any additional run"
+    echo "beyond these needs a recorded reason:"
+    echo "  ADDITIONAL_VERIFICATION_REASON: <why>"
     echo
     echo "=== Spec ($spec_rel) ==="
     cat "$spec_abs"
@@ -936,20 +1029,27 @@ specrelay::workflow::executor_iteration() {
   specrelay::workflow::record_effective_context "$root" "$task_id"
 
   local executor_context_handoff
+  specrelay::timeline::start "$task_dir" executor_context_preflight executor
   if ! specrelay::workflow::run_role_context "$root" "$task_id" executor "$provider"; then
+    specrelay::timeline::finish "$task_dir" executor_context_preflight failed
     specrelay::out::err "[executor] context capability failed and is required; refusing to claim/launch the executor"
     return 1
   fi
+  specrelay::timeline::finish "$task_dir" executor_context_preflight passed
   executor_context_handoff="${SPECRELAY_CONTEXT_HANDOFF:-none}"
 
   specrelay::out::log "[executor] task '$task_id': claiming"
+  specrelay::timeline::start "$task_dir" executor_claim executor
   if ! specrelay::transitions::claim "$root" "$task_id"; then
+    specrelay::timeline::finish "$task_dir" executor_claim failed
     return 1
   fi
+  specrelay::timeline::finish "$task_dir" executor_claim passed
 
   # Record effective (normalized) role metadata into durable state (spec 0009,
   # "Runtime evidence"): provider/model/agent for both roles.
   specrelay::workflow::record_effective_roles "$root" "$task_id"
+  specrelay::workflow::record_effective_verification_policy "$root" "$task_id"
 
   local round rc started ended duration
   round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
@@ -964,15 +1064,29 @@ specrelay::workflow::executor_iteration() {
 
   specrelay::out::log "[executor] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent)"
   started="$(date +%s 2>/dev/null || echo '')"
+  specrelay::timeline::start "$task_dir" executor_provider_execution executor
   if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md" "$model" "$agent" "$executor_context_handoff"; then
     rc=0
   else
     rc=$?
   fi
   ended="$(date +%s 2>/dev/null || echo '')"
+  if [ "$rc" -eq 0 ]; then
+    specrelay::timeline::finish "$task_dir" executor_provider_execution passed
+  else
+    specrelay::timeline::finish "$task_dir" executor_provider_execution failed
+  fi
+  # Best-effort verification-ledger extraction from the captured semantic
+  # event transcript (spec 0019, "Verification Operation Classification"):
+  # structurally real (parsed tool_use commands), never fabricated from
+  # prose. A no-op when no such transcript exists (e.g. the fake provider,
+  # or a run that used the generic streaming fallback).
+  specrelay::verification::extract_from_events "$task_dir" executor "$task_dir/19-executor-events.jsonl"
 
   specrelay::out::log "[executor] task '$task_id': capturing evidence"
+  specrelay::timeline::start "$task_dir" executor_evidence_capture executor
   specrelay::evidence::capture "$root" "$task_dir"
+  specrelay::timeline::finish "$task_dir" executor_evidence_capture passed
 
   # Result card (spec 0013): the executor's completion, with elapsed time. Shown
   # for both success and failure so a finished provider is always obvious.
@@ -1009,6 +1123,7 @@ specrelay::workflow::executor_iteration() {
   specrelay::git_guard::snapshot_owned "$root" "$task_dir"
 
   local token rc2
+  specrelay::timeline::start "$task_dir" executor_submission executor
   token="$(specrelay::auth::mint "$root" "$task_id")"
   if specrelay::transitions::submit "$root" "$task_id" "$token"; then
     rc2=0
@@ -1017,8 +1132,10 @@ specrelay::workflow::executor_iteration() {
   fi
   specrelay::auth::cleanup "$root" "$task_id"
   if [ "$rc2" -ne 0 ]; then
+    specrelay::timeline::finish "$task_dir" executor_submission failed
     return 1
   fi
+  specrelay::timeline::finish "$task_dir" executor_submission passed
 
   specrelay::out::log "[executor] task '$task_id': submitted for review (READY_FOR_REVIEW)"
   return 0
@@ -1077,10 +1194,13 @@ specrelay::workflow::reviewer_iteration() {
   # never a reuse of the executor's transient context session.
   specrelay::out::log "[reviewer] task '$task_id': independent context capability step"
   local reviewer_context_handoff
+  specrelay::timeline::start "$task_dir" reviewer_context_preflight reviewer
   if ! specrelay::workflow::run_role_context "$root" "$task_id" reviewer "$provider"; then
+    specrelay::timeline::finish "$task_dir" reviewer_context_preflight failed
     specrelay::out::err "[reviewer] context capability failed and is required; refusing to launch the reviewer"
     return 1
   fi
+  specrelay::timeline::finish "$task_dir" reviewer_context_preflight passed
   reviewer_context_handoff="${SPECRELAY_CONTEXT_HANDOFF:-none}"
 
   # Enter REVIEWER_RUNNING before executing the reviewer (spec 0011). Only when
@@ -1090,10 +1210,13 @@ specrelay::workflow::reviewer_iteration() {
   # that was never launched (that is not a reviewer crash — no state change).
   if [ "$current" = "READY_FOR_REVIEW" ]; then
     specrelay::out::log "[reviewer] task '$task_id': entering REVIEWER_RUNNING (automated review in progress)"
+    specrelay::timeline::start "$task_dir" reviewer_start reviewer
     if ! specrelay::transitions::start_review "$root" "$task_id" "$provider"; then
+      specrelay::timeline::finish "$task_dir" reviewer_start failed
       specrelay::out::err "[reviewer] task '$task_id': could not enter REVIEWER_RUNNING; task stays READY_FOR_REVIEW"
       return 1
     fi
+    specrelay::timeline::finish "$task_dir" reviewer_start passed
   else
     specrelay::out::log "[reviewer] task '$task_id': resuming an interrupted review from REVIEWER_RUNNING"
   fi
@@ -1113,16 +1236,52 @@ specrelay::workflow::reviewer_iteration() {
     "$(printf '%-10s%s' Agent "$agent")"
 
   specrelay::out::log "[reviewer] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent, isolated context)"
+  specrelay::timeline::start "$task_dir" reviewer_provider_execution reviewer
   if decision="$(specrelay::provider::reviewer_run "$provider" "$root" "$task_dir" "$round" "$prompt_file" "$model" "$agent" "$reviewer_context_handoff")"; then
     rc=0
   else
     rc=$?
   fi
   rm -f "$prompt_file"
+  specrelay::verification::extract_from_events "$task_dir" reviewer "$task_dir/20-reviewer-events.jsonl"
 
-  if [ "$rc" -ne 0 ]; then
+  # rc=2 (spec 0019, marker.sh/providers/claude.sh): the provider itself
+  # succeeded but produced no valid DECISION marker. Before treating this as
+  # an ordinary failure, attempt ONE narrow marker-only recovery — never a
+  # repeat of the whole review — when the artifacts already written strongly
+  # indicate the decision was reached (marker_recovery.sh's eligibility
+  # check). Any other outcome (rc=1 real failure, ineligible artifacts, or a
+  # failed corrective attempt) falls through to the existing "stays
+  # REVIEWER_RUNNING" behavior unchanged.
+  if [ "$rc" -eq 2 ]; then
+    specrelay::timeline::finish "$task_dir" reviewer_provider_execution passed
+    specrelay::out::log "[reviewer] task '$task_id': provider succeeded but produced no valid decision marker; checking whether artifacts allow narrow marker-only recovery"
+    local inferred
+    if inferred="$(specrelay::marker_recovery::eligible "$task_dir")"; then
+      specrelay::out::log "[reviewer] task '$task_id': attempting the one allowed marker-only corrective attempt (inferred decision: $inferred)"
+      if decision="$(specrelay::marker_recovery::attempt "$root" "$task_dir" "$task_id" "$provider" "$model" "$agent")"; then
+        rc=0
+        specrelay::out::log "[reviewer] task '$task_id': marker-only recovery succeeded (decision: $decision); the full review was NOT repeated"
+      else
+        specrelay::out::err "[reviewer] task '$task_id': marker-only recovery failed; task stays REVIEWER_RUNNING (no second attempt, no fabricated decision)"
+        return 1
+      fi
+    else
+      specrelay::out::err "[reviewer] task '$task_id': marker-only recovery is not safe (artifacts missing/empty/contradictory or no complete decision); task stays REVIEWER_RUNNING"
+      return 1
+    fi
+  elif [ "$rc" -ne 0 ]; then
+    specrelay::timeline::finish "$task_dir" reviewer_provider_execution failed
+    specrelay::timeline::start "$task_dir" reviewer_marker_recovery reviewer
+    specrelay::timeline::finish "$task_dir" reviewer_marker_recovery skipped
     specrelay::out::err "[reviewer] task '$task_id': provider exited non-zero or produced no clear decision; task stays REVIEWER_RUNNING for recovery/resume (spec 0011: no rollback)"
     return 1
+  else
+    specrelay::timeline::finish "$task_dir" reviewer_provider_execution passed
+    # A clean, marker-present decision needed no recovery — record it as
+    # SKIPPED (spec 0019 example table) rather than simply absent.
+    specrelay::timeline::start "$task_dir" reviewer_marker_recovery reviewer
+    specrelay::timeline::finish "$task_dir" reviewer_marker_recovery skipped
   fi
 
   decision="$(printf '%s\n' "$decision" | tail -n1 | tr -d '[:space:]')"
@@ -1148,17 +1307,28 @@ specrelay::workflow::reviewer_iteration() {
   # redundant call that produced the confusing "Refusing to transition task in
   # state 'READY_FOR_HUMAN_REVIEW'" warning.
   current="$(specrelay::state::canonical "$state_file")"
+  specrelay::timeline::start "$task_dir" reviewer_transition reviewer
   case "$decision" in
     ACCEPT)
       case "$current" in
         REVIEWER_RUNNING)
-          specrelay::transitions::accept "$root" "$task_id" "$provider" || return 1
+          if ! specrelay::marker::artifacts_consistent "$task_dir" ACCEPT; then
+            specrelay::timeline::finish "$task_dir" reviewer_transition failed
+            return 1
+          fi
+          if ! specrelay::transitions::accept "$root" "$task_id" "$provider"; then
+            specrelay::timeline::finish "$task_dir" reviewer_transition failed
+            return 1
+          fi
+          specrelay::timeline::finish "$task_dir" reviewer_transition passed
           specrelay::out::log "[reviewer] task '$task_id': accepted -> READY_FOR_HUMAN_REVIEW"
           ;;
         READY_FOR_HUMAN_REVIEW)
+          specrelay::timeline::finish "$task_dir" reviewer_transition passed
           specrelay::out::log "[reviewer] task '$task_id': already accepted -> READY_FOR_HUMAN_REVIEW (reviewer enacted the transition; runner stops cleanly)"
           ;;
         *)
+          specrelay::timeline::finish "$task_dir" reviewer_transition failed
           specrelay::out::err "[reviewer] task '$task_id': reviewer decided ACCEPT but task is in unexpected state '$current'; refusing to transition"
           return 1
           ;;
@@ -1167,22 +1337,33 @@ specrelay::workflow::reviewer_iteration() {
     REQUEST_CHANGES)
       case "$current" in
         REVIEWER_RUNNING)
+          if ! specrelay::marker::artifacts_consistent "$task_dir" REQUEST_CHANGES; then
+            specrelay::timeline::finish "$task_dir" reviewer_transition failed
+            return 1
+          fi
           local reason
           reason="$(head -c 500 "$task_dir/09-consultant-review.md" 2>/dev/null)"
           [ -n "$reason" ] || reason="changes requested"
-          specrelay::transitions::request_changes "$root" "$task_id" "$reason" "$provider" || return 1
+          if ! specrelay::transitions::request_changes "$root" "$task_id" "$reason" "$provider"; then
+            specrelay::timeline::finish "$task_dir" reviewer_transition failed
+            return 1
+          fi
+          specrelay::timeline::finish "$task_dir" reviewer_transition passed
           specrelay::out::log "[reviewer] task '$task_id': changes requested -> CHANGES_REQUESTED"
           ;;
         CHANGES_REQUESTED)
+          specrelay::timeline::finish "$task_dir" reviewer_transition passed
           specrelay::out::log "[reviewer] task '$task_id': changes already requested -> CHANGES_REQUESTED (reviewer enacted the transition; runner stops cleanly)"
           ;;
         *)
+          specrelay::timeline::finish "$task_dir" reviewer_transition failed
           specrelay::out::err "[reviewer] task '$task_id': reviewer decided REQUEST_CHANGES but task is in unexpected state '$current'; refusing to transition"
           return 1
           ;;
       esac
       ;;
     *)
+      specrelay::timeline::finish "$task_dir" reviewer_transition failed
       specrelay::out::err "[reviewer] task '$task_id': unrecognized decision '$decision'; refusing to transition"
       return 1
       ;;
@@ -1322,6 +1503,46 @@ specrelay::workflow::drive() {
 # An explicit, per-invocation override (SPECRELAY_ALLOW_ENGINE_MISMATCH=1)
 # exists for deliberate human recovery; it is never the default and always
 # logs that it was used.
+# --- execution timeline: invocation lifecycle + final report (spec 0019) ----
+
+# specrelay::workflow::_report_mode <exit-code>
+# "final" when the task reached a genuinely terminal-for-now outcome
+# (READY_FOR_HUMAN_REVIEW, BLOCKED, or the max-iterations stop); "partial"
+# for every other exit (manual-reviewer stop, a provider failure leaving the
+# task recoverable, or an internal safety-limit/usage error) — spec 0019,
+# "Terminal and Non-Terminal Reports".
+specrelay::workflow::_report_mode() {
+  case "$1" in
+    0|3|5) printf 'final\n' ;;
+    *) printf 'partial\n' ;;
+  esac
+}
+
+# specrelay::workflow::_finalize_invocation <root> <task-id> <invocation-id> <exit-code>
+# Times the `finalization` phase, closes out the invocation record, and
+# prints the (final or partial) execution-timeline report. Never mutates
+# task state; a missing python3/timeline module degrades to a silent no-op
+# (instrumentation must never break the workflow it observes).
+specrelay::workflow::_finalize_invocation() {
+  local root="$1" task_id="$2" invocation_id="$3" rc="$4" task_dir state_file final_state mode
+  task_dir="$(specrelay::task::dir "$root" "$task_id")"
+  state_file="$(specrelay::state::path "$task_dir")"
+  final_state="$(specrelay::state::canonical "$state_file" 2>/dev/null || true)"
+  [ -n "$final_state" ] || final_state="unknown"
+
+  # finalization is timed and closed out BEFORE the report is rendered: the
+  # report is a read-only snapshot of the event log, so it can never include
+  # its own still-open "finalization" phase — closing it first is what makes
+  # the printed/derived report show finalization as a complete, non-empty
+  # entry rather than a self-referential "interrupted" one.
+  specrelay::timeline::start "$task_dir" finalization
+  specrelay::timeline::invocation_finish "$task_dir" "$invocation_id" "$final_state" "$rc"
+  specrelay::timeline::finish "$task_dir" finalization passed
+
+  mode="$(specrelay::workflow::_report_mode "$rc")"
+  specrelay::timeline::render "$root" "$task_dir" "$task_id" "$mode"
+}
+
 specrelay::workflow::assert_engine_compat() {
   local state_file="$1" task_ev cur_ev
   [ -f "$state_file" ] || return 0
@@ -1443,8 +1664,15 @@ specrelay::workflow::resume() {
   if ! specrelay::lock::acquire "$root" "$task_id"; then
     return 1
   fi
+
+  local invocation_id initial_state
+  invocation_id="$(specrelay::timeline::next_invocation_id "$task_dir")"
+  initial_state="$(specrelay::state::canonical "$(specrelay::state::path "$task_dir")" 2>/dev/null || true)"
+  specrelay::timeline::invocation_start "$task_dir" "$invocation_id" "${initial_state:-unknown}"
+
   specrelay::workflow::drive "$root" "$task_id"
   local rc=$?
+  specrelay::workflow::_finalize_invocation "$root" "$task_id" "$invocation_id" "$rc"
   specrelay::lock::release "$root" "$task_id"
   return "$rc"
 }
@@ -1486,23 +1714,41 @@ specrelay::workflow::run() {
     return 1
   fi
 
+  # Invocation/phase timing (spec 0019) is recorded ONLY once the task
+  # directory legitimately exists — never before: a brand-new task's
+  # directory does not exist yet at this point, and specrelay::transitions::create
+  # below refuses if it already does. Timeline instrumentation must never be
+  # the thing that creates it (that would corrupt the exists-check).
+  local invocation_id was_new=0
+  invocation_id="$(specrelay::timeline::next_invocation_id "$task_dir")"
+
   if [ ! -d "$task_dir" ]; then
+    was_new=1
     specrelay::out::log "[specrelay] creating task '$task_id' from spec: $spec_rel"
     if ! specrelay::transitions::create "$root" "$task_id" "$spec_rel" "$allow_dirty"; then
       specrelay::lock::release "$root" "$task_id"
       return 1
     fi
     specrelay::workflow::seed_task_from_spec "$root" "$task_id" "$spec_abs"
+    specrelay::timeline::invocation_start "$task_dir" "$invocation_id" DRAFT
+    specrelay::timeline::start "$task_dir" task_initialization
+    specrelay::timeline::finish "$task_dir" task_initialization passed
   else
     specrelay::out::log "[specrelay] resuming existing task '$task_id'"
+    specrelay::timeline::invocation_start "$task_dir" "$invocation_id" \
+      "$(specrelay::state::canonical "$(specrelay::state::path "$task_dir")" 2>/dev/null || echo unknown)"
+    specrelay::timeline::start "$task_dir" task_initialization
     if ! specrelay::workflow::assert_engine_compat "$(specrelay::state::path "$task_dir")"; then
+      specrelay::timeline::finish "$task_dir" task_initialization failed
       specrelay::lock::release "$root" "$task_id"
       return 1
     fi
     if ! specrelay::workflow::assert_schema_compat "$(specrelay::state::path "$task_dir")"; then
+      specrelay::timeline::finish "$task_dir" task_initialization failed
       specrelay::lock::release "$root" "$task_id"
       return 1
     fi
+    specrelay::timeline::finish "$task_dir" task_initialization passed
   fi
 
   local state_file current
@@ -1520,10 +1766,14 @@ specrelay::workflow::run() {
   case "$current" in
     DRAFT|WAITING_FOR_HUMAN)
       specrelay::out::log "[specrelay] approving task '$task_id' (this 'specrelay run' invocation IS the human approval — see docs/engine-parity.md, 'Approval semantics')"
+      specrelay::timeline::start "$task_dir" task_approval
       if ! specrelay::transitions::approve "$root" "$task_id"; then
+        specrelay::timeline::finish "$task_dir" task_approval failed
+        specrelay::workflow::_finalize_invocation "$root" "$task_id" "$invocation_id" 1
         specrelay::lock::release "$root" "$task_id"
         return 1
       fi
+      specrelay::timeline::finish "$task_dir" task_approval passed
       ;;
   esac
 
@@ -1534,6 +1784,7 @@ specrelay::workflow::run() {
   specrelay::workflow::drive "$root" "$task_id"
   rc=$?
 
+  specrelay::workflow::_finalize_invocation "$root" "$task_id" "$invocation_id" "$rc"
   specrelay::lock::release "$root" "$task_id"
   return "$rc"
 }

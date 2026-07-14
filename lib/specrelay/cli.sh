@@ -95,6 +95,14 @@ Workflow engine:
                              EXECUTOR_RUNNING -> READY_FOR_REVIEW submit
                              transition (mirrors the legacy workflow's
                              authorize-submit.sh; see docs/engine-parity.md).
+  task timeline <task-ref> [--json]
+                             Read-only execution-timeline report: total wall
+                             time, per-phase durations, invocation/resume
+                             history, the verification ledger, duplicate-work
+                             detection, slowest phases, and phase-budget
+                             warnings. Never mutates task state. A legacy
+                             task with no recorded timeline data is reported
+                             honestly rather than fabricated.
 
 <task-ref> accepts a full task id, a unique numeric prefix, or a unique
 partial slug (e.g. 'specrelay show 0084').
@@ -443,6 +451,114 @@ specrelay::cli::task_show() {
   echo "Last decision: $last_decision"
   echo "Human review status: $human_status"
   echo "Task runtime path: $task_dir"
+
+  specrelay::cli::_task_show_timeline_summary "$task_dir"
+}
+
+# specrelay::cli::_task_show_timeline_summary <task-dir>
+# Read-only (spec 0019, "Task Show Integration"). A legacy task with no
+# recorded timeline data prints an honest one-liner rather than fabricating
+# a summary.
+specrelay::cli::_task_show_timeline_summary() {
+  local task_dir="$1" blob recorded
+  blob="$(specrelay::timeline::show_json "$task_dir" 2>/dev/null)"
+  recorded="$(printf '%s' "$blob" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+print("no" if d.get("recorded") is False else "yes")' 2>/dev/null)"
+  if [ "$recorded" != "yes" ]; then
+    echo "Execution timeline: not recorded"
+    return 0
+  fi
+  printf '%s' "$blob" | python3 -c '
+import json, sys
+
+def fmt(seconds):
+    if seconds is None:
+        return "n/a"
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return "%ds" % seconds
+    m, s = divmod(seconds, 60)
+    if m < 60:
+        return "%dm %ds" % (m, s)
+    h, m = divmod(m, 60)
+    return "%dh %dm %ds" % (h, m, s)
+
+d = json.load(sys.stdin)
+full_suite = next((v["count"] for v in d.get("verification_ledger", []) if v["operation"] == "test_full"), 0)
+mr = d.get("marker_recovery", {})
+print("Total wall time: %s" % fmt(d.get("wall_seconds")))
+print("Invocation count: %d" % d.get("invocation_count", 0))
+print("Resume count: %d" % d.get("resume_count", 0))
+print("Full-suite runs: %d" % full_suite)
+print("Reviewer marker recovery: %s" % (mr.get("outcome") if mr.get("attempted") else "not used"))
+print("Budget warnings: %d" % len(d.get("budget_warnings", [])))
+' 2>/dev/null
+  echo "Timeline: $task_dir/20-execution-timeline.json"
+}
+
+# specrelay::cli::task_timeline <task-ref> [--json]
+# Read-only (spec 0019, "CLI Inspection"): prints the current execution-
+# timeline report WITHOUT mutating any task file (it recomputes the derived
+# summary from the append-only event log — a pure read+derive, never a
+# write to task state). Fails clearly for an unknown task; a legacy task
+# with no recorded timeline data remains inspectable (an honest "not
+# recorded" report rather than an error).
+specrelay::cli::task_timeline() {
+  local root ref="" as_json=0 task_id task_dir
+  root="$(specrelay::cli::require_project_root)" || return 1
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *)
+        if [ -n "$ref" ]; then specrelay::out::err "too many arguments"; return 2; fi
+        ref="$1"; shift ;;
+    esac
+  done
+  if [ -z "$ref" ]; then
+    specrelay::out::err "usage: specrelay task timeline <task-ref> [--json]"
+    return 2
+  fi
+
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+  task_dir="$(specrelay::task::dir "$root" "$task_id")"
+
+  if [ "$as_json" -eq 1 ]; then
+    specrelay::timeline::show_json "$task_dir"
+    return 0
+  fi
+
+  local blob recorded
+  blob="$(specrelay::timeline::show_json "$task_dir" 2>/dev/null)"
+  recorded="$(printf '%s' "$blob" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+print("no" if d.get("recorded") is False else "yes")' 2>/dev/null)"
+  if [ "$recorded" != "yes" ]; then
+    echo "Execution timeline: not recorded for task '$task_id' (legacy task, or no invocation has run yet)."
+    return 0
+  fi
+
+  # READ-ONLY: report (not render) recomputes the summary in memory from the
+  # durable event log and prints it, but never writes
+  # 20-execution-timeline.json — 'task timeline' never mutates task files.
+  # "final" only for a task that has actually reached a terminal-for-now
+  # state (READY_FOR_HUMAN_REVIEW / BLOCKED); anything else can still
+  # progress automatically, so it is reported honestly as partial.
+  local current mode
+  current="$(specrelay::state::canonical "$(specrelay::state::path "$task_dir")" 2>/dev/null || true)"
+  case "$current" in
+    READY_FOR_HUMAN_REVIEW|BLOCKED) mode=final ;;
+    *) mode=partial ;;
+  esac
+  specrelay::timeline::report "$root" "$task_dir" "$task_id" "$mode"
 }
 
 specrelay::cli::_status_row() {
@@ -676,8 +792,9 @@ specrelay::cli::task_dispatch() {
     block) specrelay::cli::task_block "$@" ;;
     recover) specrelay::cli::task_recover "$@" ;;
     authorize-submit) specrelay::cli::task_authorize_submit "$@" ;;
+    timeline) specrelay::cli::task_timeline "$@" ;;
     "")
-      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit>"
+      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline>"
       return 2
       ;;
     *)

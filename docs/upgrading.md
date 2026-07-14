@@ -97,6 +97,34 @@ backward-compatible; a major-version change is not. See
 [versioning.md](versioning.md) for the exact rules and the deliberate,
 per-invocation override used for human-driven recovery.
 
+## Upgrading the AI Reviewer sub-agent template
+
+`templates/claude/agents/ai-reviewer.md` (the bundled Claude reviewer
+sub-agent template — see [providers.md](providers.md)) can change between
+SpecRelay versions, e.g. spec 0019's risk-based Reviewer Policy v2 rewrite.
+Upgrading the **tool** (paths A/B above) always refreshes the bundled template
+itself, but it does **not** silently touch a project's own installed copy at
+`.claude/agents/ai-reviewer.md` — `specrelay init` (and its internal
+`--force`-free re-run) never overwrites a file that already exists there,
+customized or not. To pick up a newer bundled template in a project that
+already has one installed:
+
+```sh
+# See what's different first (never blindly overwrite a customization):
+diff <specrelay-home>/templates/claude/agents/ai-reviewer.md .claude/agents/ai-reviewer.md
+
+# Then, deliberately, either:
+cp <specrelay-home>/templates/claude/agents/ai-reviewer.md .claude/agents/ai-reviewer.md
+# or re-apply your own customizations on top of the new template by hand.
+```
+
+`specrelay doctor` distinguishes **template available** (this SpecRelay
+installation ships the template), **project reviewer installed** (present and
+byte-identical to the bundled template), **project reviewer missing**, and
+**project reviewer installed and CUSTOMIZED** (present but differs from the
+bundled template) — so an upgrade never silently claims a project is using
+the newest template when it is actually running an older or hand-edited copy.
+
 ## Uninstalling
 
 Uninstalling removes the SpecRelay **tool** from your prefix. It does not, and

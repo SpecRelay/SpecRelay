@@ -11,7 +11,28 @@
 #                        touch=<0|1> (default 1, appends a line to the
 #                        configured fixture file to produce a real diff)
 #   reviewer plan keys:  exit=<0|N> (default 0),
-#                        decision=<accept|request_changes> (default accept)
+#                        decision=<accept|request_changes|missing_marker> (default
+#                        accept). missing_marker (spec 0019, "Smart Marker
+#                        Recovery" fixtures): writes review artifacts as usual
+#                        (per marker_artifacts below) but returns rc=2 with NO
+#                        decision on stdout, exactly like a real reviewer whose
+#                        output was complete except for the final DECISION line.
+#                        marker_artifacts=<accept|request_changes|missing|empty|conflicting>
+#                        (default accept when decision=missing_marker): controls
+#                        which artifacts exist for the marker-recovery fixture:
+#                          accept          -> 09+10 written (recovery should succeed as ACCEPT)
+#                          request_changes -> 09+11 written (recovery should succeed as REQUEST_CHANGES)
+#                          missing         -> no artifacts at all (recovery forbidden)
+#                          empty           -> 09 written but empty (recovery forbidden)
+#                          conflicting     -> 09 contains BOTH Decision: ACCEPT and
+#                                             Decision: REQUEST_CHANGES (recovery forbidden)
+#   verify_ops=<op1+op2+...>  (spec 0019, verification ledger fixtures): each
+#                        '+'-separated token is a classified operation name
+#                        (test_focused|test_targeted|test_full|smoke|doctor|
+#                        version); each is recorded as a deterministic
+#                        verification event for this round's role, letting
+#                        tests exercise ledger counting/duplicate-detection
+#                        without any real captured provider transcript.
 #
 # Env hooks:
 #   SPECRELAY_FAKE_EXECUTOR_PLAN   path to the executor plan file (optional)
@@ -138,6 +159,25 @@ specrelay::provider::fake::_record_invocation() {
   fi
 }
 
+# specrelay::provider::fake::_record_verify_ops <plan-line> <role> <task-dir>
+# Deterministic verification-ledger fixture (spec 0019): records one
+# verification event per '+'-separated `verify_ops=` token, so tests can
+# exercise classification/duplicate-detection without a real provider
+# transcript. A no-op when the plan line has no verify_ops field.
+specrelay::provider::fake::_record_verify_ops() {
+  local plan_line="$1" role="$2" task_dir="$3" ops token op reason
+  ops="$(specrelay::provider::fake::_field "$plan_line" verify_ops "")"
+  [ -n "$ops" ] || return 0
+  local IFS='+'
+  for token in $ops; do
+    [ -n "$token" ] || continue
+    op="${token%%@*}"
+    reason=""
+    case "$token" in *@*) reason="${token#*@}" ;; esac
+    specrelay::verification::record_op "$task_dir" "$role" "$op" "fake:$op" "1" "0" "$reason" "fake-plan"
+  done
+}
+
 specrelay::provider::fake::_plan_line() {
   local file="$1" round="$2"
   [ -n "$file" ] && [ -f "$file" ] || { printf ''; return 0; }
@@ -179,6 +219,7 @@ specrelay::provider::fake::executor_run() {
   exit_code="$(specrelay::provider::fake::_field "$plan_line" exit "0")"
   outputs="$(specrelay::provider::fake::_field "$plan_line" outputs "1")"
   touch_flag="$(specrelay::provider::fake::_field "$plan_line" touch "1")"
+  specrelay::provider::fake::_record_verify_ops "$plan_line" executor "$task_dir"
 
   # Test-only: widen the race window for concurrency tests (see
   # concurrent_test.sh) by sleeping AFTER the claim has already happened
@@ -226,6 +267,7 @@ specrelay::provider::fake::reviewer_run() {
   plan_line="$(specrelay::provider::fake::_plan_line "${SPECRELAY_FAKE_REVIEWER_PLAN:-}" "$round")"
   exit_code="$(specrelay::provider::fake::_field "$plan_line" exit "0")"
   decision="$(specrelay::provider::fake::_field "$plan_line" decision "accept")"
+  specrelay::provider::fake::_record_verify_ops "$plan_line" reviewer "$task_dir"
 
   # Stream the reviewer's log lines live to fd 2 and capture them raw to
   # 15-reviewer-stdout.txt. The ACCEPT/REQUEST_CHANGES decision below is
@@ -237,6 +279,17 @@ specrelay::provider::fake::reviewer_run() {
 
   if [ "$exit_code" != "0" ]; then
     return "$exit_code"
+  fi
+
+  # missing_marker (spec 0019, "Smart Marker Recovery" fixtures): writes the
+  # artifact combination named by marker_artifacts=, then returns rc=2 with
+  # NO decision on stdout — exactly the "provider succeeded but the marker
+  # itself is missing" signal specrelay::provider::claude::reviewer_run
+  # produces for a real reviewer (see providers/provider.sh's contract).
+  if [ "$decision" = "missing_marker" ]; then
+    specrelay::provider::fake::_write_marker_fixture "$task_dir" "$round" \
+      "$(specrelay::provider::fake::_field "$plan_line" marker_artifacts "accept")"
+    return 2
   fi
 
   printf 'Fake reviewer notes for round %s.\n' "$round" > "$task_dir/09-consultant-review.md"
@@ -261,4 +314,75 @@ specrelay::provider::fake::reviewer_run() {
     echo "REQUEST_CHANGES"
   fi
   return 0
+}
+
+# specrelay::provider::fake::_write_marker_fixture <task-dir> <round> <kind>
+# Writes the artifact combination deterministic marker-recovery tests need
+# (spec 0019, "Smart Marker Recovery" / "When Smart Recovery Is Forbidden").
+# Never writes the DECISION marker itself — that is exactly what is missing.
+specrelay::provider::fake::_write_marker_fixture() {
+  local task_dir="$1" round="$2" kind="$3"
+  case "$kind" in
+    accept)
+      printf 'Fake reviewer notes for round %s.\nDecision: ACCEPT\n' "$round" > "$task_dir/09-consultant-review.md"
+      printf 'Fake business summary for round %s.\n' "$round" > "$task_dir/10-business-summary.md"
+      rm -f "$task_dir/11-next-executor-prompt.md"
+      ;;
+    request_changes)
+      printf 'Fake reviewer notes for round %s.\nDecision: REQUEST_CHANGES\n' "$round" > "$task_dir/09-consultant-review.md"
+      printf 'Fake next executor prompt for round %s.\n' "$round" > "$task_dir/11-next-executor-prompt.md"
+      rm -f "$task_dir/10-business-summary.md"
+      ;;
+    missing)
+      rm -f "$task_dir/09-consultant-review.md" "$task_dir/10-business-summary.md" "$task_dir/11-next-executor-prompt.md"
+      ;;
+    empty)
+      : > "$task_dir/09-consultant-review.md"
+      rm -f "$task_dir/10-business-summary.md" "$task_dir/11-next-executor-prompt.md"
+      ;;
+    conflicting)
+      printf 'Fake reviewer notes for round %s.\nDecision: ACCEPT\nDecision: REQUEST_CHANGES\n' "$round" > "$task_dir/09-consultant-review.md"
+      printf 'Fake business summary for round %s.\n' "$round" > "$task_dir/10-business-summary.md"
+      ;;
+    *)
+      : # unrecognized kind: leave artifacts as-is (test fixture error, not a runtime case)
+      ;;
+  esac
+}
+
+# specrelay::provider::fake::reviewer_recover_marker <root> <task-dir>
+#     <narrow-prompt-file> <label> <model> <agent>
+# Deterministic corrective-attempt fixture (spec 0019, "Corrective Attempt
+# Limits"). Reads the structured `Decision: ...` field FROM
+# 09-consultant-review.md itself (mirroring the real recovery contract:
+# marker_recovery.sh only invokes this at all once
+# specrelay::marker_recovery::eligible has already confirmed a clear,
+# consistent decision) — this fixture never invents a decision the caller
+# did not already establish, and it writes no repository files, exactly like
+# the real corrective attempt.
+specrelay::provider::fake::reviewer_recover_marker() {
+  local root="$1" task_dir="$2" prompt_file="$3" label="${4:-reviewer-recovery:fake}" model="${5:-provider-default}" agent="${6:-none}"
+  local review="$task_dir/09-consultant-review.md" field
+
+  {
+    echo "[fake-reviewer-recovery] prompt file: $prompt_file"
+    echo "[fake-reviewer-recovery] resolved: provider=fake model=$model agent=$agent"
+  } >> "$task_dir/21-marker-recovery-stdout.txt" 2>&1 || true
+
+  if [ -n "${SPECRELAY_FAKE_MARKER_RECOVERY_FAIL:-}" ]; then
+    specrelay::out::err "$label: simulated marker-recovery failure (SPECRELAY_FAKE_MARKER_RECOVERY_FAIL=1)"
+    return 1
+  fi
+
+  field="$(grep -E '^Decision:[[:space:]]*(ACCEPT|REQUEST_CHANGES)[[:space:]]*$' "$review" 2>/dev/null | tail -n1 | sed -E 's/^Decision:[[:space:]]*//; s/[[:space:]]*$//')"
+  case "$field" in
+    ACCEPT|REQUEST_CHANGES)
+      printf '%s\n' "$field"
+      return 0
+      ;;
+    *)
+      specrelay::out::err "$label: no structured decision found to recover"
+      return 1
+      ;;
+  esac
 }

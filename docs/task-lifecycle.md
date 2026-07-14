@@ -218,11 +218,47 @@ From `READY_FOR_REVIEW` the reviewer decides exactly one of:
   continuation of the executor's session," and instructs it to independently
   inspect the real working tree (`git status --short`, `git diff`) rather than
   trust the executor's narrative.
-- **Decision protocol.** The reviewer must end with exactly one verbatim line,
-  `DECISION: ACCEPT` or `DECISION: REQUEST_CHANGES`. The engine reads the last
-  line: `ACCEPT` drives `accept` (→ `READY_FOR_HUMAN_REVIEW`),
-  `REQUEST_CHANGES` drives `request_changes` (→ `CHANGES_REQUESTED`). Any
-  unrecognized decision is refused and the task stays `READY_FOR_REVIEW`.
+- **Decision protocol (spec 0019, mandatory marker).** The reviewer must end
+  with exactly one decision marker: `DECISION: ACCEPT` or
+  `DECISION: REQUEST_CHANGES`, uppercase, on its own line, and the **final
+  non-empty line** of its entire output. A marker that is lowercase, not the
+  final line, duplicated, or contradicted by a second marker is never
+  accepted — see `lib/specrelay/marker.sh`. `ACCEPT` drives `accept` (→
+  `READY_FOR_HUMAN_REVIEW`), `REQUEST_CHANGES` drives `request_changes` (→
+  `CHANGES_REQUESTED`). Before applying either transition the engine also
+  checks **decision consistency**: `ACCEPT` requires non-empty
+  `09-consultant-review.md` + `10-business-summary.md`; `REQUEST_CHANGES`
+  requires non-empty `09-consultant-review.md` +
+  `11-next-executor-prompt.md`. A conflicting artifact/marker combination is
+  refused rather than silently applied.
+- **Smart marker-only recovery (spec 0019).** If the reviewer provider exits
+  successfully but produces no valid marker, the engine does **not**
+  automatically repeat the whole review. It checks whether the already-written
+  artifacts strongly indicate the decision was already reached (a structured
+  `Decision: ACCEPT` / `Decision: REQUEST_CHANGES` field inside
+  `09-consultant-review.md`, plus the artifact the decision requires). If so,
+  it runs **one** narrow corrective attempt (`lib/specrelay/marker_recovery.sh`):
+  a prompt that reads only the already-written artifacts and asks for exactly
+  one output line, never the original review prompt, never repository tools
+  (the real Claude adapter omits `--dangerously-skip-permissions` for this one
+  call, so a tool call requiring approval is refused by the CLI itself — see
+  `providers/claude.sh`). At most one corrective attempt is made; a failed
+  correction leaves the task in `REVIEWER_RUNNING` exactly like any other
+  reviewer failure. Recovery-forbidden cases (missing/empty/contradictory
+  artifacts, an unclear decision, a `REQUEST_CHANGES` decision missing
+  `11-next-executor-prompt.md`, or a provider failure that happened before any
+  artifacts were written) fall through to ordinary resume behavior. See
+  [verification-and-timeline.md](verification-and-timeline.md).
+- **Risk-based, bounded verification (spec 0019).** The reviewer is not a
+  second executor: it classifies the change's risk (low/medium/high/critical),
+  inspects Executor evidence and the real working tree, and independently
+  verifies only the highest-risk claims, within a default verification budget
+  (focused/targeted/full-suite/smoke run limits — `specrelay doctor` shows the
+  effective policy). Running the full suite requires a recorded reason. See
+  [verification-and-timeline.md](verification-and-timeline.md) and the
+  reviewer template (`templates/claude/agents/ai-reviewer.md`).
+- Any unrecognized decision is refused and the task stays `READY_FOR_REVIEW`
+  (or `REVIEWER_RUNNING` for an automated reviewer, per spec 0011).
 - **State-aware, single transition.** The runner applies the decision's
   transition **only when the task is still `READY_FOR_REVIEW`**. A real reviewer
   agent runs under `claude --print --dangerously-skip-permissions` and can
@@ -391,6 +427,31 @@ task:
   `recovery_reason`
 - Block: `blocked_at`, `blocked_by`, `blocked_reason`
 
+**Captured once, at the first executor iteration** (never overwritten
+thereafter — see `docs/configuration.md`):
+
+- `roles_effective` — normalized executor/reviewer provider/model/agent
+- `context_effective` — normalized executor/reviewer context adapter/required
+- `verification_policy_effective` — the effective bounded-verification policy
+  (spec 0019; see `docs/verification-and-timeline.md`)
+
 `state.json` lives under the task's runtime directory
 (`.specrelay-runs/tasks/<task-id>/state.json` by default) and must never be
 edited by hand — every state change goes through an audited transition.
+
+## 12. Execution timeline and verification ledger (spec 0019)
+
+Every `run`/`resume` invocation is timed (task initialization, approval,
+executor/reviewer context preflight, provider execution, evidence capture,
+submission, marker recovery, transition, finalization) into the task's own
+append-only event log, `<task-runtime-path>/20-execution-events.jsonl`. The
+derived, machine-readable summary lives at
+`<task-runtime-path>/20-execution-timeline.json` and is regenerated (never
+hand-merged) on every finalization. Timeline data survives every resume: each
+invocation is retained separately, so `Invocations:` / `Resume count:` and the
+per-invocation history are always honest even across many interrupted/resumed
+attempts. A final human-readable execution-timeline table, verification
+ledger, duplicate-work report, slowest-phases list, and phase-budget warnings
+are printed at the end of every completed or explicit-stop invocation. See
+[verification-and-timeline.md](verification-and-timeline.md) for the full
+design and `specrelay task timeline <task-ref>` for read-only inspection.

@@ -70,6 +70,31 @@ rules:
       - test/test_selection_test.sh
       - test/release_readiness_test.sh
 
+  - id: verification-and-timeline
+    paths:
+      - lib/specrelay/verification.sh
+      - lib/specrelay/timeline.sh
+      - lib/specrelay/marker.sh
+      - lib/specrelay/marker_recovery.sh
+      - lib/specrelay/py/timeline_lib.py
+      - lib/specrelay/config.sh
+      - lib/specrelay/workflow.sh
+      - lib/specrelay/doctor.sh
+      - lib/specrelay/cli.sh
+      - lib/specrelay/providers/**
+      - templates/claude/agents/ai-reviewer.md
+    tests:
+      - test/verification_policy_test.sh
+      - test/reviewer_policy_template_test.sh
+      - test/decision_marker_test.sh
+      - test/marker_recovery_test.sh
+      - test/execution_timeline_test.sh
+      - test/verification_ledger_test.sh
+      - test/phase_budgets_test.sh
+      - test/task_timeline_cli_test.sh
+      - test/workflow_fake_provider_test.sh
+      - test/ai_reviewer_agent_test.sh
+
 # always: a deliberately SMALL set of tests that run on every change-aware
 # selection (mapped or documentation-only). Reason: release_readiness_test.sh
 # guards the release-readiness contract (CI shape, smoke/version/doctor

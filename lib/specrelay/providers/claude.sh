@@ -293,17 +293,71 @@ specrelay::provider::claude::reviewer_run() {
   # modes 15-reviewer-stdout.txt holds human-readable text — raw JSON is never
   # written there — so the explicit DECISION marker stays parseable. The
   # decision travels on THIS function's own stdout, never polluted by the live
-  # rendering (which is fd 2 only).
+  # rendering (which is fd 2 only). specrelay::marker::parse (spec 0019, marker.sh)
+  # enforces the full contract: exactly one marker, uppercase, on its own line,
+  # and the final non-empty line — never inferred from prose.
   out="$(cat "$task_dir/15-reviewer-stdout.txt")"
-  if printf '%s\n' "$out" | grep -qE 'DECISION:[[:space:]]*ACCEPT[[:space:]]*$'; then
-    echo "ACCEPT"
-    return 0
-  fi
-  if printf '%s\n' "$out" | grep -qE 'DECISION:[[:space:]]*REQUEST_CHANGES[[:space:]]*$'; then
-    echo "REQUEST_CHANGES"
+  local decision
+  if decision="$(specrelay::marker::parse "$out")"; then
+    printf '%s\n' "$decision"
     return 0
   fi
 
-  specrelay::out::err "reviewer produced no explicit 'DECISION: ACCEPT|REQUEST_CHANGES' marker; refusing to infer a decision from prose"
+  # A provider that exited 0 but produced no valid marker is NOT the same
+  # failure as a crashed process (rc=1 above): it may still have written
+  # complete review artifacts, which is exactly the case smart marker recovery
+  # (spec 0019, marker_recovery.sh) exists to resolve without repeating the
+  # whole review. rc=2 is that distinguishable signal; workflow.sh's reviewer
+  # loop is the only caller that interprets it.
+  specrelay::out::err "reviewer produced no valid 'DECISION: ACCEPT|REQUEST_CHANGES' marker; refusing to infer a decision from prose"
+  return 2
+}
+
+# specrelay::provider::claude::reviewer_recover_marker <root> <task-dir>
+#     <narrow-prompt-file> <label> <model> <agent>
+# The ONE corrective, marker-only attempt (spec 0019, "Smart Marker
+# Recovery"). Deliberately never passes `--dangerously-skip-permissions` and
+# never selects the `--agent ai-reviewer` sub-agent (that sub-agent's whole
+# purpose is the FULL review contract, not this narrow follow-up). Without
+# that flag, `claude --print` has no interactive channel to grant permission
+# for a tool call (see this file's own header: the flag exists ONLY because
+# `--print` cannot answer an interactive permission prompt) — so any attempt
+# to invoke a repository tool (Bash/Read/Edit/Write/...) is refused by the
+# CLI itself, not merely discouraged by prompt text. This is the same
+# documented mechanism already governing every other `--print` invocation in
+# this adapter, reused here as the enforcement boundary rather than a new,
+# unverified flag guess.
+specrelay::provider::claude::reviewer_recover_marker() {
+  local root="$1" task_dir="$2" prompt_file="$3" label="${4:-reviewer-recovery:claude}" model="${5:-provider-default}" agent="${6:-none}"
+  local bin prompt rc out model_args
+  bin="$(specrelay::provider::claude::_bin)"
+
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    specrelay::out::err "'$bin' was not found on PATH"
+    return 1
+  fi
+  if ! model_args="$(specrelay::provider::claude::_resolve_model_args "$label" "$bin" "$model")"; then
+    return 1
+  fi
+
+  prompt="$(cat "$prompt_file")"
+
+  # shellcheck disable=SC2086  # model_args is controlled, word-split on purpose
+  specrelay::provider::run_streamed "$label" \
+    "$task_dir/21-marker-recovery-stdout.txt" "$task_dir/21-marker-recovery-stderr.txt" "$root" -- \
+    "$bin" --print $model_args "$prompt"
+  rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    return "$rc"
+  fi
+
+  out="$(cat "$task_dir/21-marker-recovery-stdout.txt")"
+  local decision
+  if decision="$(specrelay::marker::parse "$out")"; then
+    printf '%s\n' "$decision"
+    return 0
+  fi
+  specrelay::out::err "marker-recovery attempt produced no valid decision marker"
   return 1
 }

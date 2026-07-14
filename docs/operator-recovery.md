@@ -169,6 +169,15 @@ This is exactly why `specrelay task recover --to` supports only
 get back out of `EXECUTOR_RUNNING`, but an interrupted **reviewer** just gets
 re-run from the state it was already in.
 
+**A missing decision marker is not the same thing as an interruption** (spec
+0019). If the reviewer provider ran to completion but forgot the final
+`DECISION:` line, SpecRelay does not treat that as a crash to resume from
+scratch — it attempts one narrow, marker-only corrective read of the
+already-written review artifacts first (see
+[verification-and-timeline.md](verification-and-timeline.md), "Smart
+marker-only recovery"). Only if that is unsafe or fails does the task behave
+like an ordinary interrupted/failed reviewer round above.
+
 ## 5. When to `block` instead
 
 Recovery assumes the work can be retried. If the executor **genuinely cannot

@@ -418,6 +418,76 @@ task rather than resuming the old one.
   machine — the automated loop stops at `READY_FOR_HUMAN_REVIEW` and does not
   commit or publish on its own. This key documents that policy; keep it `true`.
 
+### `verification.*` (spec 0019, bounded verification policy)
+
+- **Purpose:** the default number of times the Executor and Reviewer may run
+  each verification operation (focused test, targeted/change-aware test, full
+  standalone suite, smoke, doctor, version) before an ADDITIONAL run needs a
+  recorded reason. This is a default policy, not an absolute ban — see
+  [verification-and-timeline.md](verification-and-timeline.md).
+- **Type:** a mapping with optional `executor:` and `reviewer:` subsections.
+- **Default** (used entirely when `verification:` is omitted):
+
+  ```yaml
+  verification:
+    executor:
+      full_suite_max_runs: 1
+      smoke_max_runs: 1
+      doctor_max_runs: 1
+      version_max_runs: 1
+    reviewer:
+      default_mode: targeted
+      focused_max_runs: 3
+      targeted_max_runs: 1
+      full_suite_max_runs: 0
+      smoke_max_runs: 0
+      doctor_max_runs: 1
+      version_max_runs: 1
+  ```
+
+- **Validation:** every `*_max_runs` value must be a non-negative integer;
+  `reviewer.default_mode` must be one of `focused`, `targeted`, `full`;
+  unknown keys under `verification:`, `verification.executor:`, or
+  `verification.reviewer:` are rejected. A structurally invalid section is a
+  mandatory `specrelay doctor` failure (every run with it would refuse before
+  role execution).
+- **Inspection:** `specrelay doctor` prints the effective policy for both
+  roles. The effective policy is also captured durably into a task's
+  `state.json` (`verification_policy_effective`) at its first executor
+  iteration, so a later project-config change never silently changes the
+  budget an in-flight task's Reviewer is held to mid-review.
+- **Note:** these limits are enforced as **prompt-level policy plus
+  observation/reporting** (the Executor/Reviewer prompts state the budget and
+  require a recorded reason for exceeding it; the verification ledger reports
+  what actually ran and flags unjustified duplicates) — SpecRelay does not
+  kill arbitrary agent-issued commands to enforce this, per spec 0019's "Soft
+  Limit versus Hard Refusal."
+
+### `performance.phase_budgets.*` (spec 0019, phase budgets)
+
+- **Purpose:** SOFT (advisory) per-phase duration budgets used only to
+  produce warnings in the final execution-timeline report. Exceeding a budget
+  never alters task state.
+- **Type:** a mapping of `<phase>_seconds: <non-negative integer>`.
+- **Default:**
+
+  ```yaml
+  performance:
+    phase_budgets:
+      executor_context_preflight_seconds: 30
+      executor_evidence_capture_seconds: 120
+      reviewer_context_preflight_seconds: 30
+      reviewer_provider_seconds: 900
+      reviewer_marker_recovery_seconds: 60
+      finalization_seconds: 30
+  ```
+
+- **Validation:** every value must be a non-negative integer; unknown keys
+  under `performance:` or `performance.phase_budgets:` are rejected.
+- **Note:** Executor provider execution intentionally has no strict default
+  budget (implementation complexity varies too widely); it may still get an
+  advisory display in the timeline report.
+
 ## Config validation behavior
 
 Config loading is intentionally minimal and safe. When SpecRelay validates

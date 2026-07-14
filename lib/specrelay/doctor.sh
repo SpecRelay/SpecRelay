@@ -271,6 +271,63 @@ specrelay::doctor::_hook_has_nonascii_shell_punct() {
   return 1
 }
 
+# specrelay::doctor::_ai_reviewer_status <root> <specrelay-home>
+# Read-only (spec 0019, "AI Reviewer Template Installation"): distinguishes
+# template available / project reviewer installed / project reviewer missing
+# / project reviewer customized (differs from the bundled template — never a
+# failure, just an honest note that 'specrelay init' will not overwrite it).
+specrelay::doctor::_ai_reviewer_status() {
+  local root="$1" home="$2" template installed
+  template="$home/templates/claude/agents/ai-reviewer.md"
+  installed="$root/.claude/agents/ai-reviewer.md"
+
+  if [ ! -f "$template" ]; then
+    specrelay::doctor::_warn "Reviewer sub-agent template: not found in this SpecRelay installation ($template)"
+    return 0
+  fi
+  specrelay::doctor::_ok "Reviewer sub-agent template: available ($template)"
+
+  if [ ! -f "$installed" ]; then
+    specrelay::doctor::_warn "Reviewer sub-agent: no .claude/agents/ai-reviewer.md — the Claude reviewer will run as a plain reviewer; copy templates/claude/agents/ai-reviewer.md (or re-run 'specrelay init') to enable --agent ai-reviewer"
+    return 0
+  fi
+
+  if cmp -s "$template" "$installed" 2>/dev/null; then
+    specrelay::doctor::_ok "Reviewer sub-agent: ai-reviewer configured (.claude/agents/ai-reviewer.md present; used as --agent ai-reviewer when the CLI advertises --agent; matches the bundled template)"
+  else
+    specrelay::doctor::_info "Reviewer sub-agent: ai-reviewer configured and CUSTOMIZED (.claude/agents/ai-reviewer.md present but differs from the bundled template; 'specrelay init' will not overwrite it)"
+  fi
+}
+
+# specrelay::doctor::_verification_policy <root>
+# Read-only (spec 0019, "Verification Policy Configuration" — "policy is
+# visible through doctor or another inspection command"). A structurally
+# invalid `verification:` section is a mandatory failure: every run with
+# this configuration would refuse before role execution (mirrors how a
+# malformed context/model configuration is reported above).
+specrelay::doctor::_verification_policy() {
+  local root="$1" blob
+  if ! blob="$(specrelay::config::verification_policy "$root" 2>/dev/null)"; then
+    specrelay::doctor::_fail "Verification policy: INVALID — $blob (source: $(specrelay::config::path "$root"))"
+    return 0
+  fi
+  specrelay::doctor::_info "Verification policy (executor): full_suite_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^executor_full_suite_max_runs=//p') smoke_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^executor_smoke_max_runs=//p') doctor_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^executor_doctor_max_runs=//p') version_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^executor_version_max_runs=//p')"
+  specrelay::doctor::_info "Verification policy (reviewer): default_mode=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_default_mode=//p') focused_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_focused_max_runs=//p') targeted_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_targeted_max_runs=//p') full_suite_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_full_suite_max_runs=//p') smoke_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_smoke_max_runs=//p')"
+}
+
+# specrelay::doctor::_phase_budgets <root>
+# Read-only (spec 0019, "Phase Budgets"). A structurally invalid
+# `performance:` section is a mandatory failure for the same reason as the
+# verification policy above.
+specrelay::doctor::_phase_budgets() {
+  local root="$1" blob
+  if ! blob="$(specrelay::config::phase_budgets "$root" 2>/dev/null)"; then
+    specrelay::doctor::_fail "Phase budgets: INVALID — $blob (source: $(specrelay::config::path "$root"))"
+    return 0
+  fi
+  specrelay::doctor::_info "Phase budgets (seconds): $(printf '%s\n' "$blob" | tr '\n' ' ')"
+}
+
 # specrelay::doctor::run <self-dir>
 specrelay::doctor::run() {
   local self_dir="$1"
@@ -416,11 +473,7 @@ specrelay::doctor::run() {
       # situation so `claude-subagent` never silently pretends a sub-agent that
       # is not there — a missing file is a non-failing WARNING, not a hard fail,
       # because the reviewer falls back cleanly to a plain `claude` reviewer.
-      if [ -f "$root/.claude/agents/ai-reviewer.md" ]; then
-        specrelay::doctor::_info "Reviewer sub-agent: ai-reviewer configured (.claude/agents/ai-reviewer.md present; used as --agent ai-reviewer when the CLI advertises --agent)"
-      else
-        specrelay::doctor::_warn "Reviewer sub-agent: no .claude/agents/ai-reviewer.md — the Claude reviewer will run as a plain reviewer; copy templates/claude/agents/ai-reviewer.md (or re-run 'specrelay init') to enable --agent ai-reviewer"
-      fi
+      specrelay::doctor::_ai_reviewer_status "$root" "$self_dir"
       ;;
     *)
       specrelay::doctor::_fail "Reviewer provider: unsupported provider '$reviewer_provider'"
@@ -484,6 +537,10 @@ specrelay::doctor::run() {
   # adapter availability is a local, non-billable check.
   specrelay::doctor::_role_context "Executor" "$root" executor
   specrelay::doctor::_role_context "Reviewer" "$root" reviewer
+
+  # --- Bounded verification policy + phase budgets (spec 0019) -------------
+  specrelay::doctor::_verification_policy "$root"
+  specrelay::doctor::_phase_budgets "$root"
 
   # --- SpecRelay installation (tool) root -----------------------------------
   # Report WHERE SpecRelay itself is installed, kept explicitly distinct from

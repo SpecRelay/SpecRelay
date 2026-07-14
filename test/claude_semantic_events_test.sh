@@ -27,6 +27,8 @@
 
 # shellcheck source=../lib/specrelay/output.sh
 . "$SPECRELAY_ROOT/lib/specrelay/output.sh"
+# shellcheck source=../lib/specrelay/marker.sh
+. "$SPECRELAY_ROOT/lib/specrelay/marker.sh"
 # shellcheck source=../lib/specrelay/providers/provider.sh
 . "$SPECRELAY_ROOT/lib/specrelay/providers/provider.sh"
 # shellcheck source=../lib/specrelay/providers/claude.sh

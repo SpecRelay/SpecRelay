@@ -70,6 +70,12 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/git_guard.sh"
 # shellcheck source=lib/specrelay/evidence.sh
 . "$LIB_DIR/evidence.sh"
+# shellcheck source=lib/specrelay/marker.sh
+. "$LIB_DIR/marker.sh"
+# shellcheck source=lib/specrelay/timeline.sh
+. "$LIB_DIR/timeline.sh"
+# shellcheck source=lib/specrelay/verification.sh
+. "$LIB_DIR/verification.sh"
 # shellcheck source=lib/specrelay/transitions.sh
 . "$LIB_DIR/transitions.sh"
 # shellcheck source=lib/specrelay/providers/provider.sh
@@ -92,6 +98,8 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/context/contextplus.sh"
 # shellcheck source=lib/specrelay/contexts.sh
 . "$LIB_DIR/contexts.sh"
+# shellcheck source=lib/specrelay/marker_recovery.sh
+. "$LIB_DIR/marker_recovery.sh"
 # shellcheck source=lib/specrelay/workflow.sh
 . "$LIB_DIR/workflow.sh"
 # shellcheck source=lib/specrelay/doctor.sh

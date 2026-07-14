@@ -23,6 +23,7 @@ from a standalone source checkout, or the installed `specrelay ...` on your
 | `specrelay task block <task-ref> "<reason>"` | `EXECUTOR_RUNNING` → `BLOCKED` | `0` transitioned; non-zero refused |
 | `specrelay task authorize-submit <task-ref>` | Runner-owned `EXECUTOR_RUNNING` → `READY_FOR_REVIEW` | `0` submitted; non-zero refused |
 | `specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]` | SpecRelay-native interrupted-task recovery | `0` recovered; non-zero refused (live owner / wrong state / not owned / no reason) |
+| `specrelay task timeline <task-ref> [--json]` | Read-only execution-timeline report (spec 0019) | `0` on success; `1` unknown task |
 | `specrelay models [<provider>]` | Read-only model-selection guidance for configured automated providers | `0` on success; `1` unknown provider |
 
 ## Direct CLI (`bin/specrelay` / installed `specrelay`)
@@ -156,7 +157,21 @@ specrelay task request-changes <task-ref> "<reason>"
 specrelay task block <task-ref> "<reason>"
 specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]
 specrelay task authorize-submit <task-ref>
+specrelay task timeline <task-ref> [--json]
 ```
+
+`task timeline` (spec 0019) is a **read-only** report: total wall time,
+per-phase durations and status, invocation/resume history, the verification
+ledger (which test/smoke/doctor/version operations ran, by role, with
+duplicate-work detection), the slowest measured phases, and any phase-budget
+warnings. It never mutates task state — it recomputes the summary from the
+task's own append-only event log
+(`<task-runtime-path>/20-execution-events.jsonl`) each time it is invoked. A
+legacy task with no recorded timeline data is reported honestly ("not
+recorded") rather than fabricated. `--json` prints the same summary as
+machine-readable JSON. See
+[verification-and-timeline.md](verification-and-timeline.md) for the full
+design.
 Lower-level task lifecycle operations. `create` only creates (state
 `DRAFT`); it does not approve or run. `approve` is the human-approval gate
 (`DRAFT`/`WAITING_FOR_HUMAN` → `READY_FOR_EXECUTOR`). `requeue`, `accept`,

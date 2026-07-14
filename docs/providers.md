@@ -628,21 +628,27 @@ raw events are persisted to `20-reviewer-events.jsonl`, and the extracted final
 text is written to `15-reviewer-stdout.txt`. In both modes the live copy goes to
 fd 2, so this adapter's own stdout stays reserved for the decision.
 
-**Reviewer decision extraction.** After a successful (exit 0) reviewer run, the
-adapter reads `15-reviewer-stdout.txt` and looks for an explicit marker,
-anchored at end of line. This works identically in both modes because
-`15-reviewer-stdout.txt` always holds human-readable text (the raw provider
-stream in generic mode, the extracted final assistant text in semantic mode) —
-**never** raw JSON, so the machine-readable decision channel is never polluted
-by the live event rendering:
+**Reviewer decision extraction (spec 0019, mandatory marker contract).** After
+a successful (exit 0) reviewer run, the adapter reads `15-reviewer-stdout.txt`
+and parses it with `lib/specrelay/marker.sh`'s shared contract: the marker
+must appear **exactly once**, uppercase, on its own line, and be the **final
+non-empty line** of the entire output. This works identically in both modes
+because `15-reviewer-stdout.txt` always holds human-readable text (the raw
+provider stream in generic mode, the extracted final assistant text in
+semantic mode) — **never** raw JSON, so the machine-readable decision channel
+is never polluted by the live event rendering:
 
 - `DECISION: ACCEPT` → prints `ACCEPT`
 - `DECISION: REQUEST_CHANGES` → prints `REQUEST_CHANGES`
 
-If neither marker is present, the adapter prints
-`reviewer produced no explicit 'DECISION: ACCEPT|REQUEST_CHANGES' marker;
-refusing to infer a decision from prose` and returns non-zero — no decision is
-guessed from surrounding text.
+If no valid marker is found, the adapter prints
+`reviewer produced no valid 'DECISION: ACCEPT|REQUEST_CHANGES' marker;
+refusing to infer a decision from prose` and returns exit code **2** — a
+distinguishable signal (not a process crash, exit code 1) that lets
+`workflow.sh` attempt the ONE narrow, marker-only corrective attempt described
+in `docs/verification-and-timeline.md` before falling back to ordinary
+`REVIEWER_RUNNING` recovery. No decision is ever guessed from surrounding
+text.
 
 **Isolation.** For this adapter, "isolation" means the reviewer is always a
 brand-new process — never a `--continue` or `--resume` of the executor's
