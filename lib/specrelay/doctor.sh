@@ -143,7 +143,7 @@ specrelay::doctor::_role_model_selection() {
 # never prepares context, and never mutates task state.
 specrelay::doctor::_role_context() {
   local role_label="$1" root="$2" role="$3" parsed adapter required
-  local avail_out avail reason level network
+  local avail_out avail reason level network readiness_out
 
   if ! parsed="$(specrelay::config::role_context "$root" "$role")"; then
     specrelay::doctor::_fail "$role_label context: INVALID configuration — $parsed (source: $(specrelay::config::path "$root"); inspect adapters with 'specrelay contexts')"
@@ -161,6 +161,16 @@ specrelay::doctor::_role_context() {
     return 0
   fi
 
+  # Adapters with a richer structured readiness inspection (spec 0018) get a
+  # detailed, honest report — installed/registered/connected/config source —
+  # instead of the plain available/unavailable line below. Still entirely
+  # read-only: runtime_readiness never runs the bounded retrieval and never
+  # mutates MCP configuration.
+  if readiness_out="$(specrelay::context::runtime_readiness "$adapter" "$root" 2>/dev/null)"; then
+    specrelay::doctor::_render_context_readiness "$role_label" "$adapter" "$required" "$readiness_out"
+    return 0
+  fi
+
   level="$(specrelay::context::capability_level "$adapter")"
   network="$(specrelay::context::capability "$adapter" network)"
   avail_out="$(specrelay::context::availability "$adapter" "$root")"
@@ -173,6 +183,58 @@ specrelay::doctor::_role_context() {
     specrelay::doctor::_fail "$role_label context: adapter=$adapter required=true availability=unavailable (${reason:-reason unknown}) — a required run would refuse before role execution"
   else
     specrelay::doctor::_warn "$role_label context: adapter=$adapter required=false availability=unavailable (${reason:-reason unknown}) — runs will degrade honestly without external context"
+  fi
+}
+
+# specrelay::doctor::_render_context_readiness <Role-label> <adapter> <required> <readiness-blob>
+# Read-only (spec 0018, "Doctor Integration"): reports installed/registered/
+# connected/configuration-source honestly for an adapter with a structured
+# readiness inspection, then applies the SAME required/optional policy as
+# every other doctor check (required unready -> failure; optional unready ->
+# advisory warning). Never runs the bounded retrieval and never mutates MCP
+# configuration.
+specrelay::doctor::_render_context_readiness() {
+  local role_label="$1" adapter="$2" required="$3" blob="$4"
+  local status installed registered connected selected reason bin
+
+  status="$(printf '%s\n' "$blob" | sed -n 's/^status=//p')"
+  installed="$(printf '%s\n' "$blob" | sed -n 's/^installed=//p')"
+  registered="$(printf '%s\n' "$blob" | sed -n 's/^registered=//p')"
+  connected="$(printf '%s\n' "$blob" | sed -n 's/^connected=//p')"
+  selected="$(printf '%s\n' "$blob" | sed -n 's/^selected_source=//p')"
+  reason="$(printf '%s\n' "$blob" | sed -n 's/^reason=//p')"
+  bin="$(printf '%s\n' "$blob" | sed -n 's/^bin=//p')"
+
+  specrelay::doctor::_info "$role_label context adapter: $adapter"
+
+  if [ "$installed" = "yes" ]; then
+    specrelay::doctor::_ok "$role_label context executable: $bin found"
+  else
+    specrelay::doctor::_provider_unavailable "$role_label context executable: $bin not found"
+  fi
+
+  if [ "$registered" = "yes" ]; then
+    specrelay::doctor::_ok "$role_label context MCP registration: $adapter registered"
+  else
+    specrelay::doctor::_info "$role_label context MCP registration: $adapter not registered"
+  fi
+
+  if [ "$registered" = "yes" ]; then
+    if [ "$connected" = "yes" ]; then
+      specrelay::doctor::_ok "$role_label context MCP connection: connected"
+    else
+      specrelay::doctor::_info "$role_label context MCP connection: not connected"
+    fi
+  fi
+
+  specrelay::doctor::_info "$role_label context configuration source: $([ "$selected" = "project" ] && echo "project .mcp.json" || echo none)"
+
+  if [ "$status" = "ready" ]; then
+    specrelay::doctor::_ok "$role_label context readiness: ready"
+  elif [ "$required" = "true" ]; then
+    specrelay::doctor::_fail "$role_label context readiness: $status (${reason:-not ready}) — a required run would refuse before role execution"
+  else
+    specrelay::doctor::_warn "$role_label context readiness: $status (${reason:-not ready}) — runs will degrade honestly without external context"
   fi
 }
 

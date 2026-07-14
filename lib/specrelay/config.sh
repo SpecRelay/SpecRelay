@@ -157,15 +157,18 @@ specrelay::config::role_context() {
       bad "context configuration is not a mapping (got #{ctx.class})"
     end
 
-    known_role_keys = ["adapter", "required"]
+    known_role_keys = ["adapter", "required", "options"]
     known_top_keys = known_role_keys + ["executor", "reviewer"]
     unknown = ctx.keys - known_top_keys
     unless unknown.empty?
-      bad "context configuration has unknown key(s) #{unknown.map(&:inspect).join(", ")}; recognized keys: adapter, required, executor, reviewer"
+      bad "context configuration has unknown key(s) #{unknown.map(&:inspect).join(", ")}; recognized keys: adapter, required, options, executor, reviewer"
     end
 
-    # check_block <hash> <label> -> validates adapter/required shapes in one
-    # (global or role-specific) context mapping.
+    # check_block <hash> <label> -> validates adapter/required/options shapes in
+    # one (global or role-specific) context mapping. "options" is an opaque,
+    # adapter-specific mapping (e.g. contextplus server_name/config_source,
+    # spec 0018) — only its SHAPE (a mapping) is checked here; adapter-specific
+    # key/value validation happens in the adapter own validate_config hook.
     check_block = lambda do |block, label|
       if block.key?("adapter") && !block["adapter"].nil?
         a = block["adapter"]
@@ -180,6 +183,12 @@ specrelay::config::role_context() {
         r = block["required"]
         unless r == true || r == false
           bad "#{label} context required must be a boolean true or false (got #{r.class}: #{r.inspect})"
+        end
+      end
+      if block.key?("options") && !block["options"].nil?
+        o = block["options"]
+        unless o.is_a?(Hash)
+          bad "#{label} context options must be a mapping (got #{o.class}: #{o.inspect})"
         end
       end
     end
@@ -212,6 +221,52 @@ specrelay::config::role_context() {
     required = false if required.nil?
 
     ok(adapter, required ? "true" : "false")
+  ' "$path" "$role"
+}
+
+# specrelay::config::role_context_options <project-root> <role>
+# Prints the resolved, adapter-agnostic "options" mapping for a role's context
+# configuration as compact JSON (spec 0018, "Configuration Validation") — an
+# empty mapping ("{}") when no options are configured. Resolution is a WHOLE-
+# BLOCK override (not per-key): a role-specific "options" mapping, when
+# present, replaces the global one entirely, rather than merging field by
+# field, so an adapter's option set is never a confusing splice of two
+# sources. Only reachable after specrelay::config::role_context has already
+# validated the context section's SHAPE (options is a mapping if present); this
+# accessor degrades to "{}" on any unexpected shape rather than erroring again.
+specrelay::config::role_context_options() {
+  local root="$1" role="$2" path
+  path="$(specrelay::config::path "$root")"
+
+  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+    printf '{}\n'
+    return 0
+  fi
+
+  ruby -e '
+    require "yaml"
+    require "json"
+    path, role = ARGV[0], ARGV[1]
+
+    begin
+      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+    rescue StandardError
+      puts "{}"
+      exit 0
+    end
+    unless data.is_a?(Hash) && data["context"].is_a?(Hash)
+      puts "{}"
+      exit 0
+    end
+    ctx = data["context"]
+    role_cfg = ctx[role].is_a?(Hash) ? ctx[role] : {}
+
+    opts = nil
+    opts = role_cfg["options"] if role_cfg.key?("options") && !role_cfg["options"].nil?
+    opts = ctx["options"] if opts.nil? && ctx.key?("options") && !ctx["options"].nil?
+    opts = {} unless opts.is_a?(Hash)
+
+    puts opts.to_json
   ' "$path" "$role"
 }
 

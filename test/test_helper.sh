@@ -27,6 +27,19 @@ SPECRELAY_BIN="$SPECRELAY_ROOT/bin/specrelay"
 # this per-invocation (e.g. `env -u SPECRELAY_HOME`).
 export SPECRELAY_HOME="$SPECRELAY_ROOT"
 
+# Pin the contextplus context adapter's Claude-compatible binary to a
+# guaranteed-nonexistent path for the whole suite (spec 0018, "Runtime
+# Readiness and Configuration Source"). Without this, a developer machine or
+# CI runner that happens to have a REAL `claude` on PATH would have every test
+# that touches `bin/specrelay contexts` or `bin/specrelay doctor` — even ones
+# with nothing to do with Context+ — shell out to a real, network-dependent
+# `claude mcp list` (observed to take several seconds and query every
+# registered MCP server's auth status), making the suite slow and
+# non-deterministic across machines. Tests that specifically exercise the
+# contextplus adapter override this per-invocation with their own fake
+# `claude` fixture (see contextplus_adapter_test.sh).
+export SPECRELAY_CONTEXTPLUS_CLAUDE_BIN="/nonexistent/specrelay-test-no-claude"
+
 TESTS_RUN=0
 TESTS_FAILED=0
 

@@ -32,8 +32,11 @@ rules:
     paths:
       - lib/specrelay/context/**
       - lib/specrelay/contexts.sh
+      - lib/specrelay/config.sh
+      - lib/specrelay/doctor.sh
     tests:
       - test/context_adapters_test.sh
+      - test/contextplus_adapter_test.sh
       - test/config_test.sh
       - test/workflow_fake_provider_test.sh
 

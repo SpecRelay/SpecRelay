@@ -218,6 +218,22 @@ specrelay::context::reuse_decision() {
   esac
 }
 
+# specrelay::context::runtime_readiness <adapter> <root>
+# Optional richer readiness inspection (spec 0018, "Readiness Inspection
+# API"): key=value lines (status, installed, registered, connected,
+# project_config, global_detected, selected_source, retrieval_ready, server,
+# reason) for adapters that distinguish MORE than plain available/unavailable.
+# Returns non-zero for adapters with no such inspection (none, fake) so
+# generic callers (contexts.sh, doctor.sh) fall back to the plain capability-
+# based rendering — this is the ONLY place that knows contextplus offers this,
+# so contexts.sh/doctor.sh never grow a contextplus-specific branch.
+specrelay::context::runtime_readiness() {
+  case "$1" in
+    contextplus) specrelay::context::contextplus::readiness "$2" ;;
+    *) return 1 ;;
+  esac
+}
+
 # specrelay::context::freshness_mandatory <adapter>
 # True when the adapter's policy says a STALE artifact must block a REQUIRED
 # role (spec 0015, "Context Freshness"). Never guessed: adapters without a
