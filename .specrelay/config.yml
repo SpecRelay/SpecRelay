@@ -22,8 +22,8 @@ roles:
     agent: ai-reviewer
 
 context:
-  adapter: none
-  required: false
+  adapter: contextplus
+  required: true
 
 validation:
   full_test_command: scripts/test
