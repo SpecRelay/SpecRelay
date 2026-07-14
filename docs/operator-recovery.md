@@ -73,6 +73,34 @@ You do not have to make this judgement by hand — `specrelay task recover`
 performs exactly this liveness check itself, **before** changing anything, and
 refuses when the owner is live (see section 2).
 
+### `EXECUTOR_RUNNING` for a reason other than interruption (spec 0021)
+
+Since the agent execution-efficiency and completion-gate specification (spec
+0021), a task can also sit in `EXECUTOR_RUNNING` with **no live owning
+process** for a reason that is *not* an interrupted/crashed provider:
+
+- **Completion-gate failure**: the executor process exited **zero**, but
+  SpecRelay refused to accept the round as complete because a required
+  artifact (`03-executor-log.md` / `07-tests.txt` / `08-executor-summary.md`)
+  was missing or empty, or the executor's final output declared unresolved
+  background work (e.g. "I will wait for the background task"). The terminal
+  prints `Executor Result: INCOMPLETE` (never `SUCCESS`) with the concrete
+  reason, and the same reason is recorded in `22-agent-efficiency.json` under
+  that round's `completion_gate_reason`.
+
+This is diagnostically different from a genuine provider interruption/crash
+(process killed, host rebooted, `specrelay` itself terminated mid-run): the
+process actually finished and reported success, but the round's *work* was
+incomplete by SpecRelay's own contract. `bin/specrelay task show <task-ref>`
+and `bin/specrelay task efficiency <task-ref>` both surface which case you are
+in before you decide what to do next — do not assume every `EXECUTOR_RUNNING`
+with no live owner is a crash.
+
+Either way, the ordinary recovery command below (`EXECUTOR_RUNNING ->
+READY_FOR_EXECUTOR`) is what re-queues the task; spec 0021 intentionally adds
+**no** new recovery transition. Recovering does not "submit" or "complete"
+anything that was previously incomplete — see section 3 below.
+
 ## 2. The recovery command
 
 ```

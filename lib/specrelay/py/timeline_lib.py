@@ -45,6 +45,16 @@ try:
 except Exception:  # pragma: no cover - command_timing_lib is an optional sibling module
     _command_timing_lib = None
 
+# The agent-efficiency engine (spec 0021) lives beside this file too. Optional
+# for the same reason as command_timing_lib above: a task that predates spec
+# 0021 (or a stripped-down install missing the sibling module) still renders
+# its execution timeline exactly as before — the "agent_efficiency_summary"
+# block below is simply omitted rather than failing the whole render.
+try:
+    import agent_efficiency_lib as _agent_efficiency_lib
+except Exception:  # pragma: no cover - agent_efficiency_lib is an optional sibling module
+    _agent_efficiency_lib = None
+
 SCHEMA_VERSION = 1
 
 REQUIRED_PHASES = [
@@ -413,6 +423,19 @@ def build_summary(task_dir, task_id, budgets):
             cts = _command_timing_lib.timeline_summary(task_dir)
             if cts:
                 summary["command_timing_summary"] = cts
+        except Exception:
+            pass
+
+    # Agent-efficiency summary reference (spec 0021, "Timeline Integration" —
+    # "extend with a summary reference" — mirrors command_timing_summary
+    # above). Omitted entirely for a task with no recorded efficiency
+    # evidence at all, so a legacy task's timeline JSON stays exactly as
+    # before.
+    if _agent_efficiency_lib is not None:
+        try:
+            aes = _agent_efficiency_lib.efficiency_summary_for_timeline(task_dir, task_id)
+            if aes:
+                summary["agent_efficiency_summary"] = aes
         except Exception:
             pass
 

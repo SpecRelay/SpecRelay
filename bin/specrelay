@@ -78,6 +78,8 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/command_timing.sh"
 # shellcheck source=lib/specrelay/verification.sh
 . "$LIB_DIR/verification.sh"
+# shellcheck source=lib/specrelay/agent_efficiency.sh
+. "$LIB_DIR/agent_efficiency.sh"
 # shellcheck source=lib/specrelay/transitions.sh
 . "$LIB_DIR/transitions.sh"
 # shellcheck source=lib/specrelay/providers/provider.sh

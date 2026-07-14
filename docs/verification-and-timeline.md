@@ -279,6 +279,54 @@ report (`within_budget` / `exceeded` / `not_configured` / `not_measurable`);
 it **never** changes task state. Executor provider execution intentionally
 has no strict default budget (implementation complexity varies too widely).
 
+## F. Agent execution efficiency and completion gate (spec 0021)
+
+An explicit completion gate, enforced independently of provider exit code:
+
+- **Policy**: `.specrelay/config.yml`, `execution_efficiency.*` (see
+  `docs/configuration.md`) — `enabled`, and per-role
+  `exploration_warning_calls` / `repeated_verification_limit` /
+  `unresolved_wait_is_failure` / `require_artifacts_before_success`. Captured
+  durably into `state.json` (`execution_efficiency_effective`) the first time
+  a task reaches an executor iteration; resume uses the captured policy, not
+  a later config change.
+- **Required-artifact gate**: after a zero-exit provider run, SpecRelay checks
+  that the required role artifacts are non-empty (Executor:
+  `03-executor-log.md`/`07-tests.txt`/`08-executor-summary.md`; Reviewer:
+  `09-consultant-review.md` plus `10-business-summary.md` for `ACCEPT` or
+  `11-next-executor-prompt.md` for `REQUEST_CHANGES` — the spec 0019
+  marker/artifact-consistency rules remain authoritative and are not
+  weakened). Missing/empty artifacts print `Executor Result: INCOMPLETE`
+  (never a false `SUCCESS`) and leave the task in its running state.
+- **Unresolved-waiting gate**: SpecRelay inspects ONLY the provider's final
+  extracted output (`12-executor-stdout.txt` / `15-reviewer-stdout.txt` —
+  never intermediate streaming prose) for an explicit, present/future
+  statement of unresolved waiting (e.g. "I will wait for the background
+  task"). Conservative and word-bounded: historical narration ("I waited...
+  and it completed successfully") and unrelated words that merely contain
+  "wait" never match. When `unresolved_wait_is_failure` is enabled for the
+  role, a match produces the same `INCOMPLETE` result as a missing artifact.
+- **Background-process check**: advisory only. SpecRelay's provider adapters
+  always synchronously wait for the provider process before this check runs,
+  so ownership of any process it may have spawned and detached can no longer
+  be established reliably — this is honestly reported as `not_verifiable`
+  rather than guessed from a process/command name, and it never blocks
+  completion or kills anything.
+- **Observable-work classification and reporting**: reuses the spec 0020
+  command-timing ledger (`21-command-timing-events.jsonl`) to classify each
+  observable operation as exploration / implementation / verification /
+  waiting / artifact_writing / inspection / other, and reports
+  post-verification timing (`final_required_verification_at` ->
+  `provider_completed_at`) and unjustified repeated verification. Written to
+  `22-agent-efficiency.json` (task-scoped; no new top-level runtime
+  directory) and referenced from `20-execution-timeline.json` as
+  `agent_efficiency_summary`. Printed at finalization as an "Agent
+  Efficiency" table (or a short gate-failure block when a role's completion
+  gate failed), immediately after the command-timing report.
+- **Completion-gate results** are recorded as `completion_gate` events in the
+  SAME `20-execution-events.jsonl` event log spec 0019 already writes — no
+  new event-log namespace.
+
 ## Task inspection
 
 `specrelay task timeline <task-ref> [--json]` (see `docs/commands.md`) prints

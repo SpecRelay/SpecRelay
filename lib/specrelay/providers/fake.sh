@@ -196,18 +196,23 @@ specrelay::provider::fake::_field() {
 # captured raw to 12-executor-stdout.txt. Deliberately small and deterministic
 # so the test suite stays non-flaky and non-noisy.
 specrelay::provider::fake::_executor_emit() {
-  local round="$1" prompt_file="$2" exit_code="$3" outputs="$4" touch_flag="$5" model="${6:-provider-default}" agent="${7:-none}"
+  local round="$1" prompt_file="$2" exit_code="$3" outputs="$4" touch_flag="$5" model="${6:-provider-default}" agent="${7:-none}" wait_text="${8:-}"
   echo "[fake-executor] round $round"
   echo "[fake-executor] prompt file: $prompt_file"
   echo "[fake-executor] plan: exit=$exit_code outputs=$outputs touch=$touch_flag"
   # Make the resolved model/agent visible in the streamed/captured output too,
   # so operator logs and 12-executor-stdout.txt carry the forwarding evidence.
   echo "[fake-executor] resolved: provider=fake model=$model agent=$agent"
+  # Deterministic completion-gate fixture (spec 0021, "Unresolved Waiting
+  # Detection"): a test-supplied final-output phrase, written into the SAME
+  # captured file (12-executor-stdout.txt) SpecRelay's real completion gate
+  # inspects, so no real provider call is needed to exercise it.
+  [ -n "$wait_text" ] && echo "$wait_text"
 }
 
 specrelay::provider::fake::executor_run() {
   local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:fake}" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}"
-  local plan_line exit_code outputs touch_flag impl_file
+  local plan_line exit_code outputs touch_flag impl_file missing_artifact wait_text
 
   # Record the forwarded role/provider/model/agent/context as durable
   # invocation evidence (spec 0012, spec 0015). Written before the streamed
@@ -219,6 +224,15 @@ specrelay::provider::fake::executor_run() {
   exit_code="$(specrelay::provider::fake::_field "$plan_line" exit "0")"
   outputs="$(specrelay::provider::fake::_field "$plan_line" outputs "1")"
   touch_flag="$(specrelay::provider::fake::_field "$plan_line" touch "1")"
+  # missing_artifact=<filename> (spec 0021 fixtures): after normally writing
+  # 03/07/08 (when outputs=1), removes exactly the named file so tests can
+  # exercise the completion gate's per-file missing-artifact checks without
+  # a real provider call.
+  missing_artifact="$(specrelay::provider::fake::_field "$plan_line" missing_artifact "")"
+  # wait_text=<phrase> (spec 0021 fixtures): an explicit unresolved-waiting
+  # phrase written into 12-executor-stdout.txt (the completion gate's final
+  # extracted output).
+  wait_text="$(specrelay::provider::fake::_field "$plan_line" wait_text "")"
   specrelay::provider::fake::_record_verify_ops "$plan_line" executor "$task_dir"
 
   # Test-only: widen the race window for concurrency tests (see
@@ -230,7 +244,7 @@ specrelay::provider::fake::executor_run() {
 
   specrelay::provider::run_streamed "$label" \
     "$task_dir/12-executor-stdout.txt" "$task_dir/13-executor-stderr.txt" "$root" -- \
-    specrelay::provider::fake::_executor_emit "$round" "$prompt_file" "$exit_code" "$outputs" "$touch_flag" "$model" "$agent"
+    specrelay::provider::fake::_executor_emit "$round" "$prompt_file" "$exit_code" "$outputs" "$touch_flag" "$model" "$agent" "$wait_text"
 
   if [ "$touch_flag" = "1" ]; then
     impl_file="${SPECRELAY_FAKE_IMPL_FILE:-$root/specrelay-fake-impl.txt}"
@@ -241,22 +255,27 @@ specrelay::provider::fake::executor_run() {
     printf 'Fake executor log for round %s.\n' "$round" > "$task_dir/03-executor-log.md"
     printf 'Fake test output for round %s: 1 example, 0 failures.\n' "$round" > "$task_dir/07-tests.txt"
     printf 'Fake executor summary for round %s.\n' "$round" > "$task_dir/08-executor-summary.md"
+    [ -n "$missing_artifact" ] && rm -f "$task_dir/$missing_artifact"
   fi
 
   return "$exit_code"
 }
 
 specrelay::provider::fake::_reviewer_emit() {
-  local round="$1" prompt_file="$2" exit_code="$3" decision="$4" model="${5:-provider-default}" agent="${6:-none}"
+  local round="$1" prompt_file="$2" exit_code="$3" decision="$4" model="${5:-provider-default}" agent="${6:-none}" wait_text="${7:-}"
   echo "[fake-reviewer] round $round"
   echo "[fake-reviewer] prompt file: $prompt_file"
   echo "[fake-reviewer] plan: exit=$exit_code decision=$decision"
   echo "[fake-reviewer] resolved: provider=fake model=$model agent=$agent"
+  # Deterministic completion-gate fixture (spec 0021): a test-supplied final-
+  # output phrase, written into 15-reviewer-stdout.txt — the SAME file the
+  # real completion gate inspects for unresolved waiting.
+  [ -n "$wait_text" ] && echo "$wait_text"
 }
 
 specrelay::provider::fake::reviewer_run() {
   local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:fake}" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}"
-  local plan_line exit_code decision
+  local plan_line exit_code decision wait_text
 
   # Durable invocation evidence for the reviewer role (spec 0012, spec 0015).
   # Recorded before anything else so a failed reviewer round still leaves proof
@@ -267,6 +286,7 @@ specrelay::provider::fake::reviewer_run() {
   plan_line="$(specrelay::provider::fake::_plan_line "${SPECRELAY_FAKE_REVIEWER_PLAN:-}" "$round")"
   exit_code="$(specrelay::provider::fake::_field "$plan_line" exit "0")"
   decision="$(specrelay::provider::fake::_field "$plan_line" decision "accept")"
+  wait_text="$(specrelay::provider::fake::_field "$plan_line" wait_text "")"
   specrelay::provider::fake::_record_verify_ops "$plan_line" reviewer "$task_dir"
 
   # Stream the reviewer's log lines live to fd 2 and capture them raw to
@@ -275,7 +295,7 @@ specrelay::provider::fake::reviewer_run() {
   # command substitution — kept strictly separate from the streamed copy.
   specrelay::provider::run_streamed "$label" \
     "$task_dir/15-reviewer-stdout.txt" "$task_dir/16-reviewer-stderr.txt" "$root" -- \
-    specrelay::provider::fake::_reviewer_emit "$round" "$prompt_file" "$exit_code" "$decision" "$model" "$agent"
+    specrelay::provider::fake::_reviewer_emit "$round" "$prompt_file" "$exit_code" "$decision" "$model" "$agent" "$wait_text"
 
   if [ "$exit_code" != "0" ]; then
     return "$exit_code"

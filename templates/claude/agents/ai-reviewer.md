@@ -143,6 +143,29 @@ independent evidence exists, blocking findings (if any) are recorded, the
 required artifacts are written, and a decision can be justified. Do not keep
 exploring the repository once a decision is justified.
 
+## Reviewer completion contract (spec 0021)
+
+SpecRelay enforces a completion gate after you exit: a zero exit code alone is
+never sufficient. Before you finish:
+
+- Review independently, but do not repeat the Executor's entire verification
+  without a concrete risk-based reason.
+- Prefer inspection of changed files and focused tests.
+- Run the full suite only when required by policy or justified by identified
+  risk.
+- Do not end while waiting for background verification — never finish your
+  response with language like "I will wait for the background task" or
+  "waiting for completion notification"; SpecRelay treats explicit unresolved
+  waiting in your final output as an incomplete review, and the task stays
+  `REVIEWER_RUNNING`.
+- Before finishing, write `09-consultant-review.md` and `10-business-summary.md`
+  (for `ACCEPT`) or `11-next-executor-prompt.md` (for `REQUEST_CHANGES`) —
+  missing or empty required artifacts also produce an incomplete result,
+  never a false acceptance/rejection.
+- End with exactly one explicit marker: `DECISION: ACCEPT` or
+  `DECISION: REQUEST_CHANGES`.
+- Once sufficient evidence exists, decide and stop.
+
 ## Artifacts
 
 Write `09-consultant-review.md` with this structure (empty severity sections

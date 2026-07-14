@@ -329,6 +329,36 @@ specrelay::doctor::_phase_budgets() {
 }
 
 # specrelay::doctor::run <self-dir>
+# specrelay::doctor::_execution_efficiency <root>
+# Read-only (spec 0021, "Doctor" — "report whether execution-efficiency
+# policy is enabled; resolved Executor policy; resolved Reviewer policy;
+# completion-gate artifact requirements; unresolved-wait policy; whether
+# command timing support from Spec 0020 is available"). A structurally
+# invalid `execution_efficiency:` section is a mandatory failure, for the
+# same reason as the verification policy/phase-budgets checks above: every
+# run with this configuration would refuse before role execution. Never
+# runs a provider and never mutates task state.
+specrelay::doctor::_execution_efficiency() {
+  local root="$1" blob
+  if ! blob="$(specrelay::config::execution_efficiency_policy "$root" 2>/dev/null)"; then
+    specrelay::doctor::_fail "Execution efficiency policy: INVALID — $blob (source: $(specrelay::config::path "$root"))"
+    return 0
+  fi
+  local enabled
+  enabled="$(printf '%s\n' "$blob" | sed -n 's/^enabled=//p')"
+  specrelay::doctor::_info "Execution efficiency policy: enabled=$enabled"
+  specrelay::doctor::_info "Execution efficiency policy (executor): exploration_warning_calls=$(printf '%s\n' "$blob" | sed -n 's/^executor_exploration_warning_calls=//p') repeated_verification_limit=$(printf '%s\n' "$blob" | sed -n 's/^executor_repeated_verification_limit=//p') unresolved_wait_is_failure=$(printf '%s\n' "$blob" | sed -n 's/^executor_unresolved_wait_is_failure=//p') require_artifacts_before_success=$(printf '%s\n' "$blob" | sed -n 's/^executor_require_artifacts_before_success=//p')"
+  specrelay::doctor::_info "Execution efficiency policy (reviewer): exploration_warning_calls=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_exploration_warning_calls=//p') repeated_verification_limit=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_repeated_verification_limit=//p') unresolved_wait_is_failure=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_unresolved_wait_is_failure=//p') require_artifacts_before_success=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_require_artifacts_before_success=//p')"
+  specrelay::doctor::_info "Completion-gate required Executor artifacts: 03-executor-log.md, 07-tests.txt, 08-executor-summary.md"
+  specrelay::doctor::_info "Completion-gate required Reviewer artifacts: 09-consultant-review.md + 10-business-summary.md (ACCEPT) or 09-consultant-review.md + 11-next-executor-prompt.md (REQUEST_CHANGES)"
+
+  if command -v python3 >/dev/null 2>&1 && [ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/py/command_timing_lib.py" ]; then
+    specrelay::doctor::_info "Command timing support (spec 0020): available (python3 + command_timing_lib.py present)"
+  else
+    specrelay::doctor::_warn "Command timing support (spec 0020): unavailable (python3 or command_timing_lib.py missing); agent-efficiency classification will report zero observable operations"
+  fi
+}
+
 specrelay::doctor::run() {
   local self_dir="$1"
   DOCTOR_FAILED=0
@@ -541,6 +571,7 @@ specrelay::doctor::run() {
   # --- Bounded verification policy + phase budgets (spec 0019) -------------
   specrelay::doctor::_verification_policy "$root"
   specrelay::doctor::_phase_budgets "$root"
+  specrelay::doctor::_execution_efficiency "$root"
 
   # --- SpecRelay installation (tool) root -----------------------------------
   # Report WHERE SpecRelay itself is installed, kept explicitly distinct from

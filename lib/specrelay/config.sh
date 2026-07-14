@@ -621,6 +621,132 @@ specrelay::config::phase_budgets() {
   ' "$path" <<< "$(specrelay::config::_phase_budget_defaults)"
 }
 
+# --- execution efficiency and completion gate policy (spec 0021) -----------
+#
+# The `execution_efficiency:` section configures the completion-gate policy
+# enforced on Executor/Reviewer provider completion (spec 0021, "Executor
+# Completion Contract" / "Required Executor Artifacts" / "Unresolved Waiting
+# Detection"). Missing configuration resolves entirely to the built-in
+# defaults below, so every existing project keeps working unchanged.
+
+specrelay::config::_execution_efficiency_defaults() {
+  cat <<'DEFAULTS'
+enabled=true
+executor_exploration_warning_calls=30
+executor_repeated_verification_limit=1
+executor_unresolved_wait_is_failure=true
+executor_require_artifacts_before_success=true
+reviewer_exploration_warning_calls=20
+reviewer_repeated_verification_limit=1
+reviewer_unresolved_wait_is_failure=true
+reviewer_require_artifacts_before_success=true
+DEFAULTS
+}
+
+# specrelay::config::execution_efficiency_policy <project-root>
+# Prints the EFFECTIVE, flat `key=value` execution-efficiency policy (one line
+# per field, defaults merged with any configured overrides) on success (exit
+# 0). On a structurally invalid `execution_efficiency:` section, prints a
+# human-readable error DETAIL on stdout and returns 1 (mirrors
+# verification_policy's ok/bad convention). Rejected: a non-mapping
+# section/subsection, unknown keys, a non-boolean `enabled`/policy flag, and a
+# negative or non-integer `exploration_warning_calls`/
+# `repeated_verification_limit`.
+specrelay::config::execution_efficiency_policy() {
+  local root="$1" path
+  path="$(specrelay::config::path "$root")"
+
+  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+    specrelay::config::_execution_efficiency_defaults
+    return 0
+  fi
+
+  ruby -e '
+    require "yaml"
+    path = ARGV[0]
+
+    defaults = {}
+    STDIN.each_line do |line|
+      k, v = line.strip.split("=", 2)
+      defaults[k] = v if k && v
+    end
+
+    def bad(detail)
+      puts detail
+      exit 1
+    end
+
+    begin
+      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+    rescue StandardError
+      data = nil
+    end
+    data = {} unless data.is_a?(Hash)
+    ee = data["execution_efficiency"]
+
+    if ee.nil?
+      defaults.each { |k, v| puts "#{k}=#{v}" }
+      exit 0
+    end
+    unless ee.is_a?(Hash)
+      bad "execution_efficiency configuration is not a mapping (got #{ee.class})"
+    end
+
+    known_top = ["enabled", "executor", "reviewer"]
+    unknown_top = ee.keys - known_top
+    unless unknown_top.empty?
+      bad "execution_efficiency configuration has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: #{known_top.join(", ")}"
+    end
+
+    result = defaults.dup
+
+    if ee.key?("enabled")
+      v = ee["enabled"]
+      unless v == true || v == false
+        bad "execution_efficiency.enabled must be a boolean true or false (got #{v.inspect})"
+      end
+      result["enabled"] = v ? "true" : "false"
+    end
+
+    int_keys = ["exploration_warning_calls", "repeated_verification_limit"]
+    bool_keys = ["unresolved_wait_is_failure", "require_artifacts_before_success"]
+    allowed = int_keys + bool_keys
+
+    ["executor", "reviewer"].each do |role|
+      block = ee[role]
+      next if block.nil?
+      unless block.is_a?(Hash)
+        bad "execution_efficiency.#{role} is not a mapping (got #{block.class})"
+      end
+      unknown = block.keys - allowed
+      unless unknown.empty?
+        bad "execution_efficiency.#{role} has unknown key(s) #{unknown.map(&:inspect).join(", ")}; recognized keys: #{allowed.join(", ")}"
+      end
+      int_keys.each do |k|
+        next unless block.key?(k)
+        v = block[k]
+        unless v.is_a?(Integer)
+          bad "execution_efficiency.#{role}.#{k} must be a non-negative integer (got #{v.inspect})"
+        end
+        if v < 0
+          bad "execution_efficiency.#{role}.#{k} must be a non-negative integer (got #{v})"
+        end
+        result["#{role}_#{k}"] = v.to_s
+      end
+      bool_keys.each do |k|
+        next unless block.key?(k)
+        v = block[k]
+        unless v == true || v == false
+          bad "execution_efficiency.#{role}.#{k} must be a boolean true or false (got #{v.inspect})"
+        end
+        result["#{role}_#{k}"] = v ? "true" : "false"
+      end
+    end
+
+    result.each { |k, v| puts "#{k}=#{v}" }
+  ' "$path" <<< "$(specrelay::config::_execution_efficiency_defaults)"
+}
+
 specrelay::config::validate_role_model() {
   local root="$1" role="$2" path msg rc
   path="$(specrelay::config::path "$root")"

@@ -330,6 +330,111 @@ print(json.dumps({"verification_policy_effective": policy}))
   specrelay::state::set "$state_file" "$set_json" >/dev/null
 }
 
+# specrelay::workflow::record_effective_execution_efficiency_policy <root> <task-id>
+# CAPTURE-ONCE (spec 0021, "Durable Effective Policy" — "resume must use the
+# captured policy rather than silently adopting later config changes"),
+# mirroring record_effective_verification_policy above: persists the
+# resolved execution-efficiency policy into state.json under
+# "execution_efficiency_effective" the first time a task reaches an executor
+# iteration. Never overwritten thereafter.
+specrelay::workflow::record_effective_execution_efficiency_policy() {
+  local root="$1" task_id="$2" state_file existing blob
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 0
+
+  existing="$(specrelay::state::get "$state_file" execution_efficiency_effective 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+    return 0
+  fi
+
+  blob="$(specrelay::config::execution_efficiency_policy "$root" 2>/dev/null)" || return 0
+  local set_json
+  set_json="$(printf '%s' "$blob" | python3 -c '
+import json, sys
+flat = {}
+for line in sys.stdin:
+    line = line.strip()
+    if "=" not in line:
+        continue
+    k, v = line.split("=", 1)
+    if v in ("true", "false"):
+        flat[k] = (v == "true")
+    elif v.isdigit():
+        flat[k] = int(v)
+    else:
+        flat[k] = v
+
+def role_block(prefix):
+    return {
+        "exploration_warning_calls": flat.get(prefix + "_exploration_warning_calls"),
+        "repeated_verification_limit": flat.get(prefix + "_repeated_verification_limit"),
+        "unresolved_wait_is_failure": flat.get(prefix + "_unresolved_wait_is_failure"),
+        "require_artifacts_before_success": flat.get(prefix + "_require_artifacts_before_success"),
+    }
+
+policy = {
+    "enabled": flat.get("enabled", True),
+    "executor": role_block("executor"),
+    "reviewer": role_block("reviewer"),
+}
+print(json.dumps({"execution_efficiency_effective": policy}))
+' 2>/dev/null)"
+  [ -n "$set_json" ] || return 0
+  specrelay::state::set "$state_file" "$set_json" >/dev/null
+}
+
+# specrelay::workflow::effective_execution_efficiency_field <root> <task-id> <role> <field>
+# Durable-first resolution (spec 0021, "resume uses the captured policy"):
+# the task's captured execution_efficiency_effective value when present,
+# otherwise the live resolved config. <role> may also be the bare string
+# "enabled" for the top-level policy switch.
+specrelay::workflow::effective_execution_efficiency_field() {
+  local root="$1" task_id="$2" role="$3" field="$4" state_file blob v
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  if [ -f "$state_file" ]; then
+    blob="$(specrelay::state::get "$state_file" execution_efficiency_effective 2>/dev/null || true)"
+    if [ -n "$blob" ] && [ "$blob" != "null" ]; then
+      if [ "$role" = "enabled" ]; then
+        v="$(printf '%s' "$blob" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+val = d.get("enabled")
+if val is None:
+    sys.exit(1)
+print("true" if val else "false")
+' 2>/dev/null)"
+      else
+        v="$(printf '%s' "$blob" | ROLE="$role" FIELD="$field" python3 -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+role = d.get(os.environ["ROLE"])
+if not isinstance(role, dict):
+    sys.exit(1)
+val = role.get(os.environ["FIELD"])
+if val is None:
+    sys.exit(1)
+print("true" if val is True else ("false" if val is False else val))
+' 2>/dev/null)"
+      fi
+      if [ -n "$v" ]; then
+        printf '%s\n' "$v"
+        return 0
+      fi
+    fi
+  fi
+  if [ "$role" = "enabled" ]; then
+    specrelay::agent_efficiency::enabled "$root"
+  else
+    specrelay::agent_efficiency::_policy_field "$root" "${role}_${field}"
+  fi
+}
+
 specrelay::workflow::record_effective_roles() {
   local root="$1" task_id="$2" state_file existing
   state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
@@ -866,6 +971,20 @@ specrelay::workflow::build_reviewer_prompt() {
     echo "   independent evidence exists, and a decision is justified — do not"
     echo "   keep exploring the repository past that point."
     echo
+    echo "Reviewer completion contract (spec 0021, 'Agent Execution Efficiency"
+    echo "and Completion Gate'):"
+    echo "- Review independently, but do not repeat the Executor's entire"
+    echo "  verification without a concrete risk-based reason."
+    echo "- Prefer inspection of changed files and focused tests."
+    echo "- Run the full suite only when required by policy or justified by"
+    echo "  identified risk."
+    echo "- Do not end while waiting for background verification."
+    echo "- Before finishing, write $task_rel/09-consultant-review.md and"
+    echo "  $task_rel/10-business-summary.md."
+    echo "- End with exactly one explicit marker: 'DECISION: ACCEPT' or"
+    echo "  'DECISION: REQUEST_CHANGES'."
+    echo "- Once sufficient evidence exists, decide and stop."
+    echo
     echo "Before you answer, write your review to $task_rel/09-consultant-review.md"
     echo "(risk level, acceptance-criteria table, independent verification"
     echo "performed, findings by severity, residual risks, and the verification"
@@ -961,6 +1080,27 @@ specrelay::workflow::seed_task_from_spec() {
     echo "beyond these needs a recorded reason:"
     echo "  ADDITIONAL_VERIFICATION_REASON: <why>"
     echo
+    echo "Completion contract (spec 0021, 'Agent Execution Efficiency and"
+    echo "Completion Gate'):"
+    echo "- Do not continue broad repository exploration after sufficient"
+    echo "  implementation context has been obtained."
+    echo "- Prefer focused verification before broader verification."
+    echo "- Do not rerun an already-passing verification command unless source"
+    echo "  changed or a concrete reason is recorded."
+    echo "- Do not end by saying that you are waiting for a background task."
+    echo "- Before finishing, ensure all required Executor artifacts are"
+    echo "  non-empty: $task_rel/03-executor-log.md, $task_rel/07-tests.txt,"
+    echo "  $task_rel/08-executor-summary.md."
+    echo "- After required verification passes, write the deliverables and"
+    echo "  finish."
+    echo "- Do not run additional exploratory commands after completion"
+    echo "  criteria are met unless a concrete blocker or inconsistency is"
+    echo "  discovered."
+    echo "A provider exit code of zero is not sufficient on its own: SpecRelay"
+    echo "requires the artifacts above to be non-empty and requires that you not"
+    echo "declare unresolved background work before it accepts this round as"
+    echo "complete."
+    echo
     echo "=== Spec ($spec_rel) ==="
     cat "$spec_abs"
     echo
@@ -1050,6 +1190,7 @@ specrelay::workflow::executor_iteration() {
   # "Runtime evidence"): provider/model/agent for both roles.
   specrelay::workflow::record_effective_roles "$root" "$task_id"
   specrelay::workflow::record_effective_verification_policy "$root" "$task_id"
+  specrelay::workflow::record_effective_execution_efficiency_policy "$root" "$task_id"
 
   local round rc started ended duration
   round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
@@ -1090,34 +1231,52 @@ specrelay::workflow::executor_iteration() {
   specrelay::evidence::capture "$root" "$task_dir"
   specrelay::timeline::finish "$task_dir" executor_evidence_capture passed
 
-  # Result card (spec 0013): the executor's completion, with elapsed time. Shown
-  # for both success and failure so a finished provider is always obvious.
   if [ -n "$started" ] && [ -n "$ended" ]; then
     duration="$(specrelay::out::format_duration "$((ended - started))")"
   else
     duration="unknown"
   fi
-  if [ "$rc" -eq 0 ]; then
-    specrelay::out::card green "Executor Result" "SUCCESS" "Duration $duration"
-  else
-    specrelay::out::card red "Executor Result" "FAILED (exit $rc)" "Duration $duration"
-  fi
 
   if [ "$rc" -ne 0 ]; then
+    specrelay::out::card red "Executor Result" "FAILED (exit $rc)" "Duration $duration"
     specrelay::out::err "[executor] task '$task_id': provider exited non-zero ($rc); not submitted for review"
     return 1
   fi
 
-  local f missing=0
+  # Executor completion gate (spec 0021, "Required Executor Artifacts" /
+  # "Unresolved Waiting Detection"): a provider exit code of zero is NOT
+  # sufficient evidence of successful role completion by itself. This check
+  # runs, and any resulting card is printed, BEFORE the SUCCESS card — never
+  # after — so a completion-gate failure can never be preceded by a false
+  # "Executor Result: SUCCESS" card (the exact incorrect behavior spec 0021
+  # exists to prevent).
+  local gate_reason=""
+  local f
   for f in 03-executor-log.md 07-tests.txt 08-executor-summary.md; do
     if [ ! -s "$task_dir/$f" ]; then
-      specrelay::out::err "[executor] task '$task_id': required output '$f' missing/empty; not submitted for review"
-      missing=1
+      gate_reason="required Executor artifact '$f' is missing or empty"
+      break
     fi
   done
-  if [ "$missing" -ne 0 ]; then
+
+  if [ -z "$gate_reason" ]; then
+    local unresolved_wait_policy
+    unresolved_wait_policy="$(specrelay::workflow::effective_execution_efficiency_field "$root" "$task_id" executor unresolved_wait_is_failure)"
+    if [ "$unresolved_wait_policy" = "true" ] && \
+       [ "$(specrelay::agent_efficiency::detect_unresolved_wait "$task_dir/12-executor-stdout.txt")" = "detected" ]; then
+      gate_reason="provider exited without completing its declared background work"
+    fi
+  fi
+
+  if [ -n "$gate_reason" ]; then
+    specrelay::out::card red "Executor Result" "INCOMPLETE" "Duration $duration"
+    specrelay::out::err "[executor] task '$task_id': provider exited successfully, but Executor completion contract failed: $gate_reason; not submitted for review"
+    specrelay::agent_efficiency::record_completion_gate "$task_dir" executor failed "$gate_reason"
     return 1
   fi
+
+  specrelay::agent_efficiency::record_completion_gate "$task_dir" executor passed
+  specrelay::out::card green "Executor Result" "SUCCESS" "Duration $duration"
 
   # Snapshot task-owned working-tree paths BEFORE submitting, so the NEXT
   # claim's guard allows this round's accumulated diff to persist into the
@@ -1249,6 +1408,26 @@ specrelay::workflow::reviewer_iteration() {
   rm -f "$prompt_file"
   specrelay::verification::extract_from_events "$task_dir" reviewer "$task_dir/20-reviewer-events.jsonl"
 
+  # Reviewer completion gate, unresolved-waiting check (spec 0021,
+  # "Unresolved Waiting Detection"): inspected on the provider's FINAL
+  # extracted output ONLY (15-reviewer-stdout.txt), before any marker-only
+  # recovery is attempted, and before a rc=0/rc=2 outcome is otherwise
+  # treated as reviewer completion. A provider crash (rc not in {0,2}) is a
+  # distinct, already-handled failure mode and is left to the existing
+  # branch below.
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
+    local reviewer_wait_policy
+    reviewer_wait_policy="$(specrelay::workflow::effective_execution_efficiency_field "$root" "$task_id" reviewer unresolved_wait_is_failure)"
+    if [ "$reviewer_wait_policy" = "true" ] && \
+       [ "$(specrelay::agent_efficiency::detect_unresolved_wait "$task_dir/15-reviewer-stdout.txt")" = "detected" ]; then
+      specrelay::timeline::finish "$task_dir" reviewer_provider_execution passed
+      specrelay::agent_efficiency::record_completion_gate "$task_dir" reviewer failed \
+        "provider exited without completing its declared background work"
+      specrelay::out::err "[reviewer] task '$task_id': provider exited successfully, but Reviewer completion contract failed: provider exited without completing its declared background work; task stays REVIEWER_RUNNING"
+      return 1
+    fi
+  fi
+
   # rc=2 (spec 0019, marker.sh/providers/claude.sh): the provider itself
   # succeeded but produced no valid DECISION marker. Before treating this as
   # an ordinary failure, attempt ONE narrow marker-only recovery — never a
@@ -1290,15 +1469,12 @@ specrelay::workflow::reviewer_iteration() {
 
   decision="$(printf '%s\n' "$decision" | tail -n1 | tr -d '[:space:]')"
 
-  # Result card (spec 0013): the reviewer's completion decision. Emitted only
-  # for a recognized decision (ACCEPT green = completed, REQUEST_CHANGES yellow
-  # = rework); an unrecognized/failed decision is reported by the log line below
-  # instead, so a card never asserts a decision that was not actually made.
-  case "$decision" in
-    ACCEPT)          specrelay::out::card green  "Reviewer Result" "ACCEPT" ;;
-    REQUEST_CHANGES) specrelay::out::card yellow "Reviewer Result" "REQUEST_CHANGES" ;;
-  esac
-
+  # Result card (spec 0013 / spec 0021): the reviewer's completion decision.
+  # Printed ONLY after the completion gate (required Reviewer artifacts —
+  # spec 0021, "Required Reviewer Artifacts") has actually passed, inside the
+  # success branches below — never here, and never before that check — so a
+  # card never asserts a decision that the completion gate went on to reject.
+  #
   # Re-read the canonical state AFTER the reviewer provider ran. A real
   # reviewer agent runs under `claude --print --dangerously-skip-permissions`
   # and CAN itself enact the accept/request-changes transition (neither is
@@ -1318,6 +1494,8 @@ specrelay::workflow::reviewer_iteration() {
         REVIEWER_RUNNING)
           if ! specrelay::marker::artifacts_consistent "$task_dir" ACCEPT; then
             specrelay::timeline::finish "$task_dir" reviewer_transition failed
+            specrelay::agent_efficiency::record_completion_gate "$task_dir" reviewer failed \
+              "required Reviewer artifact for ACCEPT is missing or empty (09-consultant-review.md / 10-business-summary.md)"
             return 1
           fi
           if ! specrelay::transitions::accept "$root" "$task_id" "$provider"; then
@@ -1325,10 +1503,14 @@ specrelay::workflow::reviewer_iteration() {
             return 1
           fi
           specrelay::timeline::finish "$task_dir" reviewer_transition passed
+          specrelay::agent_efficiency::record_completion_gate "$task_dir" reviewer passed
+          specrelay::out::card green "Reviewer Result" "ACCEPT"
           specrelay::out::log "[reviewer] task '$task_id': accepted -> READY_FOR_HUMAN_REVIEW"
           ;;
         READY_FOR_HUMAN_REVIEW)
           specrelay::timeline::finish "$task_dir" reviewer_transition passed
+          specrelay::agent_efficiency::record_completion_gate "$task_dir" reviewer passed
+          specrelay::out::card green "Reviewer Result" "ACCEPT"
           specrelay::out::log "[reviewer] task '$task_id': already accepted -> READY_FOR_HUMAN_REVIEW (reviewer enacted the transition; runner stops cleanly)"
           ;;
         *)
@@ -1343,6 +1525,8 @@ specrelay::workflow::reviewer_iteration() {
         REVIEWER_RUNNING)
           if ! specrelay::marker::artifacts_consistent "$task_dir" REQUEST_CHANGES; then
             specrelay::timeline::finish "$task_dir" reviewer_transition failed
+            specrelay::agent_efficiency::record_completion_gate "$task_dir" reviewer failed \
+              "required Reviewer artifact for REQUEST_CHANGES is missing or empty (09-consultant-review.md / 11-next-executor-prompt.md)"
             return 1
           fi
           local reason
@@ -1353,10 +1537,14 @@ specrelay::workflow::reviewer_iteration() {
             return 1
           fi
           specrelay::timeline::finish "$task_dir" reviewer_transition passed
+          specrelay::agent_efficiency::record_completion_gate "$task_dir" reviewer passed
+          specrelay::out::card yellow "Reviewer Result" "REQUEST_CHANGES"
           specrelay::out::log "[reviewer] task '$task_id': changes requested -> CHANGES_REQUESTED"
           ;;
         CHANGES_REQUESTED)
           specrelay::timeline::finish "$task_dir" reviewer_transition passed
+          specrelay::agent_efficiency::record_completion_gate "$task_dir" reviewer passed
+          specrelay::out::card yellow "Reviewer Result" "REQUEST_CHANGES"
           specrelay::out::log "[reviewer] task '$task_id': changes already requested -> CHANGES_REQUESTED (reviewer enacted the transition; runner stops cleanly)"
           ;;
         *)
@@ -1553,6 +1741,15 @@ specrelay::workflow::_finalize_invocation() {
   # task — e.g. the fake provider, or a run that used the generic streaming
   # fallback with no renderer).
   specrelay::command_timing::render "$task_dir" "$task_id" "$mode"
+
+  # Agent-efficiency report (spec 0021, "Terminal Output"): rendered AFTER
+  # the command-timing ledger, exactly matching the spec's own ordering
+  # ("Agent Efficiency" section follows the execution timeline/command
+  # timing). Writes 22-agent-efficiency.json (a no-op, honest degrade when
+  # this task recorded no completion-gate result and no command-timing
+  # events at all — e.g. the fake provider without any recorded gate, or a
+  # legacy task).
+  specrelay::agent_efficiency::render "$task_dir" "$task_id" "$mode"
 }
 
 specrelay::workflow::assert_engine_compat() {

@@ -111,6 +111,16 @@ Workflow engine:
                              waiting/polling commands. Never mutates task
                              state. A legacy/never-instrumented task is
                              reported honestly as not recorded.
+  task efficiency <task-ref> [--json]
+                             Read-only agent execution-efficiency and
+                             completion-gate report (spec 0021): observable
+                             operations by category (exploration/
+                             implementation/verification/waiting/artifact-
+                             writing), the completion-gate result per role,
+                             unjustified repeated verification, and
+                             post-verification timing. Never mutates task
+                             state. A legacy/never-instrumented task is
+                             reported honestly as not recorded.
 
 <task-ref> accepts a full task id, a unique numeric prefix, or a unique
 partial slug (e.g. 'specrelay show 0084').
@@ -574,6 +584,70 @@ print("no" if d.get("recorded") is False else "yes")' 2>/dev/null)"
   # (the same honest "not recorded" contract as the timeline itself — 'task
   # commands' below reports that case explicitly).
   specrelay::command_timing::report "$task_dir" "$task_id" "$mode"
+
+  # Agent-efficiency summary (spec 0021, "Task Inspection" — extend 'task
+  # timeline' to include the efficiency summary). Read-only recompute, never
+  # a write; a task with no recorded completion-gate/command-timing evidence
+  # at all reports "not recorded" via 'task efficiency' instead of here.
+  specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode"
+}
+
+# specrelay::cli::task_efficiency <task-ref> [--json]
+# Read-only (spec 0021, "Task Inspection"): the agent execution-efficiency
+# and completion-gate report for one task. Never mutates task state. A
+# legacy/never-instrumented task is reported honestly rather than fabricated.
+specrelay::cli::task_efficiency() {
+  local root ref="" as_json=0 task_id task_dir
+  root="$(specrelay::cli::require_project_root)" || return 1
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *)
+        if [ -n "$ref" ]; then specrelay::out::err "too many arguments"; return 2; fi
+        ref="$1"; shift ;;
+    esac
+  done
+  if [ -z "$ref" ]; then
+    specrelay::out::err "usage: specrelay task efficiency <task-ref> [--json]"
+    return 2
+  fi
+
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+  task_dir="$(specrelay::task::dir "$root" "$task_id")"
+
+  local current mode
+  current="$(specrelay::state::canonical "$(specrelay::state::path "$task_dir")" 2>/dev/null || true)"
+  case "$current" in
+    READY_FOR_HUMAN_REVIEW|BLOCKED) mode=final ;;
+    *) mode=partial ;;
+  esac
+
+  if [ "$as_json" -eq 1 ]; then
+    specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode" --json
+    return 0
+  fi
+
+  local blob recorded
+  blob="$(specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode" --json 2>/dev/null)"
+  recorded="$(printf '%s' "$blob" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+roles = d.get("roles") or {}
+any_recorded = any(
+    (r.get("completion_gate") not in (None, "not_recorded")) or (r.get("observable_operations") or 0) > 0
+    for r in roles.values()
+)
+print("yes" if any_recorded else "no")' 2>/dev/null)"
+  if [ "$recorded" != "yes" ]; then
+    echo "Agent efficiency: not recorded for task '$task_id' (legacy task, or no invocation has run yet)."
+    return 0
+  fi
+
+  specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode"
 }
 
 # specrelay::cli::task_commands <task-ref> [--json]
@@ -866,8 +940,9 @@ specrelay::cli::task_dispatch() {
     authorize-submit) specrelay::cli::task_authorize_submit "$@" ;;
     timeline) specrelay::cli::task_timeline "$@" ;;
     commands) specrelay::cli::task_commands "$@" ;;
+    efficiency) specrelay::cli::task_efficiency "$@" ;;
     "")
-      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline|commands>"
+      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline|commands|efficiency>"
       return 2
       ;;
     *)
