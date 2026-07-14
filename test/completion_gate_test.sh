@@ -34,7 +34,12 @@ specrelay_test::run() {
 proj_a="$(specrelay_test::mktemp_specrelay_project)"
 mkdir -p "$proj_a/docs/sdd/0001-gate-ok"
 echo "# gate ok spec" > "$proj_a/docs/sdd/0001-gate-ok/spec.md"
-out_a="$(specrelay_test::run "$proj_a" "docs/sdd/0001-gate-ok/spec.md" 2>&1)"
+# --verbose (spec 0022, "Summary-first terminal output"): the default run
+# output is now a concise operator summary; the full agent-efficiency
+# completion-gate detail this scenario checks is still fully captured, just
+# only PRINTED with --verbose (see 'task efficiency'/'task report' for the
+# always-available read-only equivalent).
+out_a="$(specrelay_test::run "$proj_a" "docs/sdd/0001-gate-ok/spec.md" --verbose 2>&1)"
 specrelay_test::assert_eq "A: run exits 0" "0" "$?"
 specrelay_test::assert_contains "A: reaches READY_FOR_HUMAN_REVIEW" "$out_a" "READY_FOR_HUMAN_REVIEW"
 specrelay_test::assert_contains "A: executor completion gate passed" "$out_a" $'Executor: passed'
@@ -141,7 +146,8 @@ specrelay_test::assert_contains "E: reaches READY_FOR_HUMAN_REVIEW despite wait_
 proj_f="$(specrelay_test::mktemp_specrelay_project)"
 mkdir -p "$proj_f/docs/sdd/0006-reviewer-accept"
 echo "# reviewer accept spec" > "$proj_f/docs/sdd/0006-reviewer-accept/spec.md"
-out_f="$(specrelay_test::run "$proj_f" "docs/sdd/0006-reviewer-accept/spec.md" 2>&1)"
+# --verbose: see the note on scenario A above.
+out_f="$(specrelay_test::run "$proj_f" "docs/sdd/0006-reviewer-accept/spec.md" --verbose 2>&1)"
 specrelay_test::assert_eq "F: run exits 0" "0" "$?"
 specrelay_test::assert_contains "F: reviewer completion gate passed" "$out_f" $'Reviewer: passed'
 

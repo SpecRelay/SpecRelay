@@ -110,6 +110,20 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/doctor.sh"
 # shellcheck source=lib/specrelay/project_init.sh
 . "$LIB_DIR/project_init.sh"
+# shellcheck source=lib/specrelay/execution_mode.sh
+. "$LIB_DIR/execution_mode.sh"
+# shellcheck source=lib/specrelay/install_metadata.sh
+. "$LIB_DIR/install_metadata.sh"
+# shellcheck source=lib/specrelay/update_state.sh
+. "$LIB_DIR/update_state.sh"
+# shellcheck source=lib/specrelay/update_discovery.sh
+. "$LIB_DIR/update_discovery.sh"
+# shellcheck source=lib/specrelay/update.sh
+. "$LIB_DIR/update.sh"
+# shellcheck source=lib/specrelay/summary.sh
+. "$LIB_DIR/summary.sh"
+# shellcheck source=lib/specrelay/release.sh
+. "$LIB_DIR/release.sh"
 # shellcheck source=lib/specrelay/cli.sh
 . "$LIB_DIR/cli.sh"
 

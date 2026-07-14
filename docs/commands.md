@@ -229,6 +229,94 @@ specrelay version
 specrelay help | --help | -h
 ```
 
+## Execution modes and updates (spec 0022)
+
+```
+specrelay environment [--json]
+```
+Read-only. Reports the **execution-mode contract**: `source-local` (a
+repository checkout, e.g. `bin/specrelay`) or `installed` (an installed
+`specrelay` launcher), the executable/resources in use, and whether automatic
+update checks are enabled (always `disabled` for source-local execution — see
+"Execution mode detection" below). `--json` gives the machine-readable form.
+
+```
+specrelay install-info [--json]
+```
+Read-only, no network. For an **installed** SpecRelay: version, commit,
+executable/resource paths, configured update source, and last-update time,
+read from the installation metadata written under the install prefix (never
+in a consumer repository). A **source-local** checkout reports that
+installed-update metadata is not applicable. Missing/malformed metadata (a
+pre-spec-0022 install) is reported as an actionable diagnostic, never a crash
+— see [updates.md](updates.md#migrating-an-existing-installation).
+
+```
+specrelay update --check
+specrelay update [--yes]
+specrelay update --from <path>
+specrelay update --dry-run
+specrelay update --ignore <version>
+specrelay update --reset-notifications
+```
+**Installed mode only** — `bin/specrelay update` (source-local) always
+refuses cleanly and explains why, never mutating the repository. `--check` is
+read-only discovery that bypasses the 24h cache. Plain `update` discovers the
+newest release, asks for confirmation (unless `--yes`), then atomically
+stages, verifies, and activates it — preserving the prior installation until
+the new one is verified, rolling back automatically if it is not. `--from`
+updates from an explicit local SpecRelay source instead of the configured
+official source (refuses a dirty source checkout). `--dry-run` shows the plan
+without changing anything. `--ignore`/`--reset-notifications` control the
+daily-check dismissal state. Full behavior, the daily-check contract, CI
+safety, and rollback design are in [updates.md](updates.md).
+
+```
+specrelay run <spec> --verbose
+specrelay resume <task> --verbose
+```
+`--verbose` prints the full execution-timeline/command-timing/agent-efficiency
+detail inline, **in addition to** the concise default summary (see
+"Summary-first terminal output" below).
+
+```
+specrelay task report <task-ref> [--json]
+```
+Read-only: the combined execution-timeline + command-timing + agent-efficiency
+report for one task — the full detail the default summary no longer dumps
+automatically. `task timeline`/`task commands`/`task efficiency` remain
+available as focused single-topic views.
+
+### Summary-first terminal output
+
+A normal `run`/`resume` now ends with a concise "SpecRelay Result" card
+(task, executor/reviewer status+duration, tests, context readiness, active
+time, a collapsed warning count) instead of an automatic full telemetry dump.
+The Execution Timeline, Verification Ledger, Duplicate Work, Command Timing,
+Repeated Agent Commands, Tool Counts, and Agent Efficiency detail blocks are
+still fully captured — they are simply no longer printed by default. Use
+`--verbose`, or `specrelay task report|timeline|commands|efficiency`, to see
+them.
+
+## Release commands (source-local only; spec 0022)
+
+```
+bin/specrelay release plan
+bin/specrelay release prepare
+bin/specrelay release verify
+bin/specrelay release tag
+```
+Manage **this SpecRelay checkout's own** `VERSION`/`CHANGELOG.md`/tags — never
+a consumer project's. `plan` is read-only (current version, pending
+release-impact metadata from specs after 0022, proposed version, source
+task(s)). `prepare` updates `VERSION` and `CHANGELOG.md` for the highest
+pending impact and shows the diff; it never commits, tags, or pushes. `verify`
+checks semver syntax, monotonic increase, a `CHANGELOG.md` entry, and that
+source-local `specrelay version` reports it. `tag` creates the `vX.Y.Z`
+annotated tag from a clean, committed tree; it refuses a dirty tree or an
+existing tag and never pushes. See [release-process.md](release-process.md)
+for the release-impact metadata contract and the pre-1.0 versioning policy.
+
 ## Compatibility commands (`.ai/scripts/`) — deprecated wrappers
 
 These public shims survive **only** as deprecated wrappers during the cutover

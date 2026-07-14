@@ -6,13 +6,15 @@ what it does **not** support. For a first install, see
 [installation.md](installation.md); for the future packaging plan, see
 [homebrew.md](homebrew.md).
 
-> **There is no `specrelay self-update`.** SpecRelay does **not** have a
-> `self-update` command, and this document does not pretend one exists.
-> Upgrading is done by updating your local SpecRelay checkout (or source tree)
-> and re-running the installer, as described below. Whether to add
-> `self-update` later is a recorded follow-up and, until a maintainer decides
-> otherwise, a documented **non-goal** — see
-> [Self-update: non-goal for now](#self-update-non-goal-for-now).
+> **`specrelay update` (spec 0022)** is the safe, installed-mode self-update
+> command: `specrelay update [--yes]`, `--check`, `--from <path>`,
+> `--dry-run`. It atomically stages, verifies, and activates a newer release,
+> rolling back automatically if verification fails, and never runs for a
+> source-local checkout (`bin/specrelay`/`./bin/specrelay`) — those always run
+> the current working tree and never perform automatic update discovery. Full
+> details: [updates.md](updates.md). The manual source-clone/reinstall path
+> below remains supported and is what `specrelay update --from` uses under
+> the hood for an explicit local source.
 
 ## How upgrading works
 
@@ -198,13 +200,13 @@ the manual commands above:
 Remove those per-project by hand only if you intend to stop using SpecRelay in
 that specific repository.
 
-## Self-update: non-goal for now
+## Safe self-update (spec 0022)
 
-SpecRelay has **no** `specrelay self-update` command. Upgrading always goes
-through a source tree and the installer, as documented above. Adding a
-network-aware `self-update` (that fetches a newer version and reinstalls itself)
-is a possible future follow-up, but it is **not implemented** and is treated as
-a documented non-goal until a maintainer explicitly decides to build and test
-it. This mirrors the project's rule of never claiming commands or channels that
-do not exist (spec 0008, section 10). See the follow-up list in
-[versioning.md](versioning.md) and the spec's "Expected follow-up tasks".
+`specrelay update` (installed mode only) is the supported self-update path —
+see [updates.md](updates.md) for the full command reference, the daily
+automatic-discovery contract before `run`/`resume`, version-specific
+dismissal, CI/non-interactive safety, and the atomic stage/verify/activate/
+rollback design. A source-local checkout (`bin/specrelay`) never performs
+automatic update discovery and refuses `update` cleanly, by design (section
+1 of spec 0022) — upgrading a source clone still goes through `git pull` and
+re-running the installer, as documented above.

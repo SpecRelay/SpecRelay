@@ -11,7 +11,112 @@ release date.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased] — Public installation & upgrade readiness (task 0008)
+## 0.5.0 — Operator summary, safe updates, and release versioning (spec 0022)
+
+The published `VERSION` had stayed at `0.4.0` while a substantial amount of
+engine functionality shipped underneath it (specs 0009-0021), and SpecRelay
+still lacked an operator-facing update story. This release closes both gaps:
+it consolidates everything delivered since `0.4.0` (including the `task 0007`/
+`task 0008` work below, which had been sitting under an untagged
+"[Unreleased]" heading) into one honest version, and adds the execution-mode,
+update, and summary-first-output contract described below. No intermediate
+version between `0.4.0` and `0.5.0` was ever published or tagged.
+
+### Added — safe updates, installation metadata, and execution-mode contract (spec 0022)
+- **Execution-mode contract**: `bin/specrelay` (source-local) and an installed
+  `specrelay` launcher are now formally distinguished by structural,
+  symlink-safe evidence (never by command spelling alone). Source-local
+  execution never performs automatic update discovery, never reads/writes
+  update-check state, and is never influenced by an installed version.
+- `specrelay environment` / `specrelay install-info` (plus `--json`):
+  read-only, no-mutation, no-network inspection of execution mode,
+  executable/resource paths, installation metadata (version, commit, update
+  source, last-update time), and whether automatic update checks are enabled.
+- Installation metadata (`install-metadata.json`, schema v1) written atomically
+  under the install prefix by `install/install.sh` — never in a consumer
+  repository, never containing credentials.
+- Explicit update commands: `specrelay update --check` (cache-bypassing,
+  read-only discovery), `specrelay update [--yes]` (discover, confirm, stage,
+  verify, atomically activate; prints the installed version/commit as proof),
+  `specrelay update --from <path>` (explicit source, with dirty-checkout and
+  structural-validity refusal), `specrelay update --dry-run`, `specrelay
+  update --ignore <version>`, `specrelay update --reset-notifications`. All of
+  these refuse cleanly (no mutation) under source-local execution.
+- Daily (<=1/24h) automatic update discovery before `run`/`resume` in
+  installed mode only: an interactive TTY may accept/reject an offered
+  version (a rejected version is never re-offered, a later version still is);
+  a non-interactive/CI session never prompts or blocks and gets at most one
+  concise stderr advisory; discovery failure never blocks the requested
+  command. An accepted update re-executes the original command exactly once
+  (loop-safe) after activating.
+- Atomic install/update safety: a new payload is staged beside the current
+  install, verified in place (staged-payload check + a real launcher probe +
+  post-activation re-verification), and activated with a rename-based swap;
+  any failure before activation leaves the current installation completely
+  untouched, and a post-activation verification failure rolls back
+  automatically. Concurrent update attempts are serialized with stale-lock
+  reclaim.
+
+### Added — summary-first terminal output (spec 0022)
+- A normal `specrelay run`/`resume` now ends with a concise "SpecRelay
+  Result" operator-summary card (task, executor/reviewer status+duration,
+  tests, context readiness, active time, collapsed warning count) instead of
+  an automatic full telemetry dump. The full execution timeline, command
+  timing, and agent-efficiency detail are still fully captured — just no
+  longer printed by default.
+- `specrelay task report <task-ref> [--json]`: the explicit, read-only
+  command for the full combined detail the summary no longer dumps
+  automatically (execution timeline + command timing + agent efficiency in
+  one report/JSON object).
+- `specrelay run <spec> --verbose` / `specrelay resume <task> --verbose`:
+  prints the full detail inline in addition to the concise summary.
+
+### Added — release-impact metadata and release commands (spec 0022)
+- Every spec after 0022 must declare `release: { impact, rationale }`
+  (`none|patch|minor|major`); missing/malformed metadata fails release
+  preparation with an actionable message. Pre-1.0, `minor`/`major` both bump
+  the minor version and reset patch; `patch` bumps patch only.
+- `bin/specrelay release plan|prepare|verify|tag`: read-only planning,
+  VERSION/CHANGELOG.md preparation (diff shown, nothing committed), release
+  verification (semver syntax, monotonic increase, changelog presence,
+  source-local version proof), and annotated-tag creation from a clean tree.
+  None of these commit, push, or push tags automatically.
+
+### Added — consolidated capabilities delivered since 0.4.0 (specs 0009-0021)
+These were implemented across specs 0009-0021 but never previously reflected
+in a version bump or this changelog:
+- **Model/agent selection** (0009, 0012, 0014): explicit per-role provider
+  configuration, guided model selection with alias/validation support, and
+  `specrelay models [<provider>]` discovery.
+- **Context capability adapters and Context Plus** (0015, 0018): first-class,
+  pluggable context adapters (`none`, `fake`, `contextplus`), a documented
+  capability/readiness contract, and `specrelay contexts [<adapter>]`
+  diagnostics — never a silent no-op when context is required.
+- **Parallel test runner, timing profiler, and change-aware test selection**
+  (0016, 0017): `scripts/test --jobs`/`--timings`/`--slowest`, and
+  `--changed`/`--changed-from`/`--changed-files` selection with a documented,
+  always-safe fallback to the full suite.
+- **Bounded verification policy and execution timeline** (0019): a
+  command-string verification classifier, a per-task verification ledger,
+  and `specrelay task timeline <task-ref>` (phase durations, invocation/resume
+  history, duplicate-work detection, phase-budget warnings).
+- **Agent command-timing ledger** (0020): `specrelay task commands
+  <task-ref>` — slowest observed agent tool commands, repeated commands, and
+  waiting/polling detection.
+- **Agent execution-efficiency and completion gate** (0021): `specrelay task
+  efficiency <task-ref>` and a completion contract that rejects an executor/
+  reviewer invocation that exits zero without actually finishing its declared
+  work.
+
+### Notes
+- `VERSION` moves from `0.4.0` directly to `0.5.0`; no `0.4.1`-`0.4.x` or other
+  intermediate version was ever published.
+- This changelog entry is the human-reviewed record of what shipped; nothing
+  here was auto-generated by `release prepare` (that automation applies to
+  specs numbered after 0022, which carry the new `release:` metadata this
+  spec introduces).
+
+## 0.5.0 — Public installation & upgrade readiness (task 0008)
 
 Validates and documents the complete first-user journey — install, verify,
 upgrade, uninstall, bootstrap a consumer project, and plan Homebrew packaging —
@@ -62,7 +167,7 @@ workflow, provider, or task-state semantics change.
   explicit human follow-ups). No `specrelay self-update` is implemented. No
   network-dependent test was added.
 
-## [Unreleased] — Standalone release-readiness baseline (task 0007)
+## 0.5.0 — Standalone release-readiness baseline (task 0007)
 
 This entry summarizes the first clean public-release baseline for the standalone
 SpecRelay repository. It captures readiness work only; it does not change

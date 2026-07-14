@@ -10,7 +10,7 @@ exercised, not merely implemented.
 > origin host's incubated `tools/specrelay/` tree. It is preserved as a
 > point-in-time evidence record; the version numbers and host paths below
 > reflect *that* run and are **not** a live status of the current standalone
-> `0.4.0` repository.
+> `0.5.0` repository.
 
 ## Environments
 

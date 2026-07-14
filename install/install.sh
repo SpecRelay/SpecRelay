@@ -109,6 +109,26 @@ main() {
     [ -f "$src/README.md" ] && cp "$src/README.md" "$share/README.md"
     cp "$src/bin/specrelay" "$bin_target" || return 1
     chmod +x "$bin_target" || return 1
+
+    # Installation metadata (spec 0022, section 2): durable, atomic, lives
+    # under the install prefix only — never in a consumer repository, never
+    # containing credentials. Best-effort commit/remote detection: a
+    # non-git source tree (e.g. a release tarball) still installs, just with
+    # an honestly empty commit/repository.
+    local commit="" remote=""
+    if command -v git >/dev/null 2>&1 && git -C "$src" rev-parse HEAD >/dev/null 2>&1; then
+      commit="$(git -C "$src" rev-parse HEAD)"
+      remote="$(git -C "$src" remote get-url origin 2>/dev/null || true)"
+    fi
+    [ -n "$remote" ] || remote="$src"
+    if command -v python3 >/dev/null 2>&1; then
+      HOME_DIR="$share" VERSION="$version" COMMIT="$commit" EXE="$bin_target" RES="$share" \
+        SRC_TYPE="official-git" SRC_REPO="$remote" SRC_REF="main" \
+        INSTALLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        python3 "$src/lib/specrelay/py/install_metadata_lib.py" write \
+        || install::err "warning: could not write installation metadata (continuing; 'install-info' will report it as missing)"
+    fi
+
     echo "Installed SpecRelay $version:"
     echo "  executable: $bin_target"
     echo "  resources:  $share/"

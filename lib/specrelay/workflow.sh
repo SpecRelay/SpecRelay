@@ -1612,15 +1612,14 @@ specrelay::workflow::drive() {
     case "$current" in
       READY_FOR_HUMAN_REVIEW)
         specrelay::out::log "[specrelay] task '$task_id' reached READY_FOR_HUMAN_REVIEW."
-        # Final summary card (spec 0013): the terminal task result.
-        specrelay::out::card green "SpecRelay Result" "READY_FOR_HUMAN_REVIEW"
+        # The concise operator-summary card (spec 0022, section 7) replaces
+        # what used to be a bare state-only card here; it is printed once,
+        # centrally, by _finalize_invocation after this loop returns.
         rc=0
         break
         ;;
       BLOCKED)
         specrelay::out::err "[specrelay] task '$task_id' is BLOCKED."
-        # Final summary card (spec 0013): the terminal task result.
-        specrelay::out::card red "SpecRelay Result" "BLOCKED"
         rc=3
         break
         ;;
@@ -1710,13 +1709,21 @@ specrelay::workflow::_report_mode() {
   esac
 }
 
-# specrelay::workflow::_finalize_invocation <root> <task-id> <invocation-id> <exit-code>
+# specrelay::workflow::_finalize_invocation <root> <task-id> <invocation-id> <exit-code> [verbose(0|1)]
 # Times the `finalization` phase, closes out the invocation record, and
-# prints the (final or partial) execution-timeline report. Never mutates
-# task state; a missing python3/timeline module degrades to a silent no-op
-# (instrumentation must never break the workflow it observes).
+# renders the execution-timeline/command-timing/agent-efficiency evidence.
+# Never mutates task state beyond that; a missing python3/timeline module
+# degrades to a silent no-op (instrumentation must never break the workflow
+# it observes).
+#
+# Terminal output (spec 0022, section 7 "Summary-first terminal output"): by
+# default only the concise operator-summary card is PRINTED — the three
+# detailed renders below still WRITE their JSON evidence (so 'task report'/
+# 'task timeline'/'task commands'/'task efficiency' keep working), they are
+# just not dumped to the terminal unless <verbose> is 1 (run/resume
+# --verbose).
 specrelay::workflow::_finalize_invocation() {
-  local root="$1" task_id="$2" invocation_id="$3" rc="$4" task_dir state_file final_state mode
+  local root="$1" task_id="$2" invocation_id="$3" rc="$4" verbose="${5:-0}" task_dir state_file final_state mode
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
   state_file="$(specrelay::state::path "$task_dir")"
   final_state="$(specrelay::state::canonical "$state_file" 2>/dev/null || true)"
@@ -1732,24 +1739,39 @@ specrelay::workflow::_finalize_invocation() {
   specrelay::timeline::finish "$task_dir" finalization passed
 
   mode="$(specrelay::workflow::_report_mode "$rc")"
-  specrelay::timeline::render "$root" "$task_dir" "$task_id" "$mode"
 
-  # Command-timing ledger (spec 0020): rendered AFTER the execution timeline,
-  # exactly matching the spec's "Terminal Report" ("print a compact section
-  # after the execution timeline"). Writes 21-command-timings.json (a no-op,
-  # honest degrade when no command-timing events were ever recorded for this
-  # task — e.g. the fake provider, or a run that used the generic streaming
-  # fallback with no renderer).
-  specrelay::command_timing::render "$task_dir" "$task_id" "$mode"
+  if [ "$verbose" = "1" ]; then
+    specrelay::timeline::render "$root" "$task_dir" "$task_id" "$mode"
 
-  # Agent-efficiency report (spec 0021, "Terminal Output"): rendered AFTER
-  # the command-timing ledger, exactly matching the spec's own ordering
-  # ("Agent Efficiency" section follows the execution timeline/command
-  # timing). Writes 22-agent-efficiency.json (a no-op, honest degrade when
-  # this task recorded no completion-gate result and no command-timing
-  # events at all — e.g. the fake provider without any recorded gate, or a
-  # legacy task).
-  specrelay::agent_efficiency::render "$task_dir" "$task_id" "$mode"
+    # Command-timing ledger (spec 0020): rendered AFTER the execution timeline,
+    # exactly matching the spec's "Terminal Report" ("print a compact section
+    # after the execution timeline"). Writes 21-command-timings.json (a no-op,
+    # honest degrade when no command-timing events were ever recorded for this
+    # task — e.g. the fake provider, or a run that used the generic streaming
+    # fallback with no renderer).
+    specrelay::command_timing::render "$task_dir" "$task_id" "$mode"
+
+    # Agent-efficiency report (spec 0021, "Terminal Output"): rendered AFTER
+    # the command-timing ledger, exactly matching the spec's own ordering
+    # ("Agent Efficiency" section follows the execution timeline/command
+    # timing). Writes 22-agent-efficiency.json (a no-op, honest degrade when
+    # this task recorded no completion-gate result and no command-timing
+    # events at all — e.g. the fake provider without any recorded gate, or a
+    # legacy task).
+    specrelay::agent_efficiency::render "$task_dir" "$task_id" "$mode"
+  else
+    # Still WRITE the same evidence (side effect only, no terminal dump) so
+    # explicit inspection commands keep working exactly as before.
+    specrelay::timeline::render "$root" "$task_dir" "$task_id" "$mode" >/dev/null
+    specrelay::command_timing::render "$task_dir" "$task_id" "$mode" >/dev/null
+    specrelay::agent_efficiency::render "$task_dir" "$task_id" "$mode" >/dev/null
+  fi
+
+  # The concise, summary-first default final output (spec 0022, section 7.1).
+  # Printed for every terminal-for-now AND non-terminal exit alike, since an
+  # operator resuming later still benefits from an honest "where things
+  # stand" snapshot rather than only a raw exit code.
+  specrelay::summary::render "$root" "$task_dir" "$task_id" "$final_state"
 }
 
 specrelay::workflow::assert_engine_compat() {
@@ -1852,7 +1874,7 @@ specrelay::workflow::assert_schema_compat() {
 # execution in the SAME invocation and reaches READY_FOR_HUMAN_REVIEW without a
 # second manual `resume` (spec 0010). It shares `run`'s exit-code contract.
 specrelay::workflow::resume() {
-  local root="$1" task_id="$2" task_dir
+  local root="$1" task_id="$2" verbose="${3:-0}" task_dir
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
   if [ ! -d "$task_dir" ]; then
     specrelay::out::err "task not found: $task_dir"
@@ -1881,7 +1903,7 @@ specrelay::workflow::resume() {
 
   specrelay::workflow::drive "$root" "$task_id"
   local rc=$?
-  specrelay::workflow::_finalize_invocation "$root" "$task_id" "$invocation_id" "$rc"
+  specrelay::workflow::_finalize_invocation "$root" "$task_id" "$invocation_id" "$rc" "$verbose"
   specrelay::lock::release "$root" "$task_id"
   return "$rc"
 }
@@ -1896,9 +1918,9 @@ specrelay::workflow::resume() {
 #   4  provider (executor or reviewer) failure
 #   5  maximum iterations reached without acceptance
 
-# specrelay::workflow::run <project-root> <spec-arg> [task-id-override] [allow-dirty(0|1)]
+# specrelay::workflow::run <project-root> <spec-arg> [task-id-override] [allow-dirty(0|1)] [verbose(0|1)]
 specrelay::workflow::run() {
-  local root="$1" spec_arg="$2" task_id_override="${3:-}" allow_dirty="${4:-0}"
+  local root="$1" spec_arg="$2" task_id_override="${3:-}" allow_dirty="${4:-0}" verbose="${5:-0}"
   local spec_abs spec_rel task_id task_dir
 
   spec_abs="$(specrelay::task::resolve_spec_path "$root" "$spec_arg")" || return 1
@@ -1978,7 +2000,7 @@ specrelay::workflow::run() {
       specrelay::timeline::start "$task_dir" task_approval
       if ! specrelay::transitions::approve "$root" "$task_id"; then
         specrelay::timeline::finish "$task_dir" task_approval failed
-        specrelay::workflow::_finalize_invocation "$root" "$task_id" "$invocation_id" 1
+        specrelay::workflow::_finalize_invocation "$root" "$task_id" "$invocation_id" 1 "$verbose"
         specrelay::lock::release "$root" "$task_id"
         return 1
       fi
@@ -1993,7 +2015,7 @@ specrelay::workflow::run() {
   specrelay::workflow::drive "$root" "$task_id"
   rc=$?
 
-  specrelay::workflow::_finalize_invocation "$root" "$task_id" "$invocation_id" "$rc"
+  specrelay::workflow::_finalize_invocation "$root" "$task_id" "$invocation_id" "$rc" "$verbose"
   specrelay::lock::release "$root" "$task_id"
   return "$rc"
 }

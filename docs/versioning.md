@@ -19,7 +19,7 @@ Versions are `MAJOR.MINOR.PATCH`.
 Every task's `state.json` records, at creation:
 
 ```json
-{ "engine": "specrelay", "engine_version": "0.4.0", "schema_version": 1 }
+{ "engine": "specrelay", "engine_version": "0.5.0", "schema_version": 1 }
 ```
 
 `engine_version` is the `VERSION` of the engine that created the task. It is
@@ -98,17 +98,16 @@ operable.
 particular `VERSION`. The policy below answers the release questions raised in
 spec 0007 (section 5).
 
-- **Is the current version releasable as-is?** The engine at `0.4.0` is
+- **Is the current version releasable as-is?** The engine at `0.5.0` is
   functionally ready as a baseline: `scripts/test` passes, `bin/specrelay
   doctor` reports a clear result, and `bin/specrelay version` reports the
   expected value. **Publication (pushing a release tag) is nonetheless blocked**
   until the open-source license is chosen and committed (see `LICENSE.TODO` and
   `docs/publication.md`). Being *tag-ready* is not the same as *published*.
-- **What should the first public tag be?** The recommendation is `v0.4.0`, to
-  match the current `VERSION` — no functional change in this repository
-  justifies a bump, and matching keeps the tag/`VERSION` mapping obvious. Moving
-  to `v0.5.0` is a maintainer's choice if they prefer to reserve `0.4.x` as
-  pre-public; this task does **not** decide it. This is a human decision.
+- **What should the first public tag be?** `v0.5.0`, matching `VERSION` — see
+  "Release-impact metadata and release commands"
+  ([release-process.md](release-process.md)) for how future bumps beyond this
+  baseline are planned and prepared. This remains a human decision to publish.
 - **When should `VERSION` be bumped?** Following the semantic-versioning rules
   above, and *before* tagging a release that contains changes since the last
   tag: PATCH for backward-compatible fixes, MINOR for backward-compatible
@@ -132,12 +131,16 @@ only after review, enable branch protection) are recorded in
 
 ## Upgrading between versions
 
-How a user moves from one installed version to another — the source-clone
-upgrade, the version-tag upgrade, uninstall/reinstall, and the explicit fact
-that there is **no** `specrelay self-update` — is documented in
-[upgrading.md](upgrading.md). `self-update` is a recorded follow-up and a
-documented non-goal until a maintainer decides to build and test it; this
-repository never claims a command it does not implement.
+How a user moves from one installed version to another — the manual
+source-clone/reinstall path, and the safe, atomic `specrelay update` command
+family (daily discovery, dismissal, rollback) — is documented in
+[updates.md](updates.md) and [upgrading.md](upgrading.md).
+
+## Release-impact metadata for future specs
+
+Every spec after 0022 must declare a `release: { impact, rationale }` block
+and the pre-1.0 version-bump policy that follows from it; see
+[release-process.md](release-process.md).
 
 ## For consuming projects
 

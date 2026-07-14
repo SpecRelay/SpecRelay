@@ -52,15 +52,62 @@ Discovery (read-only):
                          name, inspects that adapter's description,
                          availability, capability level, and capabilities.
                          Never performs a billable provider invocation.
+  environment [--json]  Execution-mode contract (spec 0022): source-local vs
+                         installed, the executable/resources in use, and
+                         whether automatic update checks are enabled.
+  install-info [--json] Read-only installation detail for an INSTALLED
+                         SpecRelay: version, commit, executable/resource
+                         paths, update source, and last-update time. A
+                         source-local checkout reports that installed-update
+                         metadata is not applicable. Never mutates, never
+                         touches the network.
+
+Updates (installed execution only; spec 0022):
+  update --check         Read-only discovery: installed vs. available
+                         version, bypassing the 24h cache. Never mutates.
+  update [--yes]         Discover, confirm (or --yes), atomically stage,
+                         verify, and activate the newest release. Prints the
+                         installed version/commit as proof. Rolls back
+                         automatically if post-activation verification fails.
+  update --from <path>   Update from an explicit local SpecRelay source
+                         checkout instead of the configured official source.
+                         Refuses a dirty source checkout.
+  update --dry-run       Shows the update plan without changing anything.
+  update --ignore <ver>  Never offer this exact version again (a later
+                         version is still offered).
+  update --reset-notifications
+                         Clears cached update-check/dismissal state.
+  bin/specrelay never performs automatic update discovery — only an
+  installed 'specrelay' launcher does, at most once per 24h before 'run'/
+  'resume', and never in a non-interactive session (see docs/updates.md).
+
+Release (source-local only; spec 0022):
+  release plan            Read-only: current VERSION, pending release-impact
+                         metadata from specs after 0022, proposed version,
+                         and source task(s). No mutation.
+  release prepare         Updates VERSION and CHANGELOG.md for the highest
+                         pending release-impact bump and shows the diff.
+                         Never commits, tags, or pushes.
+  release verify          Verifies semantic-version syntax, monotonic
+                         increase, a CHANGELOG.md entry for the new version,
+                         and that source-local 'specrelay version' reports it.
+  release tag             Creates the vX.Y.Z annotated tag from a clean
+                         working tree. Refuses a dirty tree or an existing
+                         tag. Never pushes.
 
 Workflow engine:
-  run <spec-path> [--task-id <id>] [--allow-dirty-baseline]
+  run <spec-path> [--task-id <id>] [--allow-dirty-baseline] [--verbose]
                          Run the full lifecycle for a spec: create/resolve
                          the task, approve it, run executor/reviewer rounds
                          until READY_FOR_HUMAN_REVIEW, CHANGES_REQUESTED-only
                          (manual reviewer), BLOCKED, a provider failure, or
-                         the configured maximum iterations.
-  resume <task-ref>      Resume an existing task from its persisted state and
+                         the configured maximum iterations. Ends with a
+                         concise operator-summary card by default (spec
+                         0022); --verbose also prints the full execution
+                         timeline, command timing, and agent-efficiency
+                         detail inline.
+  resume <task-ref> [--verbose]
+                         Resume an existing task from its persisted state and
                          drive the executor/reviewer loop to the next terminal
                          or explicit-stop state, exactly like 'run' (never
                          restarts from the beginning). With an automated
@@ -121,6 +168,12 @@ Workflow engine:
                              post-verification timing. Never mutates task
                              state. A legacy/never-instrumented task is
                              reported honestly as not recorded.
+  task report <task-ref> [--json]
+                             Read-only (spec 0022): the combined execution
+                             timeline, command-timing, and agent-efficiency
+                             report for one task — the full detail a normal
+                             run's concise operator summary no longer dumps
+                             automatically. Never mutates task state.
 
 <task-ref> accepts a full task id, a unique numeric prefix, or a unique
 partial slug (e.g. 'specrelay show 0084').
@@ -267,6 +320,305 @@ specrelay::cli::workflow_inspect() {
   return 0
 }
 
+# --- execution mode / installation (spec 0022) ------------------------------
+
+# specrelay::cli::_update_checks_enabled -> "enabled" or "disabled", honoring
+# SPECRELAY_UPDATE_CHECK=0 (spec 5.9). Only meaningful in installed mode.
+specrelay::cli::_update_checks_enabled() {
+  case "${SPECRELAY_UPDATE_CHECK:-1}" in
+    0) printf 'disabled\n' ;;
+    *) printf 'enabled\n' ;;
+  esac
+}
+
+# specrelay::cli::cmd_environment <home> [--json]
+specrelay::cli::cmd_environment() {
+  local home="$1"; shift
+  local as_json=0
+  case "${1:-}" in
+    --json) as_json=1 ;;
+    "") ;;
+    *) specrelay::out::err "usage: specrelay environment [--json]"; return 2 ;;
+  esac
+
+  local mode executable resources update_checks
+  mode="$(specrelay::execution_mode::detect "$home")"
+  executable="$(specrelay::execution_mode::executable_path "$home")"
+  resources="$(specrelay::execution_mode::resource_path "$home")"
+  if [ "$mode" = "installed" ]; then
+    local meta_exe
+    meta_exe="$(specrelay::install_metadata::read_field "$home" executable_path 2>/dev/null)"
+    [ -n "$meta_exe" ] && executable="$meta_exe"
+    update_checks="$(specrelay::cli::_update_checks_enabled)"
+  else
+    update_checks="disabled"
+  fi
+
+  if [ "$as_json" -eq 1 ]; then
+    EXEC_MODE="$mode" EXECUTABLE="$executable" RESOURCES="$resources" UPDATE_CHECKS="$update_checks" \
+      python3 -c '
+import json, os
+d = {
+    "execution_mode": os.environ["EXEC_MODE"],
+    "executable": os.environ["EXECUTABLE"],
+    "resources": os.environ["RESOURCES"],
+    "update_checks": os.environ["UPDATE_CHECKS"],
+}
+if os.environ["EXEC_MODE"] == "installed":
+    d["check_interval_hours"] = 24
+print(json.dumps(d, indent=2, sort_keys=True))
+'
+    return 0
+  fi
+
+  echo "SpecRelay environment"
+  echo "  Execution mode: $mode"
+  echo "  Executable:     $executable"
+  echo "  Resources:      $resources"
+  echo "  Update checks:  $update_checks"
+  [ "$mode" = "installed" ] && echo "  Check interval: 24h"
+  return 0
+}
+
+# specrelay::cli::cmd_install_info <home> [--json]
+# Read-only, no mutation, no network (spec section 3).
+specrelay::cli::cmd_install_info() {
+  local home="$1"; shift
+  local as_json=0
+  case "${1:-}" in
+    --json) as_json=1 ;;
+    "") ;;
+    *) specrelay::out::err "usage: specrelay install-info [--json]"; return 2 ;;
+  esac
+
+  local mode
+  mode="$(specrelay::execution_mode::detect "$home")"
+
+  if [ "$mode" = "source-local" ]; then
+    if [ "$as_json" -eq 1 ]; then
+      printf '{\n  "mode": "source-local",\n  "note": "installed update metadata is not applicable to a source-local checkout"\n}\n'
+      return 0
+    fi
+    echo "SpecRelay installation: source-local"
+    echo "This is a repository checkout (bin/specrelay). It always runs the current"
+    echo "working tree and has no installed-update metadata — that only exists for an"
+    echo "installed 'specrelay' launcher. See docs/updates.md."
+    return 0
+  fi
+
+  local version commit resources update_type update_repo update_ref installed_at exe meta_ok=1
+  if ! specrelay::install_metadata::validate "$home" >/dev/null 2>&1; then
+    meta_ok=0
+  fi
+  version="$(specrelay::install_metadata::read_field "$home" installed_version 2>/dev/null)"
+  commit="$(specrelay::install_metadata::read_field "$home" installed_commit 2>/dev/null)"
+  exe="$(specrelay::install_metadata::read_field "$home" executable_path 2>/dev/null)"
+  resources="$(specrelay::install_metadata::read_field "$home" resource_path 2>/dev/null)"
+  update_type="$(specrelay::install_metadata::read_field "$home" update_source.type 2>/dev/null)"
+  update_repo="$(specrelay::install_metadata::read_field "$home" update_source.repository 2>/dev/null)"
+  update_ref="$(specrelay::install_metadata::read_field "$home" update_source.ref 2>/dev/null)"
+  installed_at="$(specrelay::install_metadata::read_field "$home" installed_at 2>/dev/null)"
+  [ -n "$exe" ] || exe="$(specrelay::execution_mode::executable_path "$home")"
+  [ -n "$resources" ] || resources="$home"
+
+  if [ "$as_json" -eq 1 ]; then
+    META_OK="$meta_ok" VERSION="$version" COMMIT="$commit" EXE="$exe" RES="$resources" \
+      UPDATE_TYPE="$update_type" UPDATE_REPO="$update_repo" UPDATE_REF="$update_ref" INSTALLED_AT="$installed_at" \
+      python3 -c '
+import json, os
+print(json.dumps({
+    "mode": "installed",
+    "metadata_present": os.environ["META_OK"] == "1",
+    "version": os.environ.get("VERSION", ""),
+    "commit": os.environ.get("COMMIT", ""),
+    "executable": os.environ.get("EXE", ""),
+    "resources": os.environ.get("RES", ""),
+    "update_source": {
+        "type": os.environ.get("UPDATE_TYPE", ""),
+        "repository": os.environ.get("UPDATE_REPO", ""),
+        "ref": os.environ.get("UPDATE_REF", ""),
+    },
+    "installed_at": os.environ.get("INSTALLED_AT", ""),
+}, indent=2, sort_keys=True))
+'
+    return 0
+  fi
+
+  local last_update="${installed_at:-(unknown)}"
+  case "$last_update" in
+    *T*Z) last_update="$(printf '%s' "$last_update" | sed 's/T/ /; s/Z$/ UTC/')" ;;
+  esac
+
+  if [ "$meta_ok" -eq 0 ]; then
+    specrelay::out::card yellow "SpecRelay Installation" \
+      "$(printf '%-16s%s' "Mode" "installed")" \
+      "$(printf '%-16s%s' "Executable" "$exe")" \
+      "$(printf '%-16s%s' "Resources" "$resources")" \
+      "Installation metadata is missing or malformed." \
+      "Reinstall from an official source to restore it (see docs/updates.md#migration)."
+    return 0
+  fi
+
+  specrelay::out::card blue "SpecRelay Installation" \
+    "$(printf '%-16s%s' "Mode" "installed")" \
+    "$(printf '%-16s%s' "Executable" "$exe")" \
+    "$(printf '%-16s%s' "Version" "${version:-(unknown)}")" \
+    "$(printf '%-16s%s' "Commit" "${commit:-(unknown)}")" \
+    "$(printf '%-16s%s' "Resources" "$resources")" \
+    "$(printf '%-16s%s' "Update source" "${update_type:-(unknown)}${update_repo:+ $update_repo}${update_ref:+ ($update_ref)}")" \
+    "$(printf '%-16s%s' "Last update" "$last_update")"
+  return 0
+}
+
+# specrelay::cli::cmd_update <home> [args...]
+# Explicit update commands (spec 0022, section 4). Installed mode only —
+# source-local execution refuses every form here without mutating anything
+# (spec 1.1, 4.6).
+specrelay::cli::cmd_update() {
+  local home="$1"; shift
+
+  if specrelay::execution_mode::is_source_local "$home"; then
+    echo "specrelay update: not applicable to a source-local checkout."
+    echo "bin/specrelay always runs the current repository working tree; there is"
+    echo "nothing installed here to update. Installed-update operations only apply"
+    echo "to an installed 'specrelay' launcher — see docs/updates.md."
+    return 1
+  fi
+
+  local check=0 dry_run=0 yes=0 from="" ignore_version="" reset=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --check) check=1; shift ;;
+      --dry-run) dry_run=1; shift ;;
+      --yes) yes=1; shift ;;
+      --from) [ "$#" -ge 2 ] || { specrelay::out::err "--from requires a value"; return 2; }
+              from="$2"; shift 2 ;;
+      --ignore) [ "$#" -ge 2 ] || { specrelay::out::err "--ignore requires a value"; return 2; }
+                ignore_version="$2"; shift 2 ;;
+      --reset-notifications) reset=1; shift ;;
+      *) specrelay::out::err "unknown 'update' option: $1"; return 2 ;;
+    esac
+  done
+
+  if [ "$reset" -eq 1 ]; then
+    specrelay::update_state::reset "$home"
+    echo "Update notification state cleared."
+    return 0
+  fi
+  if [ -n "$ignore_version" ]; then
+    specrelay::update_state::set_ignored "$home" "$ignore_version"
+    echo "Version $ignore_version will not be offered again (later versions still will be)."
+    return 0
+  fi
+
+  local installed_version bin_target
+  installed_version="$(tr -d '[:space:]' < "$home/VERSION" 2>/dev/null)"
+  bin_target="$(specrelay::install_metadata::read_field "$home" executable_path 2>/dev/null)"
+  [ -n "$bin_target" ] && [ -x "$bin_target" ] || bin_target="$(specrelay::execution_mode::executable_path "$home")"
+
+  local available="" commit="" source_desc="" cloned_dir="" repo=""
+  if [ -n "$from" ]; then
+    if [ ! -d "$from" ]; then
+      specrelay::out::err "update: --from path does not exist: $from"
+      return 1
+    fi
+    # Structural validity is checked BEFORE dirtiness: a path that is not a
+    # SpecRelay source at all should be reported as that (not misreported as
+    # "dirty" merely because it sits inside some ancestor Git repository).
+    local pair
+    pair="$(specrelay::update_discovery::from_path "$from")" || {
+      specrelay::out::err "update: '$from' does not look like a valid SpecRelay source checkout (missing VERSION, bin/specrelay, or lib/specrelay)"
+      return 1
+    }
+    if [ -d "$from/.git" ] && specrelay::update_discovery::is_dirty "$from"; then
+      specrelay::out::err "update: --from source '$from' has uncommitted changes; refusing (a dirty checkout is never reset or overwritten — commit or stash first)"
+      return 1
+    fi
+    available="${pair%% *}"
+    commit="${pair#* }"
+    source_desc="$from (explicit --from)"
+  else
+    local ref
+    repo="$(specrelay::install_metadata::read_field "$home" update_source.repository 2>/dev/null)"
+    ref="$(specrelay::install_metadata::read_field "$home" update_source.ref 2>/dev/null)"
+    if [ -z "$repo" ]; then
+      specrelay::out::err "update: no update source is configured in installation metadata, and no --from was given"
+      [ "$check" -eq 1 ] && specrelay::update_state::write "$home" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "" "" "failure"
+      return 1
+    fi
+    source_desc="$repo (official-git, ref ${ref:-main})"
+    local pair
+    if ! pair="$(specrelay::update_discovery::from_tags "$repo")"; then
+      specrelay::out::err "update: could not discover a release from $repo (network, git, or tag lookup failure)"
+      [ "$check" -eq 1 ] && specrelay::update_state::write "$home" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "" "" "failure"
+      return 1
+    fi
+    available="${pair%% *}"
+    commit="${pair#* }"
+  fi
+
+  if [ "$check" -eq 1 ]; then
+    echo "Installed version: $installed_version"
+    echo "Available version: $available"
+    specrelay::update_state::write "$home" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$available" \
+      "$(specrelay::update_state::read_field "$home" ignored_version "")" "success"
+    if specrelay::semver::gt "$available" "$installed_version"; then
+      echo "An update is available."
+    else
+      echo "Already up to date."
+    fi
+    return 0
+  fi
+
+  if ! specrelay::semver::gt "$available" "$installed_version"; then
+    echo "Already up to date (installed $installed_version; latest known is $available)."
+    return 0
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    echo "Update plan (dry run — nothing will be changed):"
+    echo "  Current installation: $installed_version at $home"
+    echo "  Selected source:      $source_desc"
+    echo "  Proposed version:     $available (commit ${commit:-unknown})"
+    echo "  Installation areas:   $home (lib, templates, VERSION, docs, README.md)"
+    echo "  Verification steps:   staged payload check, launcher probe, post-activation re-verify"
+    echo "  Activation:           would occur only if all verification steps pass"
+    return 0
+  fi
+
+  if [ "$yes" -ne 1 ]; then
+    if [ -t 0 ] && [ -t 1 ]; then
+      printf 'Update %s -> %s. Proceed? [y/N] ' "$installed_version" "$available"
+      local reply=""
+      read -r reply || reply=""
+      case "$reply" in
+        y|Y|yes|Yes|YES) : ;;
+        *) echo "Update declined."; return 1 ;;
+      esac
+    else
+      specrelay::out::err "update: refusing to update without confirmation in a non-interactive session; pass --yes"
+      return 1
+    fi
+  fi
+
+  local stage_source="$from"
+  if [ -z "$stage_source" ]; then
+    cloned_dir="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-update-src.XXXXXX")"
+    if ! git clone --quiet --depth 1 --branch "v$available" "$repo" "$cloned_dir" >/dev/null 2>&1; then
+      specrelay::out::err "update: could not fetch tag v$available from the update source ($repo)"
+      rm -rf "$cloned_dir"
+      return 1
+    fi
+    stage_source="$cloned_dir"
+  fi
+
+  local metadata_repo="${from:-$repo}"
+  local rc=0
+  specrelay::update::perform "$home" "$bin_target" "$stage_source" "$available" "$commit" "$metadata_repo" || rc=1
+  [ -n "$cloned_dir" ] && rm -rf "$cloned_dir"
+  return "$rc"
+}
+
 specrelay::cli::unimplemented() {
   local cmd="$1"
   specrelay::out::err "command '$cmd' is not implemented."
@@ -274,12 +626,89 @@ specrelay::cli::unimplemented() {
   return 1
 }
 
+# specrelay::cli::_maybe_daily_update_check <home> <cmd> <args...>
+# Cached (<=1/24h), read-only-unless-accepted update discovery before an
+# operational command (spec 0022, section 5). Installed mode only; disabled
+# entirely for source-local execution (spec 1.1). Never prompts and never
+# blocks in a non-interactive session (5.7); a discovery failure is always
+# non-blocking (5.8). On an ACCEPTED interactive update it re-executes the
+# exact original command exactly once (5.5, loop prevention via
+# SPECRELAY_UPDATE_REEXEC) and does not return to the caller.
+specrelay::cli::_maybe_daily_update_check() {
+  local home="$1" cmd="$2"; shift 2
+
+  specrelay::execution_mode::is_installed "$home" || return 0
+  [ "${SPECRELAY_UPDATE_CHECK:-1}" != "0" ] || return 0
+  [ -z "${SPECRELAY_UPDATE_REEXEC:-}" ] || return 0
+  specrelay::update_state::should_check "$home" || return 0
+
+  local repo
+  repo="$(specrelay::install_metadata::read_field "$home" update_source.repository 2>/dev/null)"
+  [ -n "$repo" ] || return 0
+
+  local now installed_version pair available commit
+  now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  installed_version="$(tr -d '[:space:]' < "$home/VERSION" 2>/dev/null)"
+
+  if ! pair="$(specrelay::update_discovery::from_tags "$repo")"; then
+    specrelay::update_state::write "$home" "$now" "" \
+      "$(specrelay::update_state::read_field "$home" ignored_version "")" "failure"
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+      specrelay::out::err "update check failed (network or source unavailable); continuing with $installed_version"
+    fi
+    return 0
+  fi
+  available="${pair%% *}"
+  commit="${pair#* }"
+  specrelay::update_state::write "$home" "$now" "$available" \
+    "$(specrelay::update_state::read_field "$home" ignored_version "")" "success"
+
+  specrelay::semver::gt "$available" "$installed_version" || return 0
+
+  local ignored
+  ignored="$(specrelay::update_state::read_field "$home" ignored_version "")"
+  [ "$available" != "$ignored" ] || return 0
+
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    specrelay::out::err "an update is available: $installed_version -> $available (run 'specrelay update' to install it, or 'specrelay update --ignore $available' to silence this)"
+    return 0
+  fi
+
+  specrelay::out::card yellow "SpecRelay Update Available" \
+    "$(printf '%-10s%s' Installed "$installed_version")" \
+    "$(printf '%-10s%s' Available "$available")"
+  printf 'Update before running this task? [y/N] '
+  local reply=""
+  read -r reply || reply=""
+  case "$reply" in
+    y|Y|yes|Yes|YES)
+      local bin_target cloned_dir
+      bin_target="$(specrelay::install_metadata::read_field "$home" executable_path 2>/dev/null)"
+      [ -n "$bin_target" ] && [ -x "$bin_target" ] || bin_target="$(specrelay::execution_mode::executable_path "$home")"
+      cloned_dir="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-update-src.XXXXXX")"
+      if git clone --quiet --depth 1 --branch "v$available" "$repo" "$cloned_dir" >/dev/null 2>&1 \
+        && specrelay::update::perform "$home" "$bin_target" "$cloned_dir" "$available" "$commit" "$repo" >&2; then
+        rm -rf "$cloned_dir"
+        specrelay::out::log "[specrelay] update installed; re-running the original command"
+        SPECRELAY_UPDATE_REEXEC=1 exec "$0" "$cmd" "$@"
+      fi
+      rm -rf "$cloned_dir"
+      specrelay::out::err "update failed; continuing with the current installation ($installed_version)"
+      return 0
+      ;;
+    *)
+      specrelay::update_state::set_ignored "$home" "$available"
+      return 0
+      ;;
+  esac
+}
+
 # --- shared option parsing for run / task create ----------------------------
 # specrelay::cli::_parse_run_args <argv...>
-# Prints three lines on success: spec, task-id-override (may be empty),
-# allow-dirty (0|1).
+# Prints four lines on success: spec, task-id-override (may be empty),
+# allow-dirty (0|1), verbose (0|1).
 specrelay::cli::_parse_run_args() {
-  local spec="" task_id_override="" allow_dirty=0
+  local spec="" task_id_override="" allow_dirty=0 verbose=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --task-id)
@@ -287,6 +716,8 @@ specrelay::cli::_parse_run_args() {
         task_id_override="$2"; shift 2 ;;
       --allow-dirty-baseline)
         allow_dirty=1; shift ;;
+      --verbose)
+        verbose=1; shift ;;
       -*)
         specrelay::out::err "unknown option: $1"; return 2 ;;
       *)
@@ -301,19 +732,20 @@ specrelay::cli::_parse_run_args() {
     specrelay::out::err "a <spec-path> is required"
     return 2
   fi
-  printf '%s\n%s\n%s\n' "$spec" "$task_id_override" "$allow_dirty"
+  printf '%s\n%s\n%s\n%s\n' "$spec" "$task_id_override" "$allow_dirty" "$verbose"
 }
 
 # --- workflow engine commands ------------------------------------------------
 
 specrelay::cli::cmd_run() {
-  local root parsed spec task_id_override allow_dirty
+  local root parsed spec task_id_override allow_dirty verbose
   root="$(specrelay::cli::require_project_root)" || return 1
   parsed="$(specrelay::cli::_parse_run_args "$@")" || return 2
   spec="$(printf '%s\n' "$parsed" | sed -n '1p')"
   task_id_override="$(printf '%s\n' "$parsed" | sed -n '2p')"
   allow_dirty="$(printf '%s\n' "$parsed" | sed -n '3p')"
-  specrelay::workflow::run "$root" "$spec" "$task_id_override" "$allow_dirty"
+  verbose="$(printf '%s\n' "$parsed" | sed -n '4p')"
+  specrelay::workflow::run "$root" "$spec" "$task_id_override" "$allow_dirty" "$verbose"
 }
 
 specrelay::cli::cmd_models() {
@@ -337,11 +769,20 @@ specrelay::cli::cmd_contexts() {
 }
 
 specrelay::cli::cmd_resume() {
-  local root ref task_id
+  local root ref="" verbose=0 task_id
   root="$(specrelay::cli::require_project_root)" || return 1
-  ref="${1:?usage: specrelay resume <task-ref>}"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --verbose) verbose=1; shift ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *)
+        if [ -n "$ref" ]; then specrelay::out::err "too many arguments"; return 2; fi
+        ref="$1"; shift ;;
+    esac
+  done
+  [ -n "$ref" ] || { specrelay::out::err "usage: specrelay resume <task-ref> [--verbose]"; return 2; }
   task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
-  specrelay::workflow::resume "$root" "$task_id"
+  specrelay::workflow::resume "$root" "$task_id" "$verbose"
 }
 
 specrelay::cli::_task_dir_for_ref() {
@@ -526,6 +967,22 @@ print("Budget warnings: %d" % len(d.get("budget_warnings", [])))
 # with no recorded timeline data remains inspectable (an honest "not
 # recorded" report rather than an error).
 specrelay::cli::task_timeline() {
+  specrelay::cli::_task_full_report "timeline" "$@"
+}
+
+# specrelay::cli::task_report <task-ref> [--json]
+# Spec 0022, section 7.3: the single explicit-inspection command that shows
+# the FULL detail (execution timeline, command timing, agent efficiency) a
+# normal run's concise operator summary no longer dumps automatically. Same
+# read-only report 'task timeline' has always produced — a distinct command
+# name because the default terminal output no longer hints at "timeline"
+# specifically as the place to look for full detail.
+specrelay::cli::task_report() {
+  specrelay::cli::_task_full_report "report" "$@"
+}
+
+specrelay::cli::_task_full_report() {
+  local usage_cmd="$1"; shift
   local root ref="" as_json=0 task_id task_dir
   root="$(specrelay::cli::require_project_root)" || return 1
 
@@ -539,7 +996,7 @@ specrelay::cli::task_timeline() {
     esac
   done
   if [ -z "$ref" ]; then
-    specrelay::out::err "usage: specrelay task timeline <task-ref> [--json]"
+    specrelay::out::err "usage: specrelay task $usage_cmd <task-ref> [--json]"
     return 2
   fi
 
@@ -547,6 +1004,40 @@ specrelay::cli::task_timeline() {
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
 
   if [ "$as_json" -eq 1 ]; then
+    if [ "$usage_cmd" = "report" ]; then
+      # 'task report --json' combines all three read-only reports into one
+      # object (spec 0022, section 7.3) — 'task timeline --json' keeps its
+      # existing single-report contract unchanged.
+      local current mode
+      current="$(specrelay::state::canonical "$(specrelay::state::path "$task_dir")" 2>/dev/null || true)"
+      case "$current" in
+        READY_FOR_HUMAN_REVIEW|BLOCKED) mode=final ;;
+        *) mode=partial ;;
+      esac
+      TIMELINE_JSON="$(specrelay::timeline::report "$root" "$task_dir" "$task_id" "$mode" --json 2>/dev/null)" \
+      COMMANDS_JSON="$(specrelay::command_timing::report "$task_dir" "$task_id" "$mode" --json 2>/dev/null)" \
+      EFFICIENCY_JSON="$(specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode" --json 2>/dev/null)" \
+      TASK_ID="$task_id" python3 -c '
+import json, os
+
+def load(name):
+    raw = os.environ.get(name, "")
+    if not raw:
+        return {"recorded": False}
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {"recorded": False}
+
+print(json.dumps({
+    "task_id": os.environ["TASK_ID"],
+    "timeline": load("TIMELINE_JSON"),
+    "command_timing": load("COMMANDS_JSON"),
+    "agent_efficiency": load("EFFICIENCY_JSON"),
+}, indent=2, sort_keys=True))
+'
+      return 0
+    fi
     specrelay::timeline::show_json "$task_dir"
     return 0
   fi
@@ -560,7 +1051,11 @@ except Exception:
     d = {}
 print("no" if d.get("recorded") is False else "yes")' 2>/dev/null)"
   if [ "$recorded" != "yes" ]; then
-    echo "Execution timeline: not recorded for task '$task_id' (legacy task, or no invocation has run yet)."
+    if [ "$usage_cmd" = "report" ]; then
+      echo "Task report: not recorded for task '$task_id' (legacy task, or no invocation has run yet)."
+    else
+      echo "Execution timeline: not recorded for task '$task_id' (legacy task, or no invocation has run yet)."
+    fi
     return 0
   fi
 
@@ -941,8 +1436,9 @@ specrelay::cli::task_dispatch() {
     timeline) specrelay::cli::task_timeline "$@" ;;
     commands) specrelay::cli::task_commands "$@" ;;
     efficiency) specrelay::cli::task_efficiency "$@" ;;
+    report) specrelay::cli::task_report "$@" ;;
     "")
-      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline|commands|efficiency>"
+      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline|commands|efficiency|report>"
       return 2
       ;;
     *)
@@ -1010,9 +1506,11 @@ specrelay::cli::main() {
       esac
       ;;
     run)
+      specrelay::cli::_maybe_daily_update_check "$home" run "$@"
       specrelay::cli::cmd_run "$@"
       ;;
     resume)
+      specrelay::cli::_maybe_daily_update_check "$home" resume "$@"
       specrelay::cli::cmd_resume "$@"
       ;;
     status)
@@ -1035,6 +1533,31 @@ specrelay::cli::main() {
       ;;
     contexts)
       specrelay::cli::cmd_contexts "$@"
+      ;;
+    environment)
+      specrelay::cli::cmd_environment "$home" "$@"
+      ;;
+    install-info)
+      specrelay::cli::cmd_install_info "$home" "$@"
+      ;;
+    update)
+      specrelay::cli::cmd_update "$home" "$@"
+      ;;
+    release)
+      case "${1:-}" in
+        plan) specrelay::release::plan "$home" ;;
+        prepare) specrelay::release::prepare "$home" ;;
+        verify) specrelay::release::verify "$home" ;;
+        tag) specrelay::release::tag "$home" ;;
+        "")
+          specrelay::out::err "usage: specrelay release <plan|prepare|verify|tag>"
+          return 2
+          ;;
+        *)
+          specrelay::out::err "unknown 'release' subcommand: $1"
+          return 2
+          ;;
+      esac
       ;;
     review)
       specrelay::cli::unimplemented "$cmd"

@@ -167,9 +167,10 @@ specrelay_test::assert_true "packaging/homebrew/specrelay.rb exists" \
   "$( [ -f "$SPECRELAY_ROOT/packaging/homebrew/specrelay.rb" ]; echo $? )"
 
 upgrading="$(cat "$SPECRELAY_ROOT/docs/upgrading.md" 2>/dev/null)"
-# Honest about the absence of self-update (must NOT claim it exists).
-specrelay_test::assert_contains "upgrading doc states there is no specrelay self-update" \
-  "$upgrading" "no \`specrelay self-update\`"
+# spec 0022: 'specrelay update' IS the real, safe self-update command now —
+# the doc must document it (not claim its absence, which was true pre-0022).
+specrelay_test::assert_contains "upgrading doc documents 'specrelay update' as the safe self-update path" \
+  "$upgrading" "specrelay update"
 specrelay_test::assert_contains "upgrading doc references install/uninstall.sh (which exists)" \
   "$upgrading" "install/uninstall.sh"
 specrelay_test::assert_contains "upgrading doc references install/install.sh (which exists)" \

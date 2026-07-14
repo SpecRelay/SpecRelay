@@ -113,11 +113,14 @@ published (`git clone --branch vX.Y.Z --depth 1 …`); no tag exists yet, so tra
 `main` for now. Full details, including how to verify which executable you are
 running: [docs/installation.md](docs/installation.md).
 
-**Upgrade** by fast-forwarding your clone and reinstalling
-(`git pull --ff-only origin main && ./install/install.sh`); there is **no**
-`specrelay self-update`. **Uninstall** with `./install/uninstall.sh` (it removes
-only the tool, never a project's `.specrelay/`). See
-[docs/upgrading.md](docs/upgrading.md).
+**Upgrade** an installed copy safely with `specrelay update` (checks, stages,
+verifies, and atomically activates the newest release, rolling back
+automatically if verification fails — see [docs/updates.md](docs/updates.md)),
+or manually by fast-forwarding your clone and reinstalling (`git pull
+--ff-only origin main && ./install/install.sh`). A source-local checkout
+(`bin/specrelay`) never performs automatic update discovery. **Uninstall**
+with `./install/uninstall.sh` (it removes only the tool, never a project's
+`.specrelay/`). See [docs/upgrading.md](docs/upgrading.md).
 
 A **Homebrew** install (`brew install specrelay`) is **not available yet** — the
 phased tap plan and a clearly-marked sample formula are in

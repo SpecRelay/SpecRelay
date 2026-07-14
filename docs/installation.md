@@ -491,7 +491,7 @@ including what is intentionally left in consumer projects, are in
 ## Version ownership
 
 The single source of truth for the version is the **`VERSION` file**. The
-source tree carries it (currently `0.4.0`); the installer copies it to
+source tree carries it (currently `0.5.0`); the installer copies it to
 `<prefix>/share/specrelay/VERSION`, and both the installer and updater read
 those two files to decide "already installed", "reinstall", or "downgrade".
 `specrelay version` prints the installed value.
@@ -511,6 +511,12 @@ Use `bin/specrelay ...` (the in-repo path from a standalone source checkout)
 only when working directly in the source tree; the installed `specrelay` on
 your `PATH` is the supported entry point for day-to-day use. See `commands.md`
 for the full command reference.
+
+Run `specrelay environment` any time to confirm which mode you are actually
+running in (`source-local` vs `installed`) and whether automatic update
+checks are enabled — see [updates.md](updates.md) for the full execution-mode
+and update contract, including `specrelay install-info` and `specrelay
+update`.
 
 ## Future distribution
 
