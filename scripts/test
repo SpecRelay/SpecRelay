@@ -26,11 +26,29 @@
 #   scripts/test --slow-threshold 30               # mark files >= 30s SLOW
 #   scripts/test test/config_test.sh ...           # run only the given files
 #
+# Change-aware test selection (spec 0017): select the relevant standalone tests
+# from a set of changed files instead of the full suite, for faster development
+# feedback. Selection is deterministic, explainable, and ALWAYS safe: when it
+# cannot narrow confidently it falls back to the complete standalone suite. This
+# is an optimization, NOT a replacement for full verification.
+#
+#   scripts/test --changed                         # tests for the current git tree
+#   scripts/test --changed-from <ref>              # tests for changes vs a git ref
+#   scripts/test --changed-files <file>            # tests for a changed-path list
+#   scripts/test --changed --explain               # print the selection rationale
+#   scripts/test --validate-selection-map          # validate test/test-selection.yml
+#   scripts/test --changed --selection-json <path> # write selection evidence JSON
+# Change-aware options compose with --jobs/--timings/--slowest/--slow-threshold.
+#
 # Precedence for worker count: --serial > --jobs > SPECRELAY_TEST_JOBS > auto.
 # Env: SPECRELAY_TEST_JOBS      override default worker count (number or "auto")
 #      SPECRELAY_TEST_DIR       override the test directory (default <root>/test)
 #      SPECRELAY_CACHE_DIR      override cache root (default <root>/.specrelay-cache)
 #      SPECRELAY_TEST_TIMINGS_OUT  write task timing JSON to this explicit path
+#      SPECRELAY_TEST_SELECTION_OUT write selection JSON to this explicit path
+#      SPECRELAY_SELECTION_ROOT override the project root used for git change
+#                               detection and selection (default <root>)
+#      SPECRELAY_SELECTION_MAP  override the selection map (default <testdir>/test-selection.yml)
 #      SPECRELAY_TEST_KEEP_LOGS=1  keep per-worker temp capture files (debug)
 #
 # Directory policy (spec 0016): no new top-level runtime directory is created.
@@ -44,6 +62,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEST_DIR="${SPECRELAY_TEST_DIR:-$ROOT/test}"
 CACHE_DIR="${SPECRELAY_CACHE_DIR:-$ROOT/.specrelay-cache}"
+
+# Change-aware selection (spec 0017): the "project root" used for Git change
+# detection and for resolving mapped test paths. Defaults to the repo root; a
+# test fixture points it at an isolated temp project. The selection map lives in
+# the test tree (test/test-selection.yml); the engine is a deterministic Ruby
+# helper (Psych YAML + a self-contained glob translator — see its header).
+SELROOT="${SPECRELAY_SELECTION_ROOT:-$ROOT}"
+SELECTION_MAP="${SPECRELAY_SELECTION_MAP:-$TEST_DIR/test-selection.yml}"
+SELECT_ENGINE="$ROOT/lib/specrelay/select_tests.rb"
+# Runtime directories excluded from change detection (project conventions).
+SELECTION_EXCLUDE_PREFIXES=".specrelay-runs/ .specrelay-cache/ .specrelay-locks/ .git/"
 
 # A reasonable upper bound so a mistaken --jobs value (or env override) can
 # never fork an unbounded process explosion. 64 is far above any real logical
@@ -142,6 +171,13 @@ OPT_TIMINGS=0
 OPT_SLOWEST=""         # explicit --slowest N
 OPT_SLOW_THRESHOLD=""  # explicit --slow-threshold S
 EXPLICIT_FILES=()
+# --- change-aware selection options (spec 0017) ---
+OPT_CHANGED=0          # --changed (working tree)
+OPT_CHANGED_FROM=""    # --changed-from <ref>
+OPT_CHANGED_FILES=""   # --changed-files <file>
+OPT_EXPLAIN=0          # --explain
+OPT_VALIDATE_MAP=0     # --validate-selection-map
+OPT_SELECTION_OUT=""   # --selection-json <path> (explicit evidence destination)
 
 usage() {
   sed -n '2,40p' "$SCRIPT_DIR/test" | sed 's/^# \{0,1\}//'
@@ -163,6 +199,21 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || die "--slow-threshold requires a value"
       OPT_SLOW_THRESHOLD="$2"; shift 2 ;;
     --slow-threshold=*) OPT_SLOW_THRESHOLD="${1#*=}"; shift ;;
+    --changed) OPT_CHANGED=1; shift ;;
+    --changed-from)
+      [ $# -ge 2 ] || die "--changed-from requires a <git-ref> value"
+      OPT_CHANGED_FROM="$2"; shift 2 ;;
+    --changed-from=*) OPT_CHANGED_FROM="${1#*=}"; shift ;;
+    --changed-files)
+      [ $# -ge 2 ] || die "--changed-files requires a <file> value"
+      OPT_CHANGED_FILES="$2"; shift 2 ;;
+    --changed-files=*) OPT_CHANGED_FILES="${1#*=}"; shift ;;
+    --explain) OPT_EXPLAIN=1; shift ;;
+    --validate-selection-map) OPT_VALIDATE_MAP=1; shift ;;
+    --selection-json)
+      [ $# -ge 2 ] || die "--selection-json requires a <path> value"
+      OPT_SELECTION_OUT="$2"; shift 2 ;;
+    --selection-json=*) OPT_SELECTION_OUT="${1#*=}"; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do EXPLICIT_FILES+=("$1"); shift; done ;;
     -*) die "unknown option: $1" ;;
@@ -228,11 +279,151 @@ is_serial_only() { case "$SERIAL_NAMES" in *" $1 "*) return 0 ;; esac; return 1;
 
 load_serial_list || exit 2
 
+# --- change-aware selection machinery (spec 0017) ----------------------------
+# Selection state (globals consumed by the summary + evidence writers below).
+SELTMP=""              # temp working area for change-aware selection
+RUN_ID="$(_iso_now)-$$"  # links selection JSON to timing JSON (common run id)
+CHANGE_AWARE=0
+SEL_MODE=""            # mapped | documentation-only | full-suite-fallback
+SEL_FULL_SUITE=0
+SEL_CHANGED_COUNT=0
+SEL_TOTAL=0            # total discoverable standalone tests (for the "N / total" line)
+
+CHANGE_SOURCES=0
+[ "$OPT_CHANGED" -eq 1 ] && { CHANGE_AWARE=1; CHANGE_SOURCES=$((CHANGE_SOURCES + 1)); }
+[ -n "$OPT_CHANGED_FROM" ] && { CHANGE_AWARE=1; CHANGE_SOURCES=$((CHANGE_SOURCES + 1)); }
+[ -n "$OPT_CHANGED_FILES" ] && { CHANGE_AWARE=1; CHANGE_SOURCES=$((CHANGE_SOURCES + 1)); }
+
+# --- option compatibility (fail fast, clearly) -------------------------------
+if [ "$CHANGE_SOURCES" -gt 1 ]; then
+  die "incompatible change-source options: use only one of --changed, --changed-from, --changed-files"
+fi
+if [ "$CHANGE_AWARE" -eq 1 ] && [ "${#EXPLICIT_FILES[@]}" -gt 0 ]; then
+  die "change-aware selection cannot be combined with explicit test files"
+fi
+if [ "$OPT_EXPLAIN" -eq 1 ] && [ "$CHANGE_AWARE" -eq 0 ]; then
+  die "--explain requires a change source (--changed, --changed-from, or --changed-files)"
+fi
+if [ -n "$OPT_SELECTION_OUT" ] && [ "$CHANGE_AWARE" -eq 0 ]; then
+  die "--selection-json requires a change source (--changed, --changed-from, or --changed-files)"
+fi
+if [ "$OPT_VALIDATE_MAP" -eq 1 ] && { [ "$CHANGE_AWARE" -eq 1 ] || [ "${#EXPLICIT_FILES[@]}" -gt 0 ] || [ "$OPT_EXPLAIN" -eq 1 ]; }; then
+  die "--validate-selection-map is standalone; do not combine it with a change source, --explain, or explicit test files"
+fi
+
+need_ruby() {
+  command -v ruby >/dev/null 2>&1 \
+    || die "ruby is required for change-aware test selection but was not found on PATH"
+}
+
+# True if a project-relative path is under an excluded runtime directory.
+is_excluded_path() {
+  local p="$1" pre
+  for pre in $SELECTION_EXCLUDE_PREFIXES; do
+    case "$p" in "$pre"*) return 0 ;; esac
+  done
+  return 1
+}
+
+# stdin: raw project-relative paths; stdout: excluded-dirs removed, deduped,
+# deterministically sorted (C locale).
+filter_and_dedupe() {
+  local p
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    is_excluded_path "$p" && continue
+    printf '%s\n' "$p"
+  done | LC_ALL=C sort -u
+}
+
+# Working-tree changes: unstaged tracked + staged tracked + untracked, without
+# requiring a resolvable HEAD (covers a repo with no commits too).
+gather_changed_worktree() {
+  ( cd "$SELROOT" 2>/dev/null || exit 0
+    git diff --name-only 2>/dev/null
+    git diff --name-only --cached 2>/dev/null
+    git ls-files --others --exclude-standard 2>/dev/null )
+}
+
+# Changes between <ref> and the current working tree (two-dot <ref>..worktree,
+# i.e. `git diff <ref>`), plus untracked files, so working-tree changes the
+# command promises to include are never silently dropped.
+gather_changed_from() {
+  local ref="$1"
+  ( cd "$SELROOT" 2>/dev/null || exit 0
+    git diff --name-only "$ref" 2>/dev/null
+    git ls-files --others --exclude-standard 2>/dev/null )
+}
+
+# Normalize a changed-files evidence file to one project-relative path per line.
+# Understands the existing `git diff --name-status` evidence format
+# (05-changed-files.txt) AND a plain path-only file. Rename/copy records emit
+# BOTH the old and new paths (conservative). Malformed evidence fails clearly.
+normalize_evidence() {
+  local f="$1" out rc
+  [ -e "$f" ] || die "--changed-files: no such file: $f"
+  [ -f "$f" ] || die "--changed-files: not a regular file: $f"
+  [ -r "$f" ] || die "--changed-files: file is not readable: $f"
+  out="$(awk -F'\t' '
+    function bad(l){ printf("malformed changed-files evidence line: %s\n", l) > "/dev/stderr"; exit 3 }
+    { line=$0; sub(/\r$/,"",line); sub(/\r$/,"",$NF) }
+    line ~ /^[[:space:]]*$/ { next }
+    line ~ /^[[:space:]]*#/ { next }
+    NF==1 { print $1; next }
+    {
+      st=$1
+      if (st ~ /^[RC][0-9]*$/) { if (NF<3 || $2=="" || $3=="") bad(line); print $2; print $3; next }
+      if (st ~ /^[A-Z][0-9]*$/) { if ($2=="") bad(line); print $2; next }
+      bad(line)
+    }
+  ' "$f")"
+  rc=$?
+  [ "$rc" -eq 0 ] || die "--changed-files: malformed evidence in $f (expected git name-status or one path per line)"
+  printf '%s\n' "$out"
+}
+
+# Current tracked, meaningful source files (for the coverage/drift report).
+gather_source_files() {
+  ( cd "$SELROOT" 2>/dev/null && git ls-files 2>/dev/null ) | while IFS= read -r f; do
+    is_excluded_path "$f" && continue
+    case "$f" in
+      *.sh|*.py|*.rb|*.yml|*.yaml|*.json|bin/specrelay|scripts/*) printf '%s\n' "$f" ;;
+    esac
+  done
+}
+
+# --- --validate-selection-map (standalone; runs no tests) --------------------
+if [ "$OPT_VALIDATE_MAP" -eq 1 ]; then
+  need_ruby
+  SELTMP="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-sel.XXXXXX")"
+  gather_source_files > "$SELTMP/sources.txt"
+  ruby "$SELECT_ENGINE" validate --root "$SELROOT" --map "$SELECTION_MAP" || exit 2
+  ruby "$SELECT_ENGINE" coverage --root "$SELROOT" --map "$SELECTION_MAP" \
+    --source-files "$SELTMP/sources.txt" || exit 2
+  echo "scripts/test: test selection map is valid: $(basename "$SELECTION_MAP")"
+  exit 0
+fi
+
 # --- build the ordered test list ---------------------------------------------
 # NAME[i], PATH_[i] hold the deterministic final-output order.
 NAME=()
 PATH_=()
 SKIPPED=""
+
+# Full discovery: executable *_test.sh in TEST_DIR, host-integration excluded,
+# deterministically sorted by basename (C locale). Populates NAME/PATH_/SKIPPED.
+discover_standalone() {
+  local names name
+  names="$(for f in "$TEST_DIR"/*_test.sh; do [ -f "$f" ] && basename "$f"; done | LC_ALL=C sort -u)"
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    if is_host_integration "$name"; then SKIPPED="$SKIPPED $name"; continue; fi
+    NAME+=("$name")
+    PATH_+=("$TEST_DIR/$name")
+  done <<EOF
+$names
+EOF
+}
 
 resolve_under_test_root() {
   # Print the resolved path of $1 if it exists inside TEST_DIR, else fail.
@@ -262,18 +453,96 @@ if [ "${#EXPLICIT_FILES[@]}" -gt 0 ]; then
     NAME+=("$(basename "$real")")
     PATH_+=("$real")
   done
+elif [ "$CHANGE_AWARE" -eq 1 ]; then
+  # --- change-aware selection ------------------------------------------------
+  need_ruby
+  [ -f "$SELECTION_MAP" ] || die "test selection map not found: $SELECTION_MAP"
+  SELTMP="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-sel.XXXXXX")"
+
+  # 1. gather the changed files for the chosen source, normalized + filtered.
+  if [ -n "$OPT_CHANGED_FROM" ]; then
+    if ! ( cd "$SELROOT" 2>/dev/null && git rev-parse --verify --quiet "${OPT_CHANGED_FROM}^{commit}" >/dev/null 2>&1 ); then
+      die "invalid git ref for --changed-from: '$OPT_CHANGED_FROM'"
+    fi
+    gather_changed_from "$OPT_CHANGED_FROM" | filter_and_dedupe > "$SELTMP/changed.txt"
+  elif [ -n "$OPT_CHANGED_FILES" ]; then
+    # Capture first (NOT in a pipeline): a `die` inside normalize_evidence must
+    # terminate the whole command, not just a pipeline subshell.
+    raw_changed="$(normalize_evidence "$OPT_CHANGED_FILES")" || exit 2
+    printf '%s\n' "$raw_changed" | filter_and_dedupe > "$SELTMP/changed.txt"
+  else
+    gather_changed_worktree | filter_and_dedupe > "$SELTMP/changed.txt"
+  fi
+  SEL_CHANGED_COUNT="$(grep -c . "$SELTMP/changed.txt" 2>/dev/null || true)"
+
+  # 2. discover every standalone test (for totals + a full-suite fallback).
+  discover_standalone
+  SEL_TOTAL="${#NAME[@]}"
+  : > "$SELTMP/all-tests.txt"
+  for ((i=0; i<SEL_TOTAL; i++)); do
+    rp="${PATH_[$i]}"
+    case "$rp" in "$SELROOT"/*) rp="${rp#$SELROOT/}" ;; esac
+    printf '%s\n' "$rp" >> "$SELTMP/all-tests.txt"
+  done
+
+  # 3. compute the plan (mode + selected tests) via the deterministic engine.
+  plan="$(ruby "$SELECT_ENGINE" plan --root "$SELROOT" --map "$SELECTION_MAP" \
+            --changed-files "$SELTMP/changed.txt" --all-tests "$SELTMP/all-tests.txt")" \
+    || die "test selection failed (see errors above)"
+  SEL_MODE="$(printf '%s\n' "$plan" | awk -F'\t' '/^mode\t/{print $2; exit}')"
+  SEL_FULL_SUITE="$(printf '%s\n' "$plan" | awk -F'\t' '/^full_suite\t/{print $2; exit}')"
+
+  # 4. explain (optional) — printed before the tests run.
+  if [ "$OPT_EXPLAIN" -eq 1 ]; then
+    echo "=== Change-aware test selection ==="
+    ruby "$SELECT_ENGINE" explain --root "$SELROOT" --map "$SELECTION_MAP" \
+      --changed-files "$SELTMP/changed.txt" --all-tests "$SELTMP/all-tests.txt"
+    echo "==================================="
+    echo
+  fi
+
+  # 5. selection evidence JSON (independent of test results) — atomic writes.
+  write_selection_json() {
+    local dest="$1" dir tmp
+    dir="$(dirname "$dest")"; mkdir -p "$dir" || return 1
+    tmp="$dest.tmp.$$"
+    if ruby "$SELECT_ENGINE" json --root "$SELROOT" --map "$SELECTION_MAP" \
+         --changed-files "$SELTMP/changed.txt" --all-tests "$SELTMP/all-tests.txt" \
+         --run-id "$RUN_ID" > "$tmp"; then
+      mv -f "$tmp" "$dest"
+    else
+      rm -f "$tmp"; return 1
+    fi
+  }
+  # General reusable selection metadata under the existing cache namespace.
+  write_selection_json "$CACHE_DIR/tests/latest-selection.json" \
+    || echo "scripts/test: warning: could not write $CACHE_DIR/tests/latest-selection.json" >&2
+  # Explicit destination (e.g. task evidence 07-test-selection.json).
+  if [ -n "$OPT_SELECTION_OUT" ]; then
+    write_selection_json "$OPT_SELECTION_OUT" \
+      || echo "scripts/test: warning: could not write $OPT_SELECTION_OUT" >&2
+  fi
+  if [ -n "${SPECRELAY_TEST_SELECTION_OUT:-}" ]; then
+    write_selection_json "$SPECRELAY_TEST_SELECTION_OUT" \
+      || echo "scripts/test: warning: could not write $SPECRELAY_TEST_SELECTION_OUT" >&2
+  fi
+
+  # 6. realize the selection into NAME/PATH_. A full-suite fallback keeps the
+  # complete discovered suite (already in NAME/PATH_); a narrow selection
+  # replaces it with exactly the mapped tests (deterministic, deduped order).
+  if [ "$SEL_FULL_SUITE" != "1" ]; then
+    NAME=(); PATH_=()
+    while IFS= read -r rel; do
+      [ -z "$rel" ] && continue
+      base="$(basename "$rel")"
+      full="$TEST_DIR/$base"
+      [ -f "$full" ] || die "selected test not found under $TEST_DIR: $base"
+      NAME+=("$base")
+      PATH_+=("$full")
+    done < <(printf '%s\n' "$plan" | awk -F'\t' '/^test\t/{print $2}')
+  fi
 else
-  # Full discovery: executable *_test.sh in TEST_DIR, host-integration excluded,
-  # deterministically sorted by basename (C locale).
-  names="$(for f in "$TEST_DIR"/*_test.sh; do [ -f "$f" ] && basename "$f"; done | LC_ALL=C sort -u)"
-  while IFS= read -r name; do
-    [ -z "$name" ] && continue
-    if is_host_integration "$name"; then SKIPPED="$SKIPPED $name"; continue; fi
-    NAME+=("$name")
-    PATH_+=("$TEST_DIR/$name")
-  done <<EOF
-$names
-EOF
+  discover_standalone
 fi
 
 NTESTS="${#NAME[@]}"
@@ -318,6 +587,7 @@ cleanup_temp() {
   else
     [ -n "${RUNDIR:-}" ] && rm -rf "$RUNDIR"
   fi
+  [ -n "${SELTMP:-}" ] && rm -rf "$SELTMP"
 }
 trap cleanup_temp EXIT
 
@@ -531,6 +801,23 @@ if [ "$JOBS" -gt 1 ] && [ "$NTESTS" -gt 1 ]; then
 fi
 [ -n "$SKIPPED" ] && echo "Skipped (host-integration; run via test/run_all.sh):$SKIPPED"
 
+# --- change-aware selection summary (spec 0017) ------------------------------
+if [ "$CHANGE_AWARE" -eq 1 ]; then
+  echo
+  echo "--- Change-aware selection ---"
+  printf 'Changed files:   %s\n' "$SEL_CHANGED_COUNT"
+  if [ "$SEL_FULL_SUITE" = "1" ]; then
+    printf 'Selected tests:  %s / %s  (full-suite fallback)\n' "$NTESTS" "$SEL_TOTAL"
+    printf 'Full suite:      run (%s)\n' "$SEL_MODE"
+  else
+    printf 'Selected tests:  %s / %s\n' "$NTESTS" "$SEL_TOTAL"
+    printf 'Full suite:      not run\n'
+  fi
+  printf 'Selection mode:  %s\n' "$SEL_MODE"
+  printf 'Run id:          %s\n' "$RUN_ID"
+  printf 'Final policy:    full verification (complete standalone suite) still required before final merge\n'
+fi
+
 # --- slowest / slow-threshold (only when timing output enabled) --------------
 if [ "$OPT_TIMINGS" -eq 1 ]; then
   SLOW_N="${OPT_SLOWEST:-10}"
@@ -566,6 +853,7 @@ fi
 build_json() {
   printf '{\n'
   printf '  "schema_version": 1,\n'
+  printf '  "run_id": "%s",\n' "$RUN_ID"
   printf '  "started_at": "%s",\n' "$STARTED_AT_ISO"
   printf '  "finished_at": "%s",\n' "$FINISHED_AT_ISO"
   printf '  "jobs": %s,\n' "$JOBS"
@@ -624,5 +912,26 @@ if [ "$FAILED" -gt 0 ]; then
   echo "Failed:$FAILED_NAMES"
   exit 1
 fi
+
+# Success message. A change-aware run that did NOT execute the full suite is
+# TARGETED verification and must never be presented as complete/full
+# verification (spec 0017, reviewer focus).
+if [ "$CHANGE_AWARE" -eq 1 ] && [ "$SEL_FULL_SUITE" != "1" ]; then
+  if [ "$SEL_MODE" = "documentation-only" ]; then
+    echo "No implementation tests selected (documentation-only change)."
+    echo "Documentation validation tests: $PASSED passed."
+    echo "Final full suite: still required by release policy."
+  else
+    echo "Targeted verification passed: $NTESTS of $SEL_TOTAL standalone tests selected from the changed files."
+    echo "This is NOT full verification — the complete standalone suite is still required before final merge."
+  fi
+  exit 0
+fi
+
+if [ "$CHANGE_AWARE" -eq 1 ] && [ "$SEL_FULL_SUITE" = "1" ]; then
+  echo "All standalone tests passed (full-suite fallback: $SEL_MODE)."
+  exit 0
+fi
+
 echo "All standalone tests passed."
 exit 0

@@ -1,0 +1,111 @@
+# test-selection.yml — change-aware test selection map (spec 0017).
+#
+# This file is the SINGLE, explicit, reviewable source of truth that maps
+# changed source files to the standalone test files worth running for a fast
+# development feedback loop. It never replaces full verification: it is an
+# optimization only, and when selection is uncertain SpecRelay runs MORE tests
+# (the complete standalone suite), never fewer.
+#
+# Matching semantics (deterministic, platform-independent — see
+# lib/specrelay/select_tests.rb; NOT shell glob expansion):
+#   *   matches any run of characters except '/'
+#   ?   matches a single character except '/'
+#   **  matches any run of characters INCLUDING '/' (recursive)
+#   **/ matches zero or more leading path segments
+#   [..] a character class ( [!..] / [^..] negates )
+# All patterns are project-relative; a leading '/' or a '..' segment is rejected.
+#
+# Validation (scripts/test --validate-selection-map) rejects: an unknown schema
+# version, duplicate rule ids, a rule missing paths or tests, a referenced test
+# that does not exist, a test outside test/, a path/pattern that escapes the
+# repository, invalid glob syntax, an empty mapping, and unknown keys.
+
+version: 1
+
+# Change-mapping rules. A changed file may match several rules; the selected
+# tests are the de-duplicated union of every matched rule's tests, in a
+# deterministic (sorted) order. Each rule needs a stable `id` (used in the
+# explanation and to de-duplicate), at least one `paths` glob, and at least one
+# `tests` file under test/.
+rules:
+  - id: context-adapters
+    paths:
+      - lib/specrelay/context/**
+      - lib/specrelay/contexts.sh
+    tests:
+      - test/context_adapters_test.sh
+      - test/config_test.sh
+      - test/workflow_fake_provider_test.sh
+
+  - id: providers
+    paths:
+      - lib/specrelay/providers/**
+    tests:
+      - test/provider_model_agent_test.sh
+      - test/guided_model_selection_test.sh
+      - test/provider_streaming_test.sh
+      - test/workflow_fake_provider_test.sh
+
+  - id: state-machine
+    paths:
+      - lib/specrelay/state.sh
+      - lib/specrelay/transitions.sh
+      - lib/specrelay/workflow.sh
+    tests:
+      - test/state_test.sh
+      - test/transitions_test.sh
+      - test/reviewer_continuation_test.sh
+      - test/workflow_fake_provider_test.sh
+
+  - id: test-runner
+    paths:
+      - test/test_runner_test.sh
+      - test/test_selection_test.sh
+      - test/serial-tests.txt
+    tests:
+      - test/test_runner_test.sh
+      - test/test_selection_test.sh
+      - test/release_readiness_test.sh
+
+# always: a deliberately SMALL set of tests that run on every change-aware
+# selection (mapped or documentation-only). Reason: release_readiness_test.sh
+# guards the release-readiness contract (CI shape, smoke/version/doctor
+# behavior, documented requirements) which is cheap and orthogonal to any single
+# change area, so it is the natural documentation/release validation set. Do NOT
+# grow this into the whole suite.
+always:
+  - test/release_readiness_test.sh
+
+# full_suite_if_changed: broad-impact paths that force the COMPLETE standalone
+# suite (full-suite fallback) when changed. These entrypoints, shared helpers,
+# the test runner, and the CI definition can affect any test, so narrowing is
+# unsafe.
+#
+# scripts/test and this mapping file (test/test-selection.yml) are included
+# deliberately: a change to the runner or to the mapping itself must trigger the
+# full suite so a broken or narrowed mapping can never validate itself with only
+# a small subset (spec 0017, "Change-Aware Test for the Mapping Itself").
+full_suite_if_changed:
+  - bin/specrelay
+  - lib/specrelay/cli.sh
+  - lib/specrelay/task.sh
+  - lib/specrelay/select_tests.rb
+  - test/test_helper.sh
+  - scripts/test
+  - scripts/smoke
+  - test/test-selection.yml
+  - .github/workflows/**
+
+# documentation_only: explicitly safe documentation/prose paths. A changed file
+# matched here (and by no rule and no full-suite trigger) is IGNORED for
+# implementation-test selection; the run reports "documentation-only" mode and
+# executes only the always (documentation validation) set. It NEVER reports
+# "all tests passed" when no implementation tests ran.
+documentation_only:
+  - docs/**
+  - README.md
+  - CONTRIBUTING.md
+  - CHANGELOG.md
+  - SECURITY.md
+  - LICENSE.TODO
+  - "**/*.md"

@@ -113,6 +113,77 @@ scripts/test test/config_test.sh test/cli_test.sh   # run only the given files
   `scripts/test test/<affected>_test.sh --timings`, and consult
   `.specrelay-cache/tests/latest.json` to confirm timing/overlap.
 
+### Change-aware test selection (spec 0017)
+
+For a faster development feedback loop, `scripts/test` can select the relevant
+standalone tests from a set of changed files instead of running the whole suite.
+Selection is **deterministic**, **explainable**, and **always safe**: when it
+cannot confidently narrow, it falls back to the complete standalone suite. It is
+an optimization, **never** a replacement for full verification.
+
+```sh
+scripts/test --changed                          # tests for the current git tree
+scripts/test --changed-from main                # tests for changes vs a git ref
+scripts/test --changed-files <file>             # tests for a changed-path list
+scripts/test --changed --explain                # print the selection rationale
+scripts/test --validate-selection-map           # validate test/test-selection.yml
+scripts/test --changed --jobs auto --timings --explain   # composes with 0016
+```
+
+- **The mapping.** [`test/test-selection.yml`](test/test-selection.yml) is the
+  single, explicit, versioned, reviewable source of truth. Each `rule` maps
+  `paths` globs to `tests`; a changed file may match several rules and the
+  selected tests are the de-duplicated **union**, in deterministic order. The
+  glob matcher is a self-contained, platform-independent implementation in
+  [`lib/specrelay/select_tests.rb`](lib/specrelay/select_tests.rb) (`*`, `?`,
+  `**`, `**/`, `[..]`) — **not** shell globbing — so results never depend on a
+  shell's configuration. The map is validated before use (`--validate-selection-map`
+  also reports coverage/drift); an invalid map is a hard, actionable error.
+- **`always`** lists a deliberately small set (currently just
+  `release_readiness_test.sh`) that runs on every change-aware selection.
+- **`full_suite_if_changed`** lists broad-impact paths that force the complete
+  suite (entrypoints, shared helpers, `scripts/test`, the CI definition). A
+  change to `test/test-selection.yml` **or** to `scripts/test`/the engine
+  triggers the full suite, so a broken or narrowed mapping can never validate
+  itself with a subset.
+- **Unmapped meaningful changes** (any code/executable file matched by no rule)
+  and **unknown file types** conservatively fall back to the full suite — never
+  zero tests.
+- **`documentation_only`** paths (docs, `*.md`) are ignored for implementation
+  tests; the run reports `documentation-only` mode and executes only the `always`
+  validation set. It never claims "all tests passed" when no implementation
+  tests ran.
+- **Selection modes** reported: `explicit` (you named files), `mapped`,
+  `documentation-only`, `full-suite-fallback`.
+- **Evidence.** Selection metadata is written atomically to
+  `.specrelay-cache/tests/latest-selection.json` (existing cache namespace) and,
+  with `--selection-json <path>` (or `SPECRELAY_TEST_SELECTION_OUT`), to an
+  explicit task destination such as
+  `.specrelay-runs/tasks/<task-id>/07-test-selection.json`. Selection JSON and
+  timing JSON (`--timings`) share a common `run_id` so they can be associated.
+
+**Verification policy.** *Targeted verification* is the relevant tests selected
+from changed files — for fast executor/reviewer feedback. *Full verification* is
+the complete standalone suite — required for release readiness, CI on protected
+branches, and the explicit final gate. Change-aware selection does not change
+this: the repository still requires full verification before final merge.
+
+- **Executors** should: run targeted tests during implementation
+  (`scripts/test --changed --jobs auto --timings`); run change-aware tests before
+  submission; run the full suite once at the final gate; then
+  `scripts/smoke --skip-tests`. Do **not** run the full suite after every edit.
+  Because `05-changed-files.txt` is captured *after* executor work, select from
+  the current Git working tree (`--changed`) during implementation rather than
+  creating a circular dependency on task evidence.
+- **Reviewers** should independently run targeted tests for the changed areas,
+  read the `--explain` output, verify the mapping actually covers the change, and
+  reject a suspiciously narrow selection. Reviewers remain free to run any
+  additional tests, and run the full suite when review policy or risk requires.
+- **CI is unchanged and never weakened.** The protected job still runs the full
+  parallel suite (`scripts/test --jobs auto --timings`). Change-aware selection
+  may be added only as an *additional* earlier fast-feedback job, never as a
+  replacement.
+
 Host-integration tests (which need a host repository's legacy `.ai/` workflow,
 rollback engine, or spec history) are kept separate and are run via
 `test/run_all.sh` in the incubation host only. They are explicitly excluded

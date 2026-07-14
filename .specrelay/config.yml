@@ -13,7 +13,7 @@ tasks:
 roles:
   executor:
     provider: claude
-    model: claude-opus-4-8
+    model: claude-sonnet-5
     agent: none
 
   reviewer:
