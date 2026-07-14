@@ -58,6 +58,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 
 # Shared color policy (mode resolution, NO_COLOR, escape codes) lives beside
 # this file. It is optional: if it cannot be imported for any reason, the
@@ -67,6 +69,16 @@ try:
     import color as _color
 except Exception:  # pragma: no cover - color is an optional sibling module
     _color = None
+
+# The command-timing engine (spec 0020) lives beside this file too. Unlike
+# color, it is SECURITY-relevant (it owns secret redaction before a command
+# is ever persisted), so a failed import does not "degrade to plain text" —
+# it disables command-timing capture entirely for this run rather than risk
+# writing an unredacted command to disk (see _timing_configure below).
+try:
+    import command_timing_lib as _ctlib
+except Exception:  # pragma: no cover - command_timing_lib is an optional sibling module
+    _ctlib = None
 
 # Maximum characters rendered for any single payload field (command text, file
 # path, message snippet). Larger payloads are truncated with an ellipsis so a
@@ -380,6 +392,214 @@ class Rendering:
         self.final_text = None
 
 
+# --- command timing (spec 0020, "Agent Command Timing Ledger") ---------------
+#
+# This renderer is the ONE process that live-streams a provider's structured
+# event feed, so it is also the ONE place that can honestly observe both the
+# moment a tool call starts (a `tool_use` block) and the moment it finishes (a
+# `tool_result` block whose `tool_use_id` matches) — the exact condition spec
+# 0020 requires for the `local_renderer_monotonic_clock` timing source. This
+# is independent of the human-readable rendering above: it inspects the SAME
+# raw event dict directly (never the adapter's rendered text), so command
+# text is captured once, from structured data, never parsed from prose.
+#
+# Claude's stream-json `assistant` (tool_use) events do not carry a
+# timestamp field in current CLI versions — only some `tool_result` events do
+# — so a duration computed purely from provider-supplied timestamps
+# (`provider_event_timestamps`) is not reliably available today. Rather than
+# claim a source that is not truly in use, every paired operation here is
+# honestly reported as `local_renderer_monotonic_clock`.
+_TIMING_PENDING = {}  # tool_use_id -> {tool, command, start_monotonic, start_iso}
+_TIMING_ROLE = None
+_TIMING_PROVIDER = None
+_TIMING_INVOCATION_ID = "1"
+_TIMING_FH = None
+
+_EXIT_CODE_RE = re.compile(r"\s*Exit code (\d+)")
+
+
+def _timing_now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def timing_capture_available():
+    return _ctlib is not None
+
+
+def configure_timing(role, provider, invocation_id, fh):
+    """role/provider/invocation_id are recorded on every operation emitted
+    for this process (one renderer process = one provider run = one
+    invocation); fh is None to disable capture entirely (e.g. no
+    --command-timing-events flag, or command_timing_lib could not be
+    imported)."""
+    global _TIMING_ROLE, _TIMING_PROVIDER, _TIMING_INVOCATION_ID, _TIMING_FH
+    _TIMING_ROLE = role
+    _TIMING_PROVIDER = provider
+    _TIMING_INVOCATION_ID = invocation_id
+    _TIMING_FH = fh
+    _TIMING_PENDING.clear()
+
+
+def _timing_write(record):
+    if _TIMING_FH is None:
+        return
+    try:
+        _TIMING_FH.write(json.dumps(record, sort_keys=True) + "\n")
+        _TIMING_FH.flush()
+    except OSError:
+        pass
+
+
+def _timing_display_command(name, tool_input):
+    """The RAW (not-yet-redacted) display text for a tool call — Bash keeps
+    its literal command (a pipeline stays ONE observable command: this is the
+    verbatim `command` field, never split on '|'); every other tool gets a
+    short 'Tool: target' form so duplicate/waiting detection never confuses a
+    Read of a file literally named like a Bash command with a real shell
+    invocation (they are keyed by (tool, normalized_command), never command
+    text alone)."""
+    inp = tool_input if isinstance(tool_input, dict) else {}
+    if name == "Bash":
+        cmd = inp.get("command")
+        return cmd if isinstance(cmd, str) and cmd.strip() else None
+    if name in ("Read", "NotebookRead"):
+        p = inp.get("file_path") or inp.get("notebook_path")
+        return "Read: %s" % p if p else "Read"
+    if name == "Write":
+        p = inp.get("file_path")
+        return "Write: %s" % p if p else "Write"
+    if name in ("Edit", "MultiEdit", "NotebookEdit"):
+        p = inp.get("file_path") or inp.get("notebook_path")
+        return "Edit: %s" % p if p else name
+    if name == "Grep":
+        pattern = inp.get("pattern")
+        return "Grep: %s" % pattern if pattern else "Grep"
+    if name == "Glob":
+        pattern = inp.get("pattern")
+        return "Glob: %s" % pattern if pattern else "Glob"
+    if name == "WebSearch":
+        query = inp.get("query")
+        return "WebSearch: %s" % query if query else "WebSearch"
+    if name == "WebFetch":
+        url = inp.get("url")
+        return "WebFetch: %s" % url if url else "WebFetch"
+    if name == "Task":
+        description = inp.get("description")
+        return "Task: %s" % description if description else "Task"
+    return name
+
+
+def _timing_extract_exit_code(content):
+    """A narrow, STRUCTURAL parse of the Bash tool's own "Exit code N"
+    convention prefix (never a guess from free-form prose) — honestly left
+    None when the convention is not present."""
+    text = None
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                break
+    if not isinstance(text, str):
+        return None
+    m = _EXIT_CODE_RE.match(text)
+    return int(m.group(1)) if m else None
+
+
+def observe_timing_event(event):
+    """Feeds ONE raw provider event to the tool_use/tool_result pairing state
+    machine. A no-op when timing capture is disabled. Only the Claude adapter
+    shape is recognized today (spec 0020, "If only Bash operations can
+    currently be timed reliably, implement Bash first" — Codex is not a
+    shipped SpecRelay provider; see this module's Codex adapter header)."""
+    if _TIMING_FH is None or _TIMING_PROVIDER != "claude":
+        return
+    etype = event.get("type")
+
+    if etype == "assistant":
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            tool_id = block.get("id")
+            if not tool_id:
+                continue
+            name = str(block.get("name") or "unknown")
+            _TIMING_PENDING[tool_id] = {
+                "tool": name,
+                "command": _timing_display_command(name, block.get("input")),
+                "start_monotonic": time.monotonic(),
+                "start_iso": _timing_now_iso(),
+            }
+        return
+
+    if etype == "user":
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tool_id = block.get("tool_use_id")
+            if not tool_id or tool_id not in _TIMING_PENDING:
+                continue  # unmatched finish (or an already-paired duplicate id): ignored honestly
+            start = _TIMING_PENDING.pop(tool_id)
+            duration = max(0.0, time.monotonic() - start["start_monotonic"])
+            is_error = bool(block.get("is_error"))
+            exit_code = _timing_extract_exit_code(block.get("content"))
+            if exit_code is None and not is_error:
+                exit_code = 0
+            command = start["command"]
+            redacted_command, was_redacted = (command, False)
+            if command and _ctlib is not None:
+                try:
+                    redacted_command, was_redacted = _ctlib.redact_command(command)
+                except Exception:
+                    redacted_command, was_redacted = command, False
+            _timing_write({
+                "invocation_id": _TIMING_INVOCATION_ID,
+                "role": _TIMING_ROLE,
+                "provider": _TIMING_PROVIDER,
+                "tool": start["tool"],
+                "command": redacted_command,
+                "started_at": start["start_iso"],
+                "finished_at": _timing_now_iso(),
+                "duration_seconds": round(duration, 3),
+                "status": "failed" if is_error else "passed",
+                "exit_code": exit_code,
+                "timing_source": "local_renderer_monotonic_clock",
+                "redacted": was_redacted,
+            })
+        return
+
+
+def flush_incomplete_timing():
+    """At EOF, any still-open tool_use with no matching tool_result never
+    finished (the provider process ended mid-call, e.g. it was interrupted or
+    crashed) — recorded honestly as 'incomplete' with NO fabricated duration,
+    rather than silently dropped (spec 0020, "unmatched start is marked
+    incomplete")."""
+    if _TIMING_FH is None:
+        return
+    for _tool_id, start in list(_TIMING_PENDING.items()):
+        _timing_write({
+            "invocation_id": _TIMING_INVOCATION_ID,
+            "role": _TIMING_ROLE,
+            "provider": _TIMING_PROVIDER,
+            "tool": start["tool"],
+            "command": start["command"],
+            "started_at": start["start_iso"],
+            "finished_at": None,
+            "duration_seconds": None,
+            "status": "incomplete",
+            "exit_code": None,
+            "timing_source": "not_measurable",
+            "redacted": False,
+        })
+    _TIMING_PENDING.clear()
+
+
 # --- Claude Code adapter ------------------------------------------------------
 # Parses `claude --print --verbose --output-format stream-json` events:
 #   {"type":"system","subtype":"init",...}
@@ -648,6 +868,15 @@ def main(argv=None):
         help="repository root for project-relative display-path rendering "
              "(falls back to SPECRELAY_REPO_ROOT, then 'git rev-parse --show-toplevel')",
     )
+    parser.add_argument(
+        "--command-timing-events", default="",
+        help="append observed tool-call timing records to this file (spec 0020)",
+    )
+    parser.add_argument(
+        "--invocation-id", default="1",
+        help="the run/resume invocation this process belongs to (spec 0020, "
+             "multi-resume separation)",
+    )
     args = parser.parse_args(argv)
 
     role = args.role
@@ -693,6 +922,27 @@ def main(argv=None):
                 % (args.raw_events, exc)
             )
 
+    # Command-timing capture (spec 0020): opened in APPEND mode (never
+    # truncated) so this file accumulates history across every run/resume
+    # invocation and both roles for the whole task. Disabled honestly (no
+    # file, no fabricated timing) rather than risk persisting an unredacted
+    # command if command_timing_lib could not be imported.
+    timing_fh = None
+    if args.command_timing_events:
+        if timing_capture_available():
+            try:
+                timing_fh = open(args.command_timing_events, "a", encoding="utf-8")
+            except OSError as exc:
+                warn(
+                    "warning: cannot open command-timing-events file %s (%s); continuing without command timing"
+                    % (args.command_timing_events, exc)
+                )
+        else:
+            warn(
+                "warning: command_timing_lib is unavailable; command timing capture disabled for this run"
+            )
+    configure_timing(role.split(":", 1)[0], args.provider, args.invocation_id, timing_fh)
+
     final_text = None
     problem_count = 0
     for raw_line in sys.stdin.buffer:
@@ -721,6 +971,10 @@ def main(argv=None):
                 warn("warning: skipped an unparseable event line")
             continue
         try:
+            observe_timing_event(event)
+        except Exception:
+            pass  # command timing must never break the human-readable rendering below
+        try:
             rendering = adapter(event)
         except Exception:
             problem_count += 1
@@ -743,6 +997,15 @@ def main(argv=None):
     if raw_fh is not None:
         try:
             raw_fh.close()
+        except OSError:
+            pass
+    if timing_fh is not None:
+        try:
+            flush_incomplete_timing()
+        except Exception:
+            pass
+        try:
+            timing_fh.close()
         except OSError:
             pass
     if args.final_stdout:

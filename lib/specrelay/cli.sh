@@ -99,10 +99,18 @@ Workflow engine:
                              Read-only execution-timeline report: total wall
                              time, per-phase durations, invocation/resume
                              history, the verification ledger, duplicate-work
-                             detection, slowest phases, and phase-budget
-                             warnings. Never mutates task state. A legacy
-                             task with no recorded timeline data is reported
-                             honestly rather than fabricated.
+                             detection, slowest phases, phase-budget
+                             warnings, and (spec 0020) the agent command-
+                             timing summary. Never mutates task state. A
+                             legacy task with no recorded timeline data is
+                             reported honestly rather than fabricated.
+  task commands <task-ref> [--json]
+                             Read-only agent command-timing ledger (spec
+                             0020): slowest observed agent tool commands,
+                             per-role/per-tool timing, repeated commands, and
+                             waiting/polling commands. Never mutates task
+                             state. A legacy/never-instrumented task is
+                             reported honestly as not recorded.
 
 <task-ref> accepts a full task id, a unique numeric prefix, or a unique
 partial slug (e.g. 'specrelay show 0084').
@@ -559,6 +567,70 @@ print("no" if d.get("recorded") is False else "yes")' 2>/dev/null)"
     *) mode=partial ;;
   esac
   specrelay::timeline::report "$root" "$task_dir" "$task_id" "$mode"
+
+  # Command-timing summary (spec 0020, "Task Inspection" — 'task timeline'
+  # includes the command timing summary). Read-only recompute, never a write;
+  # a task with no recorded command-timing events prints nothing extra here
+  # (the same honest "not recorded" contract as the timeline itself — 'task
+  # commands' below reports that case explicitly).
+  specrelay::command_timing::report "$task_dir" "$task_id" "$mode"
+}
+
+# specrelay::cli::task_commands <task-ref> [--json]
+# Read-only (spec 0020, "Task Inspection"): the agent command-timing ledger
+# for one task — slowest observed commands, repeated commands, and
+# waiting/polling commands by default; the full per-operation JSON with
+# --json. Never mutates task state. A legacy/never-instrumented task is
+# reported honestly rather than fabricated.
+specrelay::cli::task_commands() {
+  local root ref="" as_json=0 task_id task_dir
+  root="$(specrelay::cli::require_project_root)" || return 1
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *)
+        if [ -n "$ref" ]; then specrelay::out::err "too many arguments"; return 2; fi
+        ref="$1"; shift ;;
+    esac
+  done
+  if [ -z "$ref" ]; then
+    specrelay::out::err "usage: specrelay task commands <task-ref> [--json]"
+    return 2
+  fi
+
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+  task_dir="$(specrelay::task::dir "$root" "$task_id")"
+
+  local current mode
+  current="$(specrelay::state::canonical "$(specrelay::state::path "$task_dir")" 2>/dev/null || true)"
+  case "$current" in
+    READY_FOR_HUMAN_REVIEW|BLOCKED) mode=final ;;
+    *) mode=partial ;;
+  esac
+
+  if [ "$as_json" -eq 1 ]; then
+    specrelay::command_timing::report "$task_dir" "$task_id" "$mode" --json
+    return 0
+  fi
+
+  local blob operation_count
+  blob="$(specrelay::command_timing::report "$task_dir" "$task_id" "$mode" --json 2>/dev/null)"
+  operation_count="$(printf '%s' "$blob" | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+print(d.get("operation_count", 0))' 2>/dev/null)"
+  case "$operation_count" in
+    ''|0)
+      echo "Command timing: not recorded for task '$task_id' (legacy task, or no agent tool calls were observed yet)."
+      return 0
+      ;;
+  esac
+
+  specrelay::command_timing::report "$task_dir" "$task_id" "$mode"
 }
 
 specrelay::cli::_status_row() {
@@ -793,8 +865,9 @@ specrelay::cli::task_dispatch() {
     recover) specrelay::cli::task_recover "$@" ;;
     authorize-submit) specrelay::cli::task_authorize_submit "$@" ;;
     timeline) specrelay::cli::task_timeline "$@" ;;
+    commands) specrelay::cli::task_commands "$@" ;;
     "")
-      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline>"
+      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline|commands>"
       return 2
       ;;
     *)

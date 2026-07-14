@@ -164,7 +164,7 @@ specrelay::provider::claude::_context_fragment() {
 }
 
 specrelay::provider::claude::executor_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:claude}" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}" bin prompt stream_args model_args
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:claude}" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}" invocation_id="${9:-1}" bin prompt stream_args model_args
   bin="$(specrelay::provider::claude::_bin)"
 
   if ! command -v "$bin" >/dev/null 2>&1; then
@@ -190,7 +190,7 @@ specrelay::provider::claude::executor_run() {
       specrelay::provider::run_agent_events "$label" claude \
         "$task_dir/19-executor-events.jsonl" \
         "$task_dir/12-executor-stdout.txt" \
-        "$task_dir/13-executor-stderr.txt" "$root" -- \
+        "$task_dir/13-executor-stderr.txt" "$root" "$invocation_id" -- \
         "$bin" --print $stream_args $model_args --dangerously-skip-permissions "$prompt"
       return $?
     fi
@@ -212,7 +212,7 @@ specrelay::provider::claude::executor_run() {
 # claude --help, never by guessing flags"). Uses the same semantic stream-json
 # layer as the executor when available, else the generic fallback.
 specrelay::provider::claude::reviewer_run() {
-  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:claude}" model="${6:-provider-default}" agent="${7:-}" context="${8:-none}" bin prompt rc out stream_args model_args
+  local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-reviewer:claude}" model="${6:-provider-default}" agent="${7:-}" context="${8:-none}" invocation_id="${9:-1}" bin prompt rc out stream_args model_args
   bin="$(specrelay::provider::claude::_bin)"
 
   if ! command -v "$bin" >/dev/null 2>&1; then
@@ -270,7 +270,7 @@ specrelay::provider::claude::reviewer_run() {
     specrelay::provider::run_agent_events "$label" claude \
       "$task_dir/20-reviewer-events.jsonl" \
       "$task_dir/15-reviewer-stdout.txt" \
-      "$task_dir/16-reviewer-stderr.txt" "$root" -- \
+      "$task_dir/16-reviewer-stderr.txt" "$root" "$invocation_id" -- \
       "$bin" ${agent_args[@]+"${agent_args[@]}"} --print $stream_args $model_args --dangerously-skip-permissions "$prompt"
     rc=$?
   else

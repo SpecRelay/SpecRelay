@@ -35,6 +35,16 @@ import time
 import tempfile
 from datetime import datetime, timezone
 
+# The command-timing engine (spec 0020) lives beside this file. Optional: a
+# task that predates spec 0020, or a stripped-down install missing the
+# sibling module, must still render its execution timeline exactly as before
+# — the "command_timing_summary" block below is simply omitted rather than
+# failing the whole timeline render.
+try:
+    import command_timing_lib as _command_timing_lib
+except Exception:  # pragma: no cover - command_timing_lib is an optional sibling module
+    _command_timing_lib = None
+
 SCHEMA_VERSION = 1
 
 REQUIRED_PHASES = [
@@ -388,6 +398,24 @@ def build_summary(task_dir, task_id, budgets):
         "budget_warnings": [b for b in budget_results if b["status"] == "exceeded"],
         "budgets": budget_results,
     }
+
+    # Command-timing summary reference (spec 0020, "Existing Timeline
+    # Integration" — "extend with a summary reference rather than duplicating
+    # every operation"). Computed fresh every time (cheap: it is a single pass
+    # over one append-only JSONL file), so both the mutating `render` and the
+    # read-only `report`/`task timeline` paths always reflect the CURRENT
+    # command-timing event log rather than a possibly-stale persisted
+    # artifact. A task with no recorded command-timing events at all (a
+    # legacy task, or one that never ran a real Claude renderer) gets no
+    # block at all — existing timeline JSON stays exactly as before.
+    if _command_timing_lib is not None:
+        try:
+            cts = _command_timing_lib.timeline_summary(task_dir)
+            if cts:
+                summary["command_timing_summary"] = cts
+        except Exception:
+            pass
+
     return summary
 
 

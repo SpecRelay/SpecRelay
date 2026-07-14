@@ -89,6 +89,25 @@ specrelay::timeline::next_invocation_id() {
   printf '%s\n' "$n"
 }
 
+# specrelay::timeline::current_invocation_id <task-dir>
+# Prints the id of the invocation that is CURRENTLY IN PROGRESS (i.e. the most
+# recent invocation_start already recorded, which is open for the whole
+# duration of the current 'specrelay run'/'resume' call). This is
+# next_invocation_id() - 1: 'run'/'resume' always calls invocation_start
+# before executor/reviewer iterations run, so by the time an iteration needs
+# to tag its command-timing operations with an invocation id, that id has
+# already been assigned (spec 0020, "multiple resume invocations remain
+# separate" — command-timing operations are tagged with the SAME invocation
+# id the execution-timeline already uses for this run). Read-only.
+specrelay::timeline::current_invocation_id() {
+  local task_dir="$1" n
+  n="$(specrelay::timeline::next_invocation_id "$task_dir")"
+  case "$n" in ''|*[!0-9]*) n=2 ;; esac
+  n=$((n - 1))
+  [ "$n" -ge 1 ] || n=1
+  printf '%s\n' "$n"
+}
+
 # specrelay::timeline::marker_recovery_event <task-dir> <attempted:true|false> <outcome>
 specrelay::timeline::marker_recovery_event() {
   local task_dir="$1" attempted="$2" outcome="$3"

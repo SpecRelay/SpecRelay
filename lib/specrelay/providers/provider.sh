@@ -158,20 +158,33 @@ specrelay::provider::render_events_available() {
 }
 
 # specrelay::provider::run_agent_events <label> <provider> <events-file> \
-#     <final-file> <stderr-file> <run-dir> [--] cmd [args...]
+#     <final-file> <stderr-file> <run-dir> [invocation-id] [--] cmd [args...]
 # Runs `cmd` (which must emit a JSONL event stream on stdout) with its working
 # directory set to <run-dir>, piping that stream through the renderer to show
 # live human-readable activity on fd 2, persisting the raw events to
 # <events-file>, extracting the final agent text to <final-file>, and capturing
 # raw stderr (also streamed live) to <stderr-file>. Returns the command's REAL
 # exit code.
+#
+# The renderer ALSO observes tool-call timing (spec 0020, "Agent Command
+# Timing Ledger") and appends completed operations to the task-scoped
+# 21-command-timing-events.jsonl — derived here as a SIBLING of <events-file>
+# (both already live in the same task directory), never a new path argument.
+# [invocation-id] (optional, defaults to "1") tags every operation recorded
+# during this call so multiple run/resume invocations stay separable.
 specrelay::provider::run_agent_events() {
   local label="$1" provider="$2" events_file="$3" final_file="$4" err_file="$5" run_dir="$6"
   shift 6
+  local invocation_id="1"
+  case "${1:-}" in
+    --) : ;;
+    *) invocation_id="${1:-1}"; shift ;;
+  esac
   [ "${1:-}" = "--" ] && shift
 
-  local python_bin dir err_fifo err_pid codes rc render_rc
+  local python_bin dir err_fifo err_pid codes rc render_rc timing_events_file
   python_bin="${SPECRELAY_PYTHON:-python3}"
+  timing_events_file="$(dirname "$events_file")/21-command-timing-events.jsonl"
 
   dir="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-events.XXXXXX")"
   err_fifo="$dir/err"
@@ -187,7 +200,8 @@ specrelay::provider::run_agent_events() {
   ( cd "$run_dir" && "$@" ) 2> "$err_fifo" \
     | "$python_bin" "$SPECRELAY_RENDER_AGENT_EVENTS_PY" \
         --role "$label" --provider "$provider" --repo-root "$run_dir" \
-        --raw-events "$events_file" --final-stdout "$final_file" >&2
+        --raw-events "$events_file" --final-stdout "$final_file" \
+        --command-timing-events "$timing_events_file" --invocation-id "$invocation_id" >&2
   codes=("${PIPESTATUS[@]}")
   rc="${codes[0]}"
   render_rc="${codes[1]:-0}"
@@ -218,14 +232,14 @@ specrelay::provider::run_agent_events() {
 # generic context step; nothing here (or in the adapters) parses
 # adapter-specific context formats — the handoff is passed through opaquely.
 specrelay::provider::executor_run() {
-  local provider="$1" root="$2" task_dir="$3" round="$4" prompt_file="$5" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}"
+  local provider="$1" root="$2" task_dir="$3" round="$4" prompt_file="$5" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}" invocation_id="${9:-1}"
   local label="executor:$provider"
   case "$provider" in
     fake)
       specrelay::provider::fake::executor_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent" "$context"
       ;;
     claude)
-      specrelay::provider::claude::executor_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent" "$context"
+      specrelay::provider::claude::executor_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent" "$context" "$invocation_id"
       ;;
     *)
       specrelay::out::err "unsupported executor provider: $provider"
@@ -235,14 +249,14 @@ specrelay::provider::executor_run() {
 }
 
 specrelay::provider::reviewer_run() {
-  local provider="$1" root="$2" task_dir="$3" round="$4" prompt_file="$5" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}"
+  local provider="$1" root="$2" task_dir="$3" round="$4" prompt_file="$5" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}" invocation_id="${9:-1}"
   local label="reviewer:$provider"
   case "$provider" in
     fake)
       specrelay::provider::fake::reviewer_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent" "$context"
       ;;
     claude|claude-subagent)
-      specrelay::provider::claude::reviewer_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent" "$context"
+      specrelay::provider::claude::reviewer_run "$root" "$task_dir" "$round" "$prompt_file" "$label" "$model" "$agent" "$context" "$invocation_id"
       ;;
     *)
       specrelay::out::err "unsupported reviewer provider: $provider"

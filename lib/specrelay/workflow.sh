@@ -1065,7 +1065,9 @@ specrelay::workflow::executor_iteration() {
   specrelay::out::log "[executor] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent)"
   started="$(date +%s 2>/dev/null || echo '')"
   specrelay::timeline::start "$task_dir" executor_provider_execution executor
-  if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md" "$model" "$agent" "$executor_context_handoff"; then
+  local invocation_id
+  invocation_id="$(specrelay::timeline::current_invocation_id "$task_dir")"
+  if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md" "$model" "$agent" "$executor_context_handoff" "$invocation_id"; then
     rc=0
   else
     rc=$?
@@ -1237,7 +1239,9 @@ specrelay::workflow::reviewer_iteration() {
 
   specrelay::out::log "[reviewer] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent, isolated context)"
   specrelay::timeline::start "$task_dir" reviewer_provider_execution reviewer
-  if decision="$(specrelay::provider::reviewer_run "$provider" "$root" "$task_dir" "$round" "$prompt_file" "$model" "$agent" "$reviewer_context_handoff")"; then
+  local invocation_id
+  invocation_id="$(specrelay::timeline::current_invocation_id "$task_dir")"
+  if decision="$(specrelay::provider::reviewer_run "$provider" "$root" "$task_dir" "$round" "$prompt_file" "$model" "$agent" "$reviewer_context_handoff" "$invocation_id")"; then
     rc=0
   else
     rc=$?
@@ -1541,6 +1545,14 @@ specrelay::workflow::_finalize_invocation() {
 
   mode="$(specrelay::workflow::_report_mode "$rc")"
   specrelay::timeline::render "$root" "$task_dir" "$task_id" "$mode"
+
+  # Command-timing ledger (spec 0020): rendered AFTER the execution timeline,
+  # exactly matching the spec's "Terminal Report" ("print a compact section
+  # after the execution timeline"). Writes 21-command-timings.json (a no-op,
+  # honest degrade when no command-timing events were ever recorded for this
+  # task — e.g. the fake provider, or a run that used the generic streaming
+  # fallback with no renderer).
+  specrelay::command_timing::render "$task_dir" "$task_id" "$mode"
 }
 
 specrelay::workflow::assert_engine_compat() {

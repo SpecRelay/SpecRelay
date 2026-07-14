@@ -74,6 +74,8 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/marker.sh"
 # shellcheck source=lib/specrelay/timeline.sh
 . "$LIB_DIR/timeline.sh"
+# shellcheck source=lib/specrelay/command_timing.sh
+. "$LIB_DIR/command_timing.sh"
 # shellcheck source=lib/specrelay/verification.sh
 . "$LIB_DIR/verification.sh"
 # shellcheck source=lib/specrelay/transitions.sh
