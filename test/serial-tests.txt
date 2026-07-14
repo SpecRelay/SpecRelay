@@ -1,0 +1,25 @@
+# serial-tests.txt — explicit serial-only test declaration (spec 0016).
+#
+# List (one bare *_test.sh basename per line) the standalone test files that are
+# UNSAFE to run concurrently with each other and must therefore run in the
+# serial group (one at a time, in deterministic name order) rather than the
+# bounded-parallel group. `scripts/test` reads this file; entries are still
+# timed exactly like parallel tests.
+#
+# Rules:
+#   * one bare basename per line (e.g. `foo_test.sh`); no paths, no globs
+#   * `#` comments and blank lines are ignored
+#   * any other content is a HARD error (the runner refuses to start)
+#
+# Classification MUST be based on a real resource conflict or a correctness
+# requirement (a fixed shared path/port/file, or global mutable state) — NEVER
+# merely because a test is slow. Do not add a test here to paper over a flaky
+# parallel failure without first understanding the conflict: a
+# parallelization-induced flaky failure is a defect to fix (isolate the
+# resource), not to hide.
+#
+# The current standalone suite has no such conflict: every test operates in its
+# own `mktemp` fixture and uses `$$`-suffixed temp paths (see
+# test/test_helper.sh), so all parallel-safe tests run concurrently and this
+# list is intentionally empty. The mechanism itself is exercised by
+# test/test_runner_test.sh using isolated fixture suites.

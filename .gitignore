@@ -2,6 +2,10 @@
 # SpecRelay local task run evidence
 .specrelay-runs/
 
+# SpecRelay local test cache / timing profile (spec 0016). Reusable local
+# profiling data only (latest.json test timings); never committed.
+.specrelay-cache/
+
 # Python bytecode
 __pycache__/
 *.py[cod]

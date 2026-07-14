@@ -259,16 +259,29 @@ Baseline local verification (also run by CI on every pull request and push to
 `main` — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
 
 ```sh
-scripts/test          # standalone test suite
+scripts/test          # standalone test suite (runs test files in parallel)
 bin/specrelay doctor  # read-only readiness diagnostics
 bin/specrelay version # reports the VERSION file value
+```
+
+`scripts/test` runs independent test files concurrently with deterministic,
+complete output and per-file timing (`--jobs`, `--serial`, `--timings`,
+`--slowest`, targeted files). See
+[CONTRIBUTING.md](CONTRIBUTING.md#parallel-test-runner-spec-0016) for the full
+runner reference. The recommended full verification runs the suite once and
+then the smoke-only checks, avoiding a duplicate suite run:
+
+```sh
+scripts/test --jobs auto --timings
+scripts/smoke --skip-tests
 ```
 
 Fresh-clone / install smoke check (version + tests + doctor + a temp-prefix
 source install), which needs nothing outside this repository:
 
 ```sh
-scripts/smoke
+scripts/smoke                # full check (also runs the standalone suite)
+scripts/smoke --skip-tests   # skip only the suite (e.g. it just ran); run the rest
 ```
 
 CI does not require a real Claude installation: Claude is an optional provider,

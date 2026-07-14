@@ -48,7 +48,13 @@ jobs:
           git config --global user.email "specrelay-ci@example.invalid"
 
       - name: Run standalone test suite
-        run: scripts/test
+        # Parallel runner (spec 0016): --jobs auto uses min(logical CPUs, 8),
+        # which is safely bounded on small hosted runners. --timings prints the
+        # per-file timing summary and slowest files so a slow regression is
+        # visible in the CI log. Output stays deterministic, append-only, and
+        # needs no TTY/ANSI. A full re-run of the suite in scripts/smoke is
+        # avoided elsewhere via `scripts/smoke --skip-tests`.
+        run: scripts/test --jobs auto --timings
 
       - name: Run readiness diagnostics (doctor)
         run: bin/specrelay doctor

@@ -1,24 +1,122 @@
 #!/usr/bin/env bash
 # scripts/test — run SpecRelay's STANDALONE test suite (spec 0086, sections
-# 20-21). This runs every test that operates purely on isolated temporary git
-# fixtures and needs NEITHER the host Rails application NOR a pre-existing
-# `.ai/` workflow. It therefore passes both in the incubation host and in a
-# freshly extracted standalone repository.
+# 20-21; parallel test runner + timing profiler, spec 0016).
+#
+# This runs every test that operates purely on isolated temporary git fixtures
+# and needs NEITHER the host Rails application NOR a pre-existing `.ai/`
+# workflow. It therefore passes both in the incubation host and in a freshly
+# extracted standalone repository.
 #
 # Host-integration tests (which need the host's `.ai/scripts/` shims, rollback
-# engine, CLAUDE.md, or host spec history) are EXPLICITLY excluded here and
-# are run by test/run_all.sh in the host repository instead.
+# engine, CLAUDE.md, or host spec history) are EXPLICITLY excluded here and are
+# run by test/run_all.sh in the host repository instead.
 #
-#   scripts/test            # run the standalone suite
+# The runner executes independent test files concurrently (bounded worker
+# count), captures each file's output in isolation, then prints the complete
+# logs in a deterministic order so parallel completion order never changes the
+# presentation. It records per-file timing, reports the slowest files, and can
+# emit machine-readable timing evidence.
 #
+#   scripts/test                                   # default parallel run
+#   scripts/test --jobs 8                          # explicit worker count
+#   scripts/test --jobs auto                       # min(logical CPUs, 8)
+#   scripts/test --serial                          # one worker (no overlap)
+#   scripts/test --timings                         # + timing summary + slowest
+#   scripts/test --slowest 5                       # show 5 slowest files
+#   scripts/test --slow-threshold 30               # mark files >= 30s SLOW
+#   scripts/test test/config_test.sh ...           # run only the given files
+#
+# Precedence for worker count: --serial > --jobs > SPECRELAY_TEST_JOBS > auto.
+# Env: SPECRELAY_TEST_JOBS      override default worker count (number or "auto")
+#      SPECRELAY_TEST_DIR       override the test directory (default <root>/test)
+#      SPECRELAY_CACHE_DIR      override cache root (default <root>/.specrelay-cache)
+#      SPECRELAY_TEST_TIMINGS_OUT  write task timing JSON to this explicit path
+#      SPECRELAY_TEST_KEEP_LOGS=1  keep per-worker temp capture files (debug)
+#
+# Directory policy (spec 0016): no new top-level runtime directory is created.
+# General timing data lives under .specrelay-cache/tests/ (git-ignored); task
+# timing evidence goes under the existing .specrelay-runs/tasks/<id>/ only when
+# an explicit destination is provided. Per-worker capture files live in the OS
+# temporary directory and are removed on exit.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TEST_DIR="$ROOT/test"
+TEST_DIR="${SPECRELAY_TEST_DIR:-$ROOT/test}"
+CACHE_DIR="${SPECRELAY_CACHE_DIR:-$ROOT/.specrelay-cache}"
 
-# Test files that depend on host-only artifacts (see run_all.sh for the full
-# host suite). Kept as an explicit, auditable list.
+# A reasonable upper bound so a mistaken --jobs value (or env override) can
+# never fork an unbounded process explosion. 64 is far above any real logical
+# CPU count this suite targets while still rejecting values like 999999.
+MAX_JOBS=64
+
+# --- portability helpers -----------------------------------------------------
+PYBIN="$(command -v python3 2>/dev/null || true)"
+
+# High-resolution, monotonic-where-available seconds. Used only for duration
+# math, so a plain wall clock fallback is acceptable when python3 is absent.
+_now() {
+  if [ -n "$PYBIN" ]; then
+    "$PYBIN" -c 'import time; print("%.6f" % time.monotonic())'
+  else
+    date +%s
+  fi
+}
+
+# ISO-8601 UTC wall-clock timestamp (portable; recorded for evidence only).
+_iso_now() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+
+# a - b, one decimal, never negative.
+_delta() { awk "BEGIN{d=$1-$2; if (d<0) d=0; printf \"%.1f\", d}"; }
+
+# Human duration: "1.8s", "42.6s", "3m 12s".
+_fmt_dur() {
+  awk "BEGIN{
+    s=$1; if (s<0) s=0;
+    if (s>=60) { m=int(s/60); r=s-m*60; printf \"%dm %02ds\", m, int(r+0.5) }
+    else { printf \"%.1fs\", s }
+  }"
+}
+
+# Portable best-effort logical CPU count; falls back to 1 (spec 0016).
+detect_cpus() {
+  local n=""
+  if command -v sysctl >/dev/null 2>&1; then n="$(sysctl -n hw.logicalcpu 2>/dev/null || true)"; fi
+  if [ -z "$n" ] && command -v getconf >/dev/null 2>&1; then n="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"; fi
+  if [ -z "$n" ] && command -v nproc >/dev/null 2>&1; then n="$(nproc 2>/dev/null || true)"; fi
+  case "$n" in ''|*[!0-9]*) n=1 ;; esac
+  [ "$n" -lt 1 ] && n=1
+  printf '%s' "$n"
+}
+
+auto_jobs() {
+  local c; c="$(detect_cpus)"
+  [ "$c" -gt 8 ] && c=8
+  [ "$c" -lt 1 ] && c=1
+  printf '%s' "$c"
+}
+
+die() { echo "scripts/test: $*" >&2; exit 2; }
+
+# Print the validated worker count on stdout, or an error on stderr + return 1.
+# NOTE: this is invoked in a command substitution, so it must NOT call `die`
+# (whose `exit` would only leave the subshell); the caller turns a non-zero
+# return into a top-level `exit 2`.
+validate_jobs() {
+  # $1 = value, $2 = source label (for the error message)
+  local v="$1" src="$2"
+  case "$v" in
+    ''|*[!0-9]*) echo "scripts/test: invalid worker count from $src: '$v' (must be a positive integer or 'auto')" >&2; return 1 ;;
+  esac
+  if [ "$v" -lt 1 ]; then echo "scripts/test: invalid worker count from $src: '$v' (must be >= 1)" >&2; return 1; fi
+  if [ "$v" -gt "$MAX_JOBS" ]; then
+    echo "scripts/test: worker count from $src ('$v') exceeds the maximum of $MAX_JOBS (guards against process explosions)" >&2
+    return 1
+  fi
+  printf '%s' "$v"
+}
+
+# --- host-integration exclusion (unchanged auditable list) -------------------
 HOST_INTEGRATION_TESTS="
 compat_shim_test.sh
 rollback_test.sh
@@ -29,7 +127,6 @@ engine_ownership_cases_test.sh
 dogfood_orchestration_test.sh
 host_repo_safety_test.sh
 "
-
 is_host_integration() {
   local name="$1" t
   for t in $HOST_INTEGRATION_TESTS; do
@@ -38,33 +135,492 @@ is_host_integration() {
   return 1
 }
 
-FILES_RUN=0
-FILES_FAILED=0
-FAILED_NAMES=""
-SKIPPED=""
+# --- argument parsing --------------------------------------------------------
+OPT_JOBS=""            # explicit --jobs value (number or "auto")
+OPT_SERIAL=0
+OPT_TIMINGS=0
+OPT_SLOWEST=""         # explicit --slowest N
+OPT_SLOW_THRESHOLD=""  # explicit --slow-threshold S
+EXPLICIT_FILES=()
 
-for f in "$TEST_DIR"/*_test.sh; do
-  [ -f "$f" ] || continue
-  name="$(basename "$f")"
-  if is_host_integration "$name"; then
-    SKIPPED="$SKIPPED $name"
-    continue
-  fi
-  echo "=== $name ==="
-  if "$f"; then
-    echo
-  else
-    FILES_FAILED=$((FILES_FAILED + 1))
-    FAILED_NAMES="$FAILED_NAMES $name"
-    echo
-  fi
-  FILES_RUN=$((FILES_RUN + 1))
+usage() {
+  sed -n '2,40p' "$SCRIPT_DIR/test" | sed 's/^# \{0,1\}//'
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --jobs)
+      [ $# -ge 2 ] || die "--jobs requires a value"
+      OPT_JOBS="$2"; shift 2 ;;
+    --jobs=*) OPT_JOBS="${1#*=}"; shift ;;
+    --serial) OPT_SERIAL=1; shift ;;
+    --timings) OPT_TIMINGS=1; shift ;;
+    --slowest)
+      [ $# -ge 2 ] || die "--slowest requires a value"
+      OPT_SLOWEST="$2"; shift 2 ;;
+    --slowest=*) OPT_SLOWEST="${1#*=}"; shift ;;
+    --slow-threshold)
+      [ $# -ge 2 ] || die "--slow-threshold requires a value"
+      OPT_SLOW_THRESHOLD="$2"; shift 2 ;;
+    --slow-threshold=*) OPT_SLOW_THRESHOLD="${1#*=}"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; while [ $# -gt 0 ]; do EXPLICIT_FILES+=("$1"); shift; done ;;
+    -*) die "unknown option: $1" ;;
+    *) EXPLICIT_FILES+=("$1"); shift ;;
+  esac
 done
 
+# --slowest validation (positive integer)
+if [ -n "$OPT_SLOWEST" ]; then
+  case "$OPT_SLOWEST" in
+    ''|*[!0-9]*) die "--slowest requires a positive integer (got '$OPT_SLOWEST')" ;;
+  esac
+  [ "$OPT_SLOWEST" -ge 1 ] || die "--slowest requires a positive integer (got '$OPT_SLOWEST')"
+  OPT_TIMINGS=1
+fi
+
+# --slow-threshold validation (positive number; integer or decimal)
+if [ -n "$OPT_SLOW_THRESHOLD" ]; then
+  case "$OPT_SLOW_THRESHOLD" in
+    *[!0-9.]*|''|.|*.*.*) die "--slow-threshold requires a positive number of seconds (got '$OPT_SLOW_THRESHOLD')" ;;
+  esac
+  # reject a bare "0" / "0.0"
+  if awk "BEGIN{exit !($OPT_SLOW_THRESHOLD <= 0)}"; then
+    die "--slow-threshold requires a positive number of seconds (got '$OPT_SLOW_THRESHOLD')"
+  fi
+  OPT_TIMINGS=1
+fi
+
+# --- resolve worker count (precedence) ---------------------------------------
+if [ "$OPT_SERIAL" -eq 1 ]; then
+  JOBS=1
+elif [ -n "$OPT_JOBS" ]; then
+  if [ "$OPT_JOBS" = "auto" ]; then JOBS="$(auto_jobs)"; else JOBS="$(validate_jobs "$OPT_JOBS" "--jobs")" || exit 2; fi
+elif [ -n "${SPECRELAY_TEST_JOBS:-}" ]; then
+  if [ "$SPECRELAY_TEST_JOBS" = "auto" ]; then JOBS="$(auto_jobs)"; else JOBS="$(validate_jobs "$SPECRELAY_TEST_JOBS" "SPECRELAY_TEST_JOBS")" || exit 2; fi
+else
+  JOBS="$(auto_jobs)"
+fi
+
+# --- serial-only test declaration --------------------------------------------
+# test/serial-tests.txt lists (one basename per line) test files that are unsafe
+# to run concurrently with each other. Comments (#) and blank lines are ignored.
+# Entries must be bare *_test.sh basenames; anything else is a hard error.
+SERIAL_NAMES=" "
+load_serial_list() {
+  local sf="$TEST_DIR/serial-tests.txt" line
+  [ -f "$sf" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    # trim surrounding whitespace
+    line="$(printf '%s' "$line" | awk '{$1=$1; print}')"
+    [ -z "$line" ] && continue
+    case "$line" in
+      */*) echo "scripts/test: invalid serial-tests.txt entry (no paths allowed): '$line'" >&2; return 1 ;;
+      *_test.sh) : ;;
+      *) echo "scripts/test: invalid serial-tests.txt entry (must be a *_test.sh filename): '$line'" >&2; return 1 ;;
+    esac
+    SERIAL_NAMES="$SERIAL_NAMES$line "
+  done < "$sf"
+  return 0
+}
+is_serial_only() { case "$SERIAL_NAMES" in *" $1 "*) return 0 ;; esac; return 1; }
+
+load_serial_list || exit 2
+
+# --- build the ordered test list ---------------------------------------------
+# NAME[i], PATH_[i] hold the deterministic final-output order.
+NAME=()
+PATH_=()
+SKIPPED=""
+
+resolve_under_test_root() {
+  # Print the resolved path of $1 if it exists inside TEST_DIR, else fail.
+  local given="$1" dir base real testroot
+  [ -e "$given" ] || return 1
+  [ -f "$given" ] || return 1
+  dir="$(cd "$(dirname "$given")" 2>/dev/null && pwd -P)" || return 1
+  base="$(basename "$given")"
+  real="$dir/$base"
+  testroot="$(cd "$TEST_DIR" 2>/dev/null && pwd -P)" || return 1
+  case "$real" in
+    "$testroot"/*) printf '%s' "$real"; return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "${#EXPLICIT_FILES[@]}" -gt 0 ]; then
+  # Targeted execution: preserve the given order; reject unknown / out-of-root.
+  for given in "${EXPLICIT_FILES[@]}"; do
+    if ! real="$(resolve_under_test_root "$given")"; then
+      if [ -e "$given" ]; then
+        die "test file is outside the allowed test root ($TEST_DIR): $given"
+      else
+        die "no such test file under $TEST_DIR: $given"
+      fi
+    fi
+    NAME+=("$(basename "$real")")
+    PATH_+=("$real")
+  done
+else
+  # Full discovery: executable *_test.sh in TEST_DIR, host-integration excluded,
+  # deterministically sorted by basename (C locale).
+  names="$(for f in "$TEST_DIR"/*_test.sh; do [ -f "$f" ] && basename "$f"; done | LC_ALL=C sort -u)"
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    if is_host_integration "$name"; then SKIPPED="$SKIPPED $name"; continue; fi
+    NAME+=("$name")
+    PATH_+=("$TEST_DIR/$name")
+  done <<EOF
+$names
+EOF
+fi
+
+NTESTS="${#NAME[@]}"
+if [ "$NTESTS" -eq 0 ]; then
+  echo "scripts/test: no standalone tests found in $TEST_DIR" >&2
+  exit 2
+fi
+
+# --- plan execution mode per test --------------------------------------------
+# MODE[i] = parallel | serial. Serial when the whole run is single-worker, or
+# when the file is declared serial-only.
+MODE=()
+for ((i=0; i<NTESTS; i++)); do
+  if [ "$JOBS" -le 1 ]; then
+    MODE+=("serial")
+  elif is_serial_only "${NAME[$i]}"; then
+    MODE+=("serial")
+  else
+    MODE+=("parallel")
+  fi
+done
+
+# --- per-worker capture area (OS temp dir; cleaned on exit) ------------------
+RUNDIR="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-test-run.XXXXXX")"
+
+# --- state arrays populated during execution ---------------------------------
+RC=(); START=(); END=(); DUR=(); STATUS=(); WORKER=(); LAUNCHED=()
+for ((i=0; i<NTESTS; i++)); do
+  RC[$i]=""; START[$i]=""; END[$i]=""; DUR[$i]=""; STATUS[$i]="not-run"; WORKER[$i]=""; LAUNCHED[$i]=0
+done
+
+LAUNCHED_PIDS=""   # space-separated pids of every launched child (for cleanup)
+INTERRUPTED=0
+WALL_START=""; WALL_END=""
+STARTED_AT_ISO=""; FINISHED_AT_ISO=""
+
+progress() { printf '[test] %s\n' "$*" >&2; }
+
+cleanup_temp() {
+  if [ "${SPECRELAY_TEST_KEEP_LOGS:-0}" = "1" ]; then
+    echo "scripts/test: kept per-worker logs in $RUNDIR" >&2
+  else
+    [ -n "${RUNDIR:-}" ] && rm -rf "$RUNDIR"
+  fi
+}
+trap cleanup_temp EXIT
+
+# Kill a process and all of its descendants (no orphans on interrupt).
+kill_tree() {
+  local p="$1" c
+  if command -v pgrep >/dev/null 2>&1; then
+    for c in $(pgrep -P "$p" 2>/dev/null); do kill_tree "$c"; done
+  fi
+  kill -TERM "$p" 2>/dev/null || true
+}
+
+on_signal() {
+  INTERRUPTED=1
+  local p
+  for p in $LAUNCHED_PIDS; do kill_tree "$p"; done
+}
+trap on_signal INT TERM
+
+# _run_test <idx> <mode> : runs the test file, capturing combined stdout+stderr
+# into an isolated per-file log; writes an atomic meta marker on completion.
+# stdout and stderr are merged into one isolated capture so within-file ordering
+# is preserved exactly as the sequential runner produced it, while remaining
+# fully isolated from every other test file (no shared terminal stream, so no
+# interleaving across files).
+_run_test() {
+  local idx="$1" mode="$2" wk="$3"
+  local out="$RUNDIR/$idx.out" meta="$RUNDIR/$idx.meta" start end rc
+  start="$(_now)"
+  ( cd "$ROOT" && "${PATH_[$idx]}" ) >"$out" 2>&1
+  rc=$?
+  end="$(_now)"
+  {
+    printf 'rc=%s\n' "$rc"
+    printf 'start=%s\n' "$start"
+    printf 'end=%s\n' "$end"
+    printf 'mode=%s\n' "$mode"
+    printf 'worker=%s\n' "$wk"
+  } > "$meta.tmp"
+  mv -f "$meta.tmp" "$meta"
+}
+
+collect_meta() {
+  local idx="$1"
+  local f="$RUNDIR/$idx.meta" k v
+  local rc="" start="" end="" mode="" worker=""
+  while IFS='=' read -r k v; do
+    case "$k" in
+      rc) rc="$v" ;; start) start="$v" ;; end) end="$v" ;;
+      mode) mode="$v" ;; worker) worker="$v" ;;
+    esac
+  done < "$f"
+  RC[$idx]="$rc"; START[$idx]="$start"; END[$idx]="$end"
+  MODE[$idx]="$mode"; WORKER[$idx]="$worker"
+  DUR[$idx]="$(_delta "$end" "$start")"
+  if [ "$rc" = "0" ]; then STATUS[$idx]="passed"; else STATUS[$idx]="failed"; fi
+}
+
+# --- bounded parallel scheduler (bash 3.2: no `wait -n`) ---------------------
+# Poll for each launched worker's atomic .meta marker (reliable even while the
+# finished child is briefly a zombie). Worker slots are tracked explicitly so
+# the JSON `worker` field is honest.
+WBUSY=()  # WBUSY[w] non-empty => worker w busy
+run_parallel_group() {
+  local -a group; group=("$@")
+  local total="${#group[@]}"
+  [ "$total" -eq 0 ] && return 0
+
+  local w
+  for ((w=1; w<=JOBS; w++)); do WBUSY[$w]=""; done
+
+  local -a coll posworker pidof
+  local pos
+  for ((pos=0; pos<total; pos++)); do coll[$pos]=0; posworker[$pos]=0; pidof[$pos]=0; done
+
+  local launched=0 collected=0 running=0
+  while [ "$collected" -lt "$total" ]; do
+    if [ "$INTERRUPTED" -eq 1 ]; then break; fi
+    # Launch into free slots.
+    while [ "$running" -lt "$JOBS" ] && [ "$launched" -lt "$total" ] && [ "$INTERRUPTED" -eq 0 ]; do
+      local idx="${group[$launched]}" fw=0
+      for ((w=1; w<=JOBS; w++)); do
+        if [ -z "${WBUSY[$w]}" ]; then fw="$w"; break; fi
+      done
+      WBUSY[$fw]="busy"
+      posworker[$launched]="$fw"
+      LAUNCHED[$idx]=1
+      _run_test "$idx" "parallel" "$fw" &
+      pidof[$launched]="$!"
+      LAUNCHED_PIDS="$LAUNCHED_PIDS ${pidof[$launched]}"
+      progress "started ${NAME[$idx]}"
+      launched=$((launched + 1))
+      running=$((running + 1))
+    done
+    # Reap any completed workers.
+    local progressed=0
+    for ((pos=0; pos<launched; pos++)); do
+      if [ "${coll[$pos]}" -eq 0 ] && [ -f "$RUNDIR/${group[$pos]}.meta" ]; then
+        coll[$pos]=1
+        wait "${pidof[$pos]}" 2>/dev/null || true
+        WBUSY[${posworker[$pos]}]=""
+        collected=$((collected + 1))
+        running=$((running - 1))
+        local cidx="${group[$pos]}"
+        collect_meta "$cidx"
+        progress "${STATUS[$cidx]} ${NAME[$cidx]} (${DUR[$cidx]}s)"
+        progressed=1
+      fi
+    done
+    [ "$progressed" -eq 0 ] && sleep 0.05
+  done
+}
+
+run_serial_group() {
+  local -a group; group=("$@")
+  local idx
+  for idx in ${group[@]+"${group[@]}"}; do
+    if [ "$INTERRUPTED" -eq 1 ]; then break; fi
+    progress "started ${NAME[$idx]} (serial)"
+    LAUNCHED[$idx]=1
+    _run_test "$idx" "serial" 1 &
+    local p="$!"
+    LAUNCHED_PIDS="$LAUNCHED_PIDS $p"
+    # Poll so an interrupt during a serial test is handled promptly.
+    while [ ! -f "$RUNDIR/$idx.meta" ]; do
+      if [ "$INTERRUPTED" -eq 1 ]; then break; fi
+      sleep 0.05
+    done
+    wait "$p" 2>/dev/null || true
+    if [ -f "$RUNDIR/$idx.meta" ]; then
+      collect_meta "$idx"
+      progress "${STATUS[$idx]} ${NAME[$idx]} (${DUR[$idx]}s)"
+    fi
+  done
+}
+
+# --- run ---------------------------------------------------------------------
+PGROUP=(); SGROUP=()
+for ((i=0; i<NTESTS; i++)); do
+  if [ "${MODE[$i]}" = "serial" ]; then SGROUP+=("$i"); else PGROUP+=("$i"); fi
+done
+
+STARTED_AT_ISO="$(_iso_now)"
+WALL_START="$(_now)"
+run_parallel_group ${PGROUP[@]+"${PGROUP[@]}"}
+run_serial_group ${SGROUP[@]+"${SGROUP[@]}"}
+WALL_END="$(_now)"
+FINISHED_AT_ISO="$(_iso_now)"
+WALL="$(_delta "$WALL_END" "$WALL_START")"
+
+# --- interrupt path ----------------------------------------------------------
+if [ "$INTERRUPTED" -eq 1 ]; then
+  # Reap every tracked child so none is left orphaned.
+  for p in $LAUNCHED_PIDS; do wait "$p" 2>/dev/null || true; done
+  # Classify: a completed file has a meta marker (passed/failed); a file that
+  # was launched but never produced one was cancelled; a file never launched is
+  # not-run.
+  for ((i=0; i<NTESTS; i++)); do
+    if [ -f "$RUNDIR/$i.meta" ]; then
+      collect_meta "$i"
+    elif [ "${LAUNCHED[$i]}" -eq 1 ]; then
+      STATUS[$i]="cancelled"
+    else
+      STATUS[$i]="not-run"
+    fi
+  done
+  echo
+  echo "========================================"
+  echo "INTERRUPTED (SIGINT/SIGTERM): stopped launching new tests, terminated active children."
+  for ((i=0; i<NTESTS; i++)); do
+    printf '  %-9s %s\n' "${STATUS[$i]}" "${NAME[$i]}"
+  done
+  echo "A valid previous timing result (if any) was left untouched (no JSON written)."
+  exit 130
+fi
+
+# --- deterministic output ----------------------------------------------------
+# Printed strictly in NAME[] order regardless of completion order.
+for ((i=0; i<NTESTS; i++)); do
+  printf '=== %s ===\n' "${NAME[$i]}"
+  if [ -f "$RUNDIR/$i.out" ]; then cat "$RUNDIR/$i.out"; fi
+  printf '\n'
+done
+
+# --- tallies -----------------------------------------------------------------
+PASSED=0; FAILED=0; FAILED_NAMES=""
+for ((i=0; i<NTESTS; i++)); do
+  if [ "${STATUS[$i]}" = "passed" ]; then PASSED=$((PASSED + 1))
+  else FAILED=$((FAILED + 1)); FAILED_NAMES="$FAILED_NAMES ${NAME[$i]}"; fi
+done
+
+# serial sum = sum of individual file durations (not a separate serial run).
+SERIAL_SUM="$(
+  awk 'BEGIN{s=0} {s+=$1} END{printf "%.1f", s}' <<EOF
+$(for ((i=0; i<NTESTS; i++)); do printf '%s\n' "${DUR[$i]:-0}"; done)
+EOF
+)"
+
+# --- summary -----------------------------------------------------------------
 echo "========================================"
-echo "STANDALONE SUITE: $FILES_RUN test file(s) run, $FILES_FAILED failed"
+printf 'Test files: %10d\n' "$NTESTS"
+printf 'Workers:    %10d\n' "$JOBS"
+printf 'Passed:     %10d\n' "$PASSED"
+printf 'Failed:     %10d\n' "$FAILED"
+printf 'Wall time:  %10s\n' "$(_fmt_dur "$WALL")"
+printf 'Serial sum: %10s\n' "$(_fmt_dur "$SERIAL_SUM")"
+# Only print speedup when it can be calculated honestly (real overlap possible).
+if [ "$JOBS" -gt 1 ] && [ "$NTESTS" -gt 1 ]; then
+  speedup="$(awk -v s="$SERIAL_SUM" -v w="$WALL" 'BEGIN{ if (w>0) printf "%.1f", s/w }')"
+  [ -n "$speedup" ] && printf 'Speedup:    %9sx\n' "$speedup"
+fi
 [ -n "$SKIPPED" ] && echo "Skipped (host-integration; run via test/run_all.sh):$SKIPPED"
-if [ "$FILES_FAILED" -gt 0 ]; then
+
+# --- slowest / slow-threshold (only when timing output enabled) --------------
+if [ "$OPT_TIMINGS" -eq 1 ]; then
+  SLOW_N="${OPT_SLOWEST:-10}"
+  echo
+  echo "Slowest test files:"
+  # sort by duration descending (field 1), take SLOW_N. Test names are
+  # *_test.sh basenames with no spaces, so whitespace-delimited sort is safe.
+  slow_sorted="$(
+    for ((i=0; i<NTESTS; i++)); do printf '%s %s\n' "${DUR[$i]:-0}" "${NAME[$i]}"; done \
+      | sort -k1,1 -rn
+  )"
+  printf '%s\n' "$slow_sorted" | head -n "$SLOW_N" | while read -r d n; do
+    [ -z "$n" ] && continue
+    printf '%6ss  %s\n' "$d" "$n"
+  done
+
+  if [ -n "$OPT_SLOW_THRESHOLD" ]; then
+    echo
+    marked=0
+    for ((i=0; i<NTESTS; i++)); do
+      if awk "BEGIN{exit !(${DUR[$i]:-0} >= $OPT_SLOW_THRESHOLD)}"; then
+        printf 'SLOW  %s  %ss\n' "${NAME[$i]}" "${DUR[$i]}"
+        marked=1
+      fi
+    done
+    [ "$marked" -eq 0 ] && printf '(no test file met or exceeded the %ss slow threshold)\n' "$OPT_SLOW_THRESHOLD"
+  fi
+fi
+
+# --- machine-readable timing output ------------------------------------------
+# Emit a JSON document to stdout via this function so both destinations reuse
+# it. Numbers are pre-formatted; test names are safe *_test.sh basenames.
+build_json() {
+  printf '{\n'
+  printf '  "schema_version": 1,\n'
+  printf '  "started_at": "%s",\n' "$STARTED_AT_ISO"
+  printf '  "finished_at": "%s",\n' "$FINISHED_AT_ISO"
+  printf '  "jobs": %s,\n' "$JOBS"
+  printf '  "wall_seconds": %s,\n' "$WALL"
+  printf '  "serial_sum_seconds": %s,\n' "$SERIAL_SUM"
+  printf '  "passed": %s,\n' "$PASSED"
+  printf '  "failed": %s,\n' "$FAILED"
+  printf '  "tests": [\n'
+  local i last=$((NTESTS - 1))
+  for ((i=0; i<NTESTS; i++)); do
+    local relpath="${PATH_[$i]}"
+    case "$relpath" in "$ROOT"/*) relpath="${relpath#$ROOT/}" ;; esac
+    printf '    {\n'
+    printf '      "name": "%s",\n' "${NAME[$i]}"
+    printf '      "path": "%s",\n' "$relpath"
+    printf '      "duration_seconds": %s,\n' "${DUR[$i]:-0}"
+    printf '      "exit_code": %s,\n' "${RC[$i]:-null}"
+    printf '      "status": "%s",\n' "${STATUS[$i]}"
+    printf '      "execution_mode": "%s",\n' "${MODE[$i]}"
+    printf '      "worker": %s\n' "${WORKER[$i]:-0}"
+    if [ "$i" -eq "$last" ]; then printf '    }\n'; else printf '    },\n'; fi
+  done
+  printf '  ]\n'
+  printf '}\n'
+}
+
+write_json_atomic() {
+  local dest="$1" dir tmp
+  dir="$(dirname "$dest")"
+  mkdir -p "$dir" || return 1
+  tmp="$dest.tmp.$$"
+  if build_json > "$tmp"; then
+    mv -f "$tmp" "$dest"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+# General reusable timing data under the existing cache namespace, written only
+# when timing persistence is enabled (so a plain `scripts/test` creates nothing).
+if [ "$OPT_TIMINGS" -eq 1 ]; then
+  write_json_atomic "$CACHE_DIR/tests/latest.json" \
+    || echo "scripts/test: warning: could not write $CACHE_DIR/tests/latest.json" >&2
+fi
+
+# Task-specific timing evidence: written ONLY to an explicit destination (never
+# inferred from the newest task directory).
+if [ -n "${SPECRELAY_TEST_TIMINGS_OUT:-}" ]; then
+  write_json_atomic "$SPECRELAY_TEST_TIMINGS_OUT" \
+    || echo "scripts/test: warning: could not write $SPECRELAY_TEST_TIMINGS_OUT" >&2
+fi
+
+# --- exit status -------------------------------------------------------------
+if [ "$FAILED" -gt 0 ]; then
   echo "Failed:$FAILED_NAMES"
   exit 1
 fi

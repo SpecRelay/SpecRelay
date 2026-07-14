@@ -22,13 +22,31 @@
 # doctor steps run in provider-optional mode so an absent Claude CLI is a clear,
 # documented, non-failing result.
 #
-#   scripts/smoke
+#   scripts/smoke                 # full smoke (runs the standalone suite too)
+#   scripts/smoke --skip-tests    # skip ONLY the standalone suite; run the rest
+#
+# --skip-tests (spec 0016) avoids re-running the whole standalone suite when it
+# was already executed separately (e.g. `scripts/test --jobs auto --timings`
+# immediately before). It skips step 2 ONLY; every other smoke check still runs.
+# The skip is always announced explicitly — it never happens silently. All other
+# smoke steps (doctor, version, install, installed doctor, upgrade, fake run,
+# uninstall) run unchanged. By default the suite is still run for backward
+# compatibility.
 #
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN="$ROOT/bin/specrelay"
+
+SKIP_TESTS=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skip-tests) SKIP_TESTS=1; shift ;;
+    -h|--help) sed -n '2,30p' "$SCRIPT_DIR/smoke" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "scripts/smoke: unknown option: $1" >&2; exit 2 ;;
+  esac
+done
 
 fail=0
 step() { printf '\n=== %s ===\n' "$1"; }
@@ -41,7 +59,9 @@ else
 fi
 
 step "2. scripts/test"
-if "$ROOT/scripts/test"; then
+if [ "$SKIP_TESTS" -eq 1 ]; then
+  echo "Standalone suite: SKIPPED by explicit --skip-tests"
+elif "$ROOT/scripts/test"; then
   echo "scripts/test: OK"
 else
   echo "scripts/test: FAILED"; fail=1
