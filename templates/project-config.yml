@@ -48,6 +48,17 @@ context:
   adapter: none
   required: false
 
+bundle:
+  # Specification-directory input policy (spec 0023); see
+  # tools/specrelay/docs/configuration.md.
+  require_functional_spec: true
+
+jam:
+  # Jam recording capability (spec 0023): globally optional, but a task
+  # bundle that references a Jam recording still requires it for that task.
+  # See tools/specrelay/docs/jam-capability.md.
+  required: false
+
 validation:
   # The real command used to run this project's test/validation suite.
   full_test_command: <run your test suite here>

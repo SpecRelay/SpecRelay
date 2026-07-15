@@ -96,8 +96,11 @@ Release (source-local only; spec 0022):
                          tag. Never pushes.
 
 Workflow engine:
-  run <spec-path> [--task-id <id>] [--allow-dirty-baseline] [--verbose]
-                         Run the full lifecycle for a spec: create/resolve
+  run <input-path> [--task-id <id>] [--allow-dirty-baseline] [--verbose]
+                         <input-path> is a single spec file OR a
+                         specification directory (spec.md + tech-spec.md/
+                         tech_spec.md + supporting evidence; spec 0023).
+                         Run the full lifecycle for it: create/resolve
                          the task, approve it, run executor/reviewer rounds
                          until READY_FOR_HUMAN_REVIEW, CHANGES_REQUESTED-only
                          (manual reviewer), BLOCKED, a provider failure, or
@@ -120,9 +123,9 @@ Workflow engine:
   list                   List every known task, most recently updated first
                          (delegates to 'task list').
 
-  task create <spec-path> [--task-id <id>] [--allow-dirty-baseline]
-                         Create a new task from a spec (state DRAFT); does
-                         NOT approve or run it.
+  task create <input-path> [--task-id <id>] [--allow-dirty-baseline]
+                         Create a new task from a spec file OR specification
+                         directory (spec DRAFT); does NOT approve or run it.
   task show <task-ref>       Full detail view for one task.
   task status [<task-ref>]   Same as top-level 'status'.
   task list                  Same as top-level 'list'.
@@ -729,7 +732,7 @@ specrelay::cli::_parse_run_args() {
     esac
   done
   if [ -z "$spec" ]; then
-    specrelay::out::err "a <spec-path> is required"
+    specrelay::out::err "an <input-path> (spec file or specification directory) is required"
     return 2
   fi
   printf '%s\n%s\n%s\n%s\n' "$spec" "$task_id_override" "$allow_dirty" "$verbose"
@@ -792,27 +795,34 @@ specrelay::cli::_task_dir_for_ref() {
 }
 
 specrelay::cli::task_create() {
-  local root parsed spec task_id_override allow_dirty spec_abs spec_rel task_id
+  local root parsed spec task_id_override allow_dirty input_kind spec_abs spec_rel task_id
   root="$(specrelay::cli::require_project_root)" || return 1
   parsed="$(specrelay::cli::_parse_run_args "$@")" || return 2
   spec="$(printf '%s\n' "$parsed" | sed -n '1p')"
   task_id_override="$(printf '%s\n' "$parsed" | sed -n '2p')"
   allow_dirty="$(printf '%s\n' "$parsed" | sed -n '3p')"
 
-  spec_abs="$(specrelay::task::resolve_spec_path "$root" "$spec")" || return 1
+  parsed="$(specrelay::task::resolve_input_path "$root" "$spec")" || return 1
+  input_kind="$(printf '%s\n' "$parsed" | sed -n '1p')"
+  spec_abs="$(printf '%s\n' "$parsed" | sed -n '2p')"
   spec_rel="${spec_abs#"$root"/}"
   if [ -n "$task_id_override" ]; then
     task_id="$task_id_override"
   else
-    task_id="$(specrelay::task::id_from_spec_path "$spec_abs")"
+    task_id="$(specrelay::task::id_from_input_path "$spec_abs" "$input_kind")"
   fi
   if ! specrelay::task::valid_id "$task_id"; then
-    specrelay::out::err "could not derive a safe task id from spec path: $spec"
+    specrelay::out::err "could not derive a safe task id from input path: $spec"
     return 1
   fi
 
-  specrelay::transitions::create "$root" "$task_id" "$spec_rel" "$allow_dirty" || return 1
-  specrelay::workflow::seed_task_from_spec "$root" "$task_id" "$spec_abs"
+  local staging
+  staging="$(specrelay::workflow::stage_input "$root" "$input_kind" "$spec_abs")" || return 1
+  if ! specrelay::transitions::create "$root" "$task_id" "$spec_rel" "$allow_dirty"; then
+    rm -rf "$staging"
+    return 1
+  fi
+  specrelay::workflow::commit_staged_input "$root" "$task_id" "$spec_abs" "$staging"
   echo "Task '$task_id' created in DRAFT."
   echo "Approve it with: specrelay task approve $task_id"
 }
@@ -911,7 +921,50 @@ specrelay::cli::task_show() {
   echo "Human review status: $human_status"
   echo "Task runtime path: $task_dir"
 
+  specrelay::cli::_task_show_bundle_summary "$task_dir"
   specrelay::cli::_task_show_timeline_summary "$task_dir"
+}
+
+# specrelay::cli::_task_show_bundle_summary <task-dir>
+# Concise bundle provenance (spec 0023, section 20). A task created before
+# spec 0023 has no manifest — that is reported honestly, never fabricated.
+specrelay::cli::_task_show_bundle_summary() {
+  local task_dir="$1" manifest
+  manifest="$task_dir/01-input-manifest.json"
+  if [ ! -f "$manifest" ]; then
+    echo "Input bundle: not recorded (task created before spec 0023, or file-based legacy layout)"
+    return 0
+  fi
+  MANIFEST="$manifest" python3 -c '
+import json, os
+with open(os.environ["MANIFEST"], encoding="utf-8") as fh:
+    m = json.load(fh)
+print("Input kind: " + str(m.get("input_kind")))
+print("Original input path: " + str(m.get("original_input_path")))
+print("Primary functional specification: " + str(m.get("primary_functional_specification_path") or "(none)"))
+print("Technical specification: " + str(m.get("technical_specification_path") or "(none)"))
+print("Bundle file count: " + str(m.get("bundle_file_count")))
+print("Bundle total size: " + str(m.get("bundle_total_size")) + " bytes")
+ext = m.get("external_evidence", [])
+jam = [e for e in ext if e.get("provider") == "jam"]
+print("External reference count: " + str(len(ext)))
+print("Jam reference count: " + str(len(jam)))
+'
+  echo "Manifest path: ${task_dir}/01-input-manifest.json"
+  echo "Snapshot path: ${task_dir}/01-input-bundle/"
+  local resolved_path="$task_dir/02-resolved-specification.md"
+  if [ -s "$resolved_path" ]; then
+    echo "Resolved specification path: $resolved_path"
+    echo "Analysis status: complete"
+  else
+    echo "Resolved specification path: (missing or empty)"
+    echo "Analysis status: incomplete"
+  fi
+  if specrelay::bundle::verify_snapshot "$task_dir" >/dev/null 2>&1; then
+    echo "Integrity status: verified (manifest digests match snapshot)"
+  else
+    echo "Integrity status: FAILED (manifest/snapshot digest mismatch)"
+  fi
 }
 
 # specrelay::cli::_task_show_timeline_summary <task-dir>

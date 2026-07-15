@@ -63,6 +63,30 @@ context:
   adapter: none
   required: false
 
+bundle:
+  # Specification-directory input policy (spec 0023). See docs/configuration.md.
+  # Whether `spec.md` is required at the root of a specification DIRECTORY
+  # input. Never applies to a single-file input (the file itself is always
+  # the specification regardless of its name).
+  require_functional_spec: true
+  # Extra comma-separated exclusion patterns, on top of the built-in defaults
+  # (.git/, .specrelay-runs/, node_modules/, .DS_Store, *.tmp, *.swp).
+  exclude: ""
+  # Bundle discovery limits. Task creation fails clearly (never a silent
+  # partial ingestion) when a directory input exceeds either limit.
+  max_files: 2000
+  max_total_bytes: 209715200
+
+jam:
+  # Jam recording capability (spec 0023). Jam is globally optional: leaving
+  # this section absent (or required: false, the default) means Jam is only
+  # ever required for a task whose bundle actually references a Jam
+  # recording. Setting required: true makes `specrelay doctor` fail overall
+  # readiness whenever Jam itself is not ready, even with no task referencing
+  # it. See docs/jam-capability.md.
+  required: false
+  # retrieval_command: /path/to/jam-retrieve-adapter   # see docs/jam-capability.md
+
 validation:
   # The command SpecRelay reports as this project's full test/validation
   # suite. Set it to whatever your project actually supports.

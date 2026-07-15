@@ -52,7 +52,7 @@ else
   echo "NOT OK - 'run' with no spec argument exits non-zero (got 0)"
 fi
 specrelay_test::assert_contains "'run' with no spec argument reports a clear usage error" \
-  "$run_output" "spec-path"
+  "$run_output" "input-path"
 
 # --- 11. `run` with a missing spec file fails clearly (not a crash) ---------
 proj_run="$(specrelay_test::mktemp_specrelay_project)"

@@ -118,30 +118,45 @@ is distinct from a provider `BLOCKED`/failure (§9).
 
 `specrelay::workflow::run` composes the entire lifecycle. In order:
 
-1. **Resolve the spec and task id.** The spec path is resolved safely (must
-   exist, must be a regular file, must not escape the project root via
-   traversal). The task id is derived from the spec's **parent directory name**
-   (the one-dir-per-spec convention, e.g. `specs/<task-id>/spec.md`), sanitized
-   to a safe path segment `^[A-Za-z0-9._-]+$`; `--task-id` overrides it.
+1. **Resolve the input and task id.** The input path is resolved safely (must
+   exist, must be a regular file OR a directory, must not escape the project
+   root via traversal, and must not be a special filesystem entry — spec
+   0023). For a directory input the task id is the directory's **own**
+   basename; for a file input it is still derived from the spec's **parent
+   directory name** (the one-dir-per-spec convention, e.g.
+   `specs/<task-id>/spec.md`), sanitized to a safe path segment
+   `^[A-Za-z0-9._-]+$`; `--task-id` overrides either.
 
 2. **Acquire the task lock**, then create the task if its directory does not
    yet exist.
 
-3. **Task creation → `DRAFT`.** `specrelay::transitions::create` makes
+3. **Specification-bundle analysis, staged before creation (spec 0023).**
+   Before any durable task state exists, `specrelay::workflow::stage_input`
+   discovers/classifies/snapshots the input into a throwaway staging
+   directory and generates `02-resolved-specification.md` from it (see §3a
+   below). Any failure here (missing required `spec.md`, both `tech-spec.md`
+   and `tech_spec.md` present, an exceeded discovery limit, a required Jam
+   reference that cannot be retrieved, …) aborts with **no task directory
+   created at all** — never a partially-seeded `DRAFT`.
+
+4. **Task creation → `DRAFT`.** `specrelay::transitions::create` makes
    `.specrelay-runs/tasks/<task-id>/`, writes `state.json` with
    `"state": "DRAFT"`, and refuses if the directory already exists (it never
-   silently overwrites). `specrelay::workflow::seed_task_from_spec` then fills
-   `00-user-request.md`, `01-consultant-analysis.md`, and
-   `02-executor-prompt.md` from the spec, always appending the mandatory
+   silently overwrites). `specrelay::workflow::commit_staged_input` then
+   moves the already-validated `01-input-manifest.json`, `01-input-bundle/`,
+   and `02-resolved-specification.md` from staging into the task directory,
+   then fills `00-user-request.md`, `01-consultant-analysis.md`, and
+   `02-executor-prompt.md`, always appending the mandatory
    ownership-contract footer. When the task already exists, `run` resumes it
-   in place instead of recreating it.
+   in place instead of recreating it — the bundle is **never** rebuilt on
+   resume (§3a, "Resume never rebuilds").
 
-4. **Approval → `READY_FOR_EXECUTOR`.** If the current state is `DRAFT` (or
+5. **Approval → `READY_FOR_EXECUTOR`.** If the current state is `DRAFT` (or
    `WAITING_FOR_HUMAN`), `specrelay::transitions::approve` performs the
    human-approval gate. Running `specrelay run` **is** the human's approval for
    that spec; the decoupled equivalent is `specrelay task approve`.
 
-5. **The iteration loop.** `run` then loops, reading the canonical state each
+6. **The iteration loop.** `run` then loops, reading the canonical state each
    pass and dispatching:
    - `READY_FOR_EXECUTOR` → run one executor round (§4).
    - `READY_FOR_REVIEW` → run one reviewer round (§5).
@@ -151,6 +166,57 @@ is distinct from a provider `BLOCKED`/failure (§9).
 
    An internal safety counter (`max_iterations * 2 + 6`) guards against a
    non-terminating loop and is an engine-bug backstop, not a normal outcome.
+
+### 3a. Specification-bundle analysis phase (spec 0023)
+
+Whether the input is one spec file or a specification directory, task
+creation always produces this shared, immutable layout **before** either
+role runs:
+
+```text
+<task-runtime>/
+├── 01-input-manifest.json     # schema, input kind, per-file role/media
+│                               # type/size/sha256/inspection capability/
+│                               # external references, external-evidence
+│                               # entries (e.g. Jam)
+├── 01-input-bundle/
+│   ├── local/                 # every accepted local file, snapshotted
+│   └── external/
+│       └── jam/<canonical-id>/  # redacted Jam evidence, when referenced
+└── 02-resolved-specification.md   # the analysed implementation brief
+```
+
+For a directory input, `spec.md` is the primary **functional** authority and
+an optional `tech-spec.md` / `tech_spec.md` is the primary **technical**
+authority (both names accepted, never both at once — task creation fails
+clearly if it finds both). All other accepted files are supporting evidence,
+classified into an internal content class (`text-readable`, `structured-data`,
+`log-or-trace`, `visual`, `document`, `source-or-config`, `unknown-binary`, …)
+and an inspection-capability tier (directly inspectable, inspectable only
+through provider multimodal reading, or unsupported).
+
+`02-resolved-specification.md` assembles the Objective, Functional/Technical
+Requirements, Acceptance Criteria, evidence-derived requirements (each cited
+back to its snapshot path), external evidence, and an Input Coverage table
+covering every discovered file. It is an **analysed brief, not a
+replacement** for the original snapshot — the Executor and Reviewer must
+still reopen `01-input-bundle/` directly for anything not reproduced
+verbatim, and must never claim unsupported or unretrieved evidence as
+inspected.
+
+If the bundle references a Jam recording, it is retrieved, redacted, and
+snapshotted beneath `01-input-bundle/external/jam/<canonical-id>/` during
+this same phase — see [jam-capability.md](jam-capability.md). A required Jam
+reference that cannot be retrieved blocks task creation outright (no task
+directory is left behind).
+
+**Resume never rebuilds.** `specrelay resume` (and `run` against an existing
+task) drives the existing state machine forward using whatever is already on
+disk; it never re-discovers, re-snapshots, or re-fetches anything. Editing the
+live source file/directory after task creation, or a Jam recording changing
+upstream, has **no effect** on an already-created task (spec 0023, section
+10.3 / 22) — this is the same immutability guarantee `git_guard.sh` already
+gives the working tree, extended to the specification input itself.
 
 ### Executor round: `READY_FOR_EXECUTOR → EXECUTOR_RUNNING → READY_FOR_REVIEW`
 
@@ -168,6 +234,13 @@ From `READY_FOR_REVIEW` the reviewer decides exactly one of:
   `09-consultant-review.md` and `10-business-summary.md` non-empty), or
 - `specrelay::transitions::request_changes` → `CHANGES_REQUESTED` (requires
   `09-consultant-review.md` and `11-next-executor-prompt.md` non-empty).
+
+For a task with an input bundle (`01-input-manifest.json` present), both
+completion gates above additionally require an `## Input Coverage` section:
+in `08-executor-summary.md` before submission proceeds past
+`EXECUTOR_RUNNING` (spec 0023, section 21.2), and in `09-consultant-review.md`
+before either reviewer decision is accepted (section 21.3). A task predating
+spec 0023 has no manifest and is unaffected by this additional check.
 
 ## 4. Executor round detail
 

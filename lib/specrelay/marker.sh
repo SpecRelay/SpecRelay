@@ -88,5 +88,16 @@ specrelay::marker::artifacts_consistent() {
       return 1
       ;;
   esac
+
+  # Reviewer completion gate, input-coverage clause (spec 0023, section
+  # 21.3: "reviewer input coverage is missing" must fail completion). Only
+  # applies to tasks that actually have a bundle manifest — legacy tasks
+  # predating spec 0023 never have one, and are unaffected.
+  if [ -f "$task_dir/01-input-manifest.json" ]; then
+    if ! grep -Eqi '^#+[[:space:]]*Input Coverage' "$task_dir/09-consultant-review.md" 2>/dev/null; then
+      specrelay::out::err "decision '$decision' is inconsistent with artifacts: 09-consultant-review.md does not record an Input Coverage section (spec 0023, section 21.3)"
+      return 1
+    fi
+  fi
   return 0
 }

@@ -82,6 +82,26 @@ are left untouched. If a project wants a different runs root going forward, it
 changes the config value — SpecRelay does not retroactively relocate what already
 exists.
 
+## M4a. Backward-compatible input layout now, full artifact-layout migration later (spec 0023)
+
+Spec 0023 adds a new shared input layout to every **newly created** task —
+`01-input-manifest.json`, `01-input-bundle/`, and
+`02-resolved-specification.md` — but every other existing artifact filename
+and location (`03-executor-log.md`, `07-tests.txt`, `09-consultant-review.md`,
+timeline/command-timing files, …) stays exactly where it already was. A task
+created before spec 0023 has none of the new files and is fully readable and
+resumable as-is (`task show`/`doctor`/completion gates all report the absence
+honestly rather than fabricating it — see `docs/jam-capability.md` and
+`docs/task-lifecycle.md`, §3a).
+
+A **future** specification is explicitly expected to migrate every task's
+artifacts into the fully categorized numbered folder structure described in
+spec 0023, section 19 (`00-task/`, `01-input/`, `02-analysis/`, `03-executor/`,
+`04-verification/`, `05-reviewer/`, `06-telemetry/`). That complete layout
+migration is deliberately **out of scope** for spec 0023 — it must not be
+forgotten, but it is a separate, later piece of work, not something this
+migration guide or spec 0023 attempts.
+
 ## M5. Config schema
 
 The project config is versioned. The current schema is:

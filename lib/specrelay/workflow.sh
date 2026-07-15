@@ -954,6 +954,19 @@ specrelay::workflow::build_reviewer_prompt() {
     echo "2. Inspect the real working tree and current diff (git status --short,"
     echo "   git diff) — never only the executor's narrative."
     echo "3. Inspect the executor evidence below."
+    if [ -f "$task_dir/01-input-manifest.json" ]; then
+      echo "3a. This task has an immutable input bundle (spec 0023, 'Reviewer prompt"
+      echo "    contract'). Independently inspect $task_rel/01-input-manifest.json and"
+      echo "    the snapshot beneath $task_rel/01-input-bundle/ — the SAME immutable"
+      echo "    input the Executor received. Compare $task_rel/02-resolved-specification.md"
+      echo "    against that original bundle: do not treat the resolved specification as"
+      echo "    unquestionable. Check whether it accurately represents the bundle, whether"
+      echo "    important evidence was omitted or misinterpreted, whether evidence-derived"
+      echo "    requirements were implemented, whether any Jam evidence under"
+      echo "    $task_rel/01-input-bundle/external/jam/ was actually inspected (a URL alone"
+      echo "    is never evidence of inspection), and whether the Executor's input-coverage"
+      echo "    claim in 08-executor-summary.md is truthful."
+    fi
     echo "4. Select the MINIMUM sufficient independent verification for that risk"
     echo "   level. Your default verification budget for this review:"
     echo "     Focused test runs: $focused_max"
@@ -981,6 +994,11 @@ specrelay::workflow::build_reviewer_prompt() {
     echo "- Do not end while waiting for background verification."
     echo "- Before finishing, write $task_rel/09-consultant-review.md and"
     echo "  $task_rel/10-business-summary.md."
+    if [ -f "$task_dir/01-input-manifest.json" ]; then
+      echo "- $task_rel/09-consultant-review.md MUST include an '## Input Coverage'"
+      echo "  section (spec 0023, section 21.3) stating whether the Executor's claimed"
+      echo "  input coverage is truthful and complete."
+    fi
     echo "- End with exactly one explicit marker: 'DECISION: ACCEPT' or"
     echo "  'DECISION: REQUEST_CHANGES'."
     echo "- Once sufficient evidence exists, decide and stop."
@@ -1025,32 +1043,87 @@ specrelay::workflow::build_reviewer_prompt() {
   printf '%s\n' "$tmp"
 }
 
-# --- task seeding from a spec (real, non-fake executor content) ------------
+# --- task seeding from a spec-or-bundle input (real, non-fake content) -----
+#
+# Spec 0023 replaces the old "always one Markdown file" assumption with
+# file-or-directory input (section 4). Bundle validation, snapshotting, Jam
+# retrieval, and resolved-specification generation (sections 10-13) can each
+# fail (missing spec.md, tech-spec ambiguity, exceeded limits, a required Jam
+# reference that cannot be retrieved) — those failures MUST happen before the
+# task's DRAFT state is durably created, never after (a partially-seeded
+# DRAFT task would be stuck, since resume never rebuilds from the live
+# source — section 10.3). specrelay::workflow::stage_input therefore builds
+# everything into a throwaway staging directory FIRST; only once that
+# succeeds does the caller call specrelay::transitions::create, then
+# specrelay::workflow::commit_staged_input moves the already-validated
+# artifacts into the real task directory.
 
-# specrelay::workflow::seed_task_from_spec <project-root> <task-id> <spec-abs-path>
-# Fills 00/01/02 from the spec, in the numbered-prompt format this
-# repository's own protocol requires (see CLAUDE.md: every implementation
-# prompt starts with "Prompt #N — Title"), and always appends the
-# ownership-contract footer.
-specrelay::workflow::seed_task_from_spec() {
-  local root="$1" task_id="$2" spec_abs="$3" task_dir spec_rel task_rel
+# specrelay::workflow::stage_input <project-root> <input-kind> <input-abs-path>
+# Prints the staging directory's absolute path on success. On failure,
+# prints nothing and the staging directory is already removed.
+specrelay::workflow::stage_input() {
+  local root="$1" input_kind="$2" input_abs="$3" input_rel staging
+  input_rel="${input_abs#"$root"/}"
+  staging="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-bundle-staging.XXXXXX")"
+
+  if ! specrelay::bundle::build "$root" "$staging" "$input_kind" "$input_abs" "$input_rel"; then
+    rm -rf "$staging"
+    return 1
+  fi
+  if ! specrelay::bundle::verify_snapshot "$staging"; then
+    rm -rf "$staging"
+    return 1
+  fi
+  if ! specrelay::resolved_spec::generate "$root" "$staging"; then
+    rm -rf "$staging"
+    return 1
+  fi
+  if [ ! -s "$staging/02-resolved-specification.md" ]; then
+    specrelay::out::err "specification-bundle analysis produced an empty resolved specification (spec 0023, section 21.1)"
+    rm -rf "$staging"
+    return 1
+  fi
+
+  printf '%s\n' "$staging"
+}
+
+# specrelay::workflow::commit_staged_input <project-root> <task-id> <input-abs-path> <staging-dir>
+# Moves the already-validated bundle/manifest/resolved-spec from staging into
+# the just-created task directory, then writes 00-user-request.md and
+# 02-executor-prompt.md (numbered-prompt format this repository's own
+# protocol requires — see CLAUDE.md: every implementation prompt starts with
+# "Prompt #N — Title"), always appending the ownership-contract footer.
+specrelay::workflow::commit_staged_input() {
+  local root="$1" task_id="$2" input_abs="$3" staging="$4"
+  local task_dir input_rel task_rel
   task_dir="$(specrelay::task::dir "$root" "$task_id")"
-  spec_rel="${spec_abs#"$root"/}"
+  input_rel="${input_abs#"$root"/}"
   task_rel="${task_dir#"$root"/}"
+
+  mv "$staging/01-input-manifest.json" "$task_dir/01-input-manifest.json"
+  mv "$staging/01-input-bundle" "$task_dir/01-input-bundle"
+  mv "$staging/02-resolved-specification.md" "$task_dir/02-resolved-specification.md"
+  rm -rf "$staging"
 
   {
     echo "# User Request — SpecRelay Task $task_id"
     echo
-    echo "Spec source: $spec_rel"
+    echo "Input source: $input_rel"
+    echo "Input manifest: $task_rel/01-input-manifest.json"
+    echo "Input bundle (immutable snapshot): $task_rel/01-input-bundle/"
     echo
-    cat "$spec_abs"
+    cat "$task_dir/02-resolved-specification.md"
   } > "$task_dir/00-user-request.md"
 
   {
     echo "# Consultant Analysis — SpecRelay Task $task_id"
     echo
-    echo "Auto-generated by 'specrelay run'. The spec file on disk ($spec_rel) is the"
-    echo "single source of truth; this file only records that fact."
+    echo "Auto-generated by 'specrelay run' / 'specrelay task create' (spec 0023,"
+    echo "'Specification-bundle analysis phase'). The immutable input bundle at"
+    echo "$task_rel/01-input-bundle/, its manifest at"
+    echo "$task_rel/01-input-manifest.json, and the resolved specification at"
+    echo "$task_rel/02-resolved-specification.md are the durable analysis output"
+    echo "consumed by both the Executor and the Reviewer."
   } > "$task_dir/01-consultant-analysis.md"
 
   local full_max smoke_max doctor_max version_max
@@ -1062,9 +1135,29 @@ specrelay::workflow::seed_task_from_spec() {
   {
     echo "Prompt #1 — Implement Spec Task $task_id"
     echo
-    echo "Implement exactly what $spec_rel requires. Do not add, remove, or"
-    echo "reinterpret requirements. If the spec is unclear or contradictory,"
-    echo "stop and report a blocking issue instead of guessing."
+    echo "Implement exactly what $task_rel/02-resolved-specification.md and the"
+    echo "original input bundle require. Do not add, remove, or reinterpret"
+    echo "requirements. If the spec is unclear or contradictory, stop and report"
+    echo "a blocking issue instead of guessing."
+    echo
+    echo "Input contract (spec 0023, 'Executor prompt contract'):"
+    echo "- $task_rel/01-input-manifest.json lists every discovered local and"
+    echo "  external input with its snapshot path, role, and inspection"
+    echo "  capability. spec.md (when present) is the primary FUNCTIONAL"
+    echo "  authority; tech-spec.md / tech_spec.md (when present) is the primary"
+    echo "  TECHNICAL authority."
+    echo "- $task_rel/02-resolved-specification.md is an ANALYSED implementation"
+    echo "  brief, not a replacement for the source evidence — the full snapshot"
+    echo "  under $task_rel/01-input-bundle/ remains authoritative and available;"
+    echo "  reopen it directly for anything not reproduced verbatim."
+    echo "- Consult relevant screenshots, logs, PDFs, structured-data examples,"
+    echo "  and any Jam evidence snapshot under $task_rel/01-input-bundle/external/jam/"
+    echo "  before implementing behavior they describe."
+    echo "- Never claim unavailable or unsupported evidence was inspected. Never"
+    echo "  silently resolve a contradiction between sources — stop and report it."
+    echo "- Record input coverage in $task_rel/08-executor-summary.md (an"
+    echo "  '## Input Coverage' section noting which inputs you actually used,"
+    echo "  which were supplementary, and which you could not inspect)."
     echo
     echo "Write these files in $task_rel/ (the task's runtime evidence folder,"
     echo "NOT the spec's own directory):"
@@ -1101,8 +1194,8 @@ specrelay::workflow::seed_task_from_spec() {
     echo "declare unresolved background work before it accepts this round as"
     echo "complete."
     echo
-    echo "=== Spec ($spec_rel) ==="
-    cat "$spec_abs"
+    echo "=== Resolved Specification ($task_rel/02-resolved-specification.md) ==="
+    cat "$task_dir/02-resolved-specification.md"
     echo
     cat "$SPECRELAY_CONTRACT_FOOTER"
   } > "$task_dir/02-executor-prompt.md"
@@ -1265,6 +1358,16 @@ specrelay::workflow::executor_iteration() {
     if [ "$unresolved_wait_policy" = "true" ] && \
        [ "$(specrelay::agent_efficiency::detect_unresolved_wait "$task_dir/12-executor-stdout.txt")" = "detected" ]; then
       gate_reason="provider exited without completing its declared background work"
+    fi
+  fi
+
+  # Executor completion gate, input-coverage clause (spec 0023, section
+  # 21.2: "input coverage is missing" must fail completion). Only applies to
+  # tasks that actually have a bundle manifest (spec 0023 is additive —
+  # legacy tasks predating it never have one, and are unaffected).
+  if [ -z "$gate_reason" ] && [ -f "$task_dir/01-input-manifest.json" ]; then
+    if ! grep -Eqi '^#+[[:space:]]*Input Coverage' "$task_dir/08-executor-summary.md" 2>/dev/null; then
+      gate_reason="08-executor-summary.md does not record an Input Coverage section (spec 0023, section 21.2)"
     fi
   fi
 
@@ -1921,18 +2024,20 @@ specrelay::workflow::resume() {
 # specrelay::workflow::run <project-root> <spec-arg> [task-id-override] [allow-dirty(0|1)] [verbose(0|1)]
 specrelay::workflow::run() {
   local root="$1" spec_arg="$2" task_id_override="${3:-}" allow_dirty="${4:-0}" verbose="${5:-0}"
-  local spec_abs spec_rel task_id task_dir
+  local input_kind spec_abs spec_rel task_id task_dir parsed
 
-  spec_abs="$(specrelay::task::resolve_spec_path "$root" "$spec_arg")" || return 1
+  parsed="$(specrelay::task::resolve_input_path "$root" "$spec_arg")" || return 1
+  input_kind="$(printf '%s\n' "$parsed" | sed -n '1p')"
+  spec_abs="$(printf '%s\n' "$parsed" | sed -n '2p')"
   spec_rel="${spec_abs#"$root"/}"
 
   if [ -n "$task_id_override" ]; then
     task_id="$task_id_override"
   else
-    task_id="$(specrelay::task::id_from_spec_path "$spec_abs")"
+    task_id="$(specrelay::task::id_from_input_path "$spec_abs" "$input_kind")"
   fi
   if ! specrelay::task::valid_id "$task_id"; then
-    specrelay::out::err "could not derive a safe task id from spec path: $spec_arg"
+    specrelay::out::err "could not derive a safe task id from input path: $spec_arg"
     return 1
   fi
 
@@ -1955,12 +2060,19 @@ specrelay::workflow::run() {
 
   if [ ! -d "$task_dir" ]; then
     was_new=1
-    specrelay::out::log "[specrelay] creating task '$task_id' from spec: $spec_rel"
+    specrelay::out::log "[specrelay] analysing specification input '$spec_rel' (kind: $input_kind)"
+    local staging
+    staging="$(specrelay::workflow::stage_input "$root" "$input_kind" "$spec_abs")" || {
+      specrelay::lock::release "$root" "$task_id"
+      return 1
+    }
+    specrelay::out::log "[specrelay] creating task '$task_id' from input: $spec_rel"
     if ! specrelay::transitions::create "$root" "$task_id" "$spec_rel" "$allow_dirty"; then
+      rm -rf "$staging"
       specrelay::lock::release "$root" "$task_id"
       return 1
     fi
-    specrelay::workflow::seed_task_from_spec "$root" "$task_id" "$spec_abs"
+    specrelay::workflow::commit_staged_input "$root" "$task_id" "$spec_abs" "$staging"
     specrelay::timeline::invocation_start "$task_dir" "$invocation_id" DRAFT
     specrelay::timeline::start "$task_dir" task_initialization
     specrelay::timeline::finish "$task_dir" task_initialization passed

@@ -238,6 +238,29 @@ specrelay::doctor::_render_context_readiness() {
   fi
 }
 
+# specrelay::doctor::_jam <root>
+# Read-only Jam readiness report (spec 0023, section 18.3). Never runs
+# retrieval. Jam is globally optional: absence only fails overall doctor
+# readiness when a project explicitly sets jam.required: true.
+specrelay::doctor::_jam() {
+  local root="$1" out status reason global_required
+  out="$(specrelay::jam::readiness "$root")"
+  status="$(printf '%s\n' "$out" | sed -n 's/^status=//p')"
+  reason="$(printf '%s\n' "$out" | sed -n 's/^reason=//p')"
+  global_required="$(specrelay::jam::global_required "$root")"
+
+  specrelay::doctor::_info "Jam capability status: $status ($reason)"
+  specrelay::doctor::_info "Jam configured: $(printf '%s\n' "$out" | sed -n 's/^configured=//p')  registered: $(printf '%s\n' "$out" | sed -n 's/^registered=//p')  connected: $(printf '%s\n' "$out" | sed -n 's/^connected=//p')  authenticated: $(printf '%s\n' "$out" | sed -n 's/^authenticated=//p')  tools available: $(printf '%s\n' "$out" | sed -n 's/^tools_available=//p')"
+
+  if [ "$status" = "ready" ]; then
+    specrelay::doctor::_ok "Jam readiness: ready"
+  elif [ "$global_required" = "true" ]; then
+    specrelay::doctor::_fail "Jam readiness: $status — jam.required is true for this project"
+  else
+    specrelay::doctor::_warn "Jam readiness: $status — Jam is globally optional; a task referencing a Jam recording will block its own preflight instead"
+  fi
+}
+
 # specrelay::doctor::_hook_has_nonascii_shell_punct <hook-file>
 # Returns 0 (true) if the given hook file contains non-ASCII shell punctuation
 # that is DANGEROUS in a shell command (spec 0002): a Unicode en/em dash used
@@ -567,6 +590,14 @@ specrelay::doctor::run() {
   # adapter availability is a local, non-billable check.
   specrelay::doctor::_role_context "Executor" "$root" executor
   specrelay::doctor::_role_context "Reviewer" "$root" reviewer
+
+  # --- Jam capability (spec 0023, section 18.3) -----------------------------
+  # Reported SEPARATELY from repository context capabilities above. Jam is
+  # globally optional: its absence never fails overall doctor readiness
+  # unless a project explicitly sets jam.required: true. A task-specific
+  # preflight (stricter than this general check) runs separately when a task
+  # actually references a Jam recording (specrelay::jam::record_references).
+  specrelay::doctor::_jam "$root"
 
   # --- Bounded verification policy + phase budgets (spec 0019) -------------
   specrelay::doctor::_verification_policy "$root"

@@ -84,6 +84,19 @@ scope? Is timing/selection JSON structurally valid? Does the captured test
 result plausibly correspond to the current working tree? Are required files
 non-empty?
 
+### Input bundle (spec 0023)
+
+If `01-input-manifest.json` exists, this task has an immutable input bundle —
+independently inspect it and `01-input-bundle/` (the SAME snapshot the
+Executor received; never re-fetch anything from the live source or from an
+external reference). Compare `02-resolved-specification.md` against that
+original bundle rather than trusting it unquestionably: was anything material
+omitted or misinterpreted? Were evidence-derived requirements implemented? If
+`01-input-bundle/external/jam/` exists, was that evidence actually opened —
+citing specific artifact paths — rather than merely assumed from the recorded
+URL? Is the Executor's input-coverage claim in `08-executor-summary.md`
+truthful?
+
 ## Risk classification
 
 Classify the change as exactly one of:
@@ -195,6 +208,9 @@ Decision: ACCEPT | REQUEST_CHANGES
 ...
 ## Residual Risks
 ...
+## Input Coverage
+(required when 01-input-manifest.json exists, spec 0023 section 21.3: state
+whether the Executor's claimed input coverage is truthful and complete)
 ## Verification Budget
 Focused runs:
 Targeted runs:

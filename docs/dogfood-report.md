@@ -44,10 +44,11 @@ All three scenarios ran in a single isolated temporary Git repository (never
 this repository), created by copying the real `.ai/scripts/` and
 `tools/specrelay/` trees verbatim, with a `.specrelay/config.yml` configuring
 `roles.executor.provider: fake`, `roles.reviewer.provider: fake`,
-`context.adapter: none`. This mirrors exactly how `tools/specrelay/test/
-compat_shim_test.sh` and friends already validate the shims (see those files),
-except run manually here for direct dogfood observation rather than as
-assertions. The harness was deleted after evidence was extracted; the
+`context.adapter: none`. This mirrored how the (now-removed;
+unsupported in this standalone repo) `compat_shim_test.sh` and friends
+already validated the shims, except run manually here for direct dogfood
+observation rather than as assertions. The harness was deleted after
+evidence was extracted; the
 extracted evidence lives at `tools/specrelay/test/fixtures/dogfood-0085/`
 (per spec section 58, "controlled fixtures may live under
 tools/specrelay/test/fixtures/ where appropriate").
@@ -194,9 +195,11 @@ takes minutes, not sub-second).
   wording improvement opportunity for a future task, not a defect (behavior
   is safe either way).
 - **Compatibility issues:** none found against the real shims — see
-  `tools/specrelay/test/compat_shim_test.sh`, `rollback_test.sh`,
-  `engine_ownership_cases_test.sh`, `shim_loop_test.sh` for the exhaustive,
-  automated version of this same evidence.
+  `rollback_test.sh`, `engine_ownership_cases_test.sh`, `shim_loop_test.sh`
+  for the exhaustive, automated version of this same evidence.
+  (`compat_shim_test.sh`, referenced elsewhere in this historical report,
+  assumed the in-host `.ai/scripts/`/`tools/specrelay/` layout and was removed
+  as an unsupported surface in this standalone repository.)
 - **Performance observations:** see table above.
 - **Unresolved risks:** genuine real-provider (Claude Code) dogfooding for
   scenarios A and B remains outstanding — see "Recommended next step."

@@ -12,7 +12,7 @@ from a standalone source checkout, or the installed `specrelay ...` on your
 
 | Command | Purpose | Exit-code semantics |
 |---|---|---|
-| `specrelay run <spec-path> [--task-id <id>] [--allow-dirty-baseline]` | Full create→approve→run→review lifecycle | `0`/`1`/`2`/`3`/`4`/`5` (see `run` below) |
+| `specrelay run <input-path> [--task-id <id>] [--allow-dirty-baseline]` | Full create→approve→run→review lifecycle (`<input-path>` is a spec file or a specification directory — spec 0023) | `0`/`1`/`2`/`3`/`4`/`5` (see `run` below) |
 | `specrelay resume <task-ref>` | Resume an existing task and drive the executor/reviewer loop to a terminal/stop state | `0`/`1`/`2`/`3`/`4`/`5` (same contract as `run`) |
 | `specrelay status [<task-ref>]` | Read-only status (one task, or all) | `0` on success; `1` lookup error |
 | `specrelay show <task-ref>` | Read-only full detail | `0` on success; `1` lookup error |
@@ -29,9 +29,16 @@ from a standalone source checkout, or the installed `specrelay ...` on your
 ## Direct CLI (`bin/specrelay` / installed `specrelay`)
 
 ```
-specrelay run <spec-path> [--task-id <id>] [--allow-dirty-baseline]
+specrelay run <input-path> [--task-id <id>] [--allow-dirty-baseline]
 ```
-Full lifecycle for a spec: create/resolve the task, approve it (running
+`<input-path>` is either a single spec file, or a **specification directory**
+(spec 0023): `spec.md` (functional authority) plus an optional `tech-spec.md`
+/ `tech_spec.md` (technical authority) and recursively-discovered supporting
+evidence. Before either role runs, SpecRelay discovers, classifies, and
+immutably snapshots the whole bundle, then analyses it into
+`02-resolved-specification.md` — see "Specification-bundle analysis phase" in
+`docs/task-lifecycle.md`. Full lifecycle for the resulting task: create/resolve
+the task, approve it (running
 `run` IS the human approval for that spec — see "Approval semantics" in
 `engine-parity.md`), run executor/reviewer rounds until
 `READY_FOR_HUMAN_REVIEW`, a `CHANGES_REQUESTED`-only stop (manual reviewer),
@@ -91,9 +98,13 @@ specrelay doctor
 Read-only readiness diagnostics (added in SDD 0085): git repository
 detected, project root, config readable, spec root exists, task runtime
 root accessible, executor/reviewer provider availability, context
-capability, current engine mode, compatibility shims installed, rollback
-engine exists, no conflicting active engine lock. Returns non-zero if any
-mandatory check fails.
+capability, **Jam capability readiness** (spec 0023 — reported separately from
+repository context capabilities; not-configured/configured/registered/
+connected/authenticated/tools-available/ready), current engine mode,
+compatibility shims installed, rollback engine exists, no conflicting active
+engine lock. Returns non-zero if any mandatory check fails — Jam's absence
+alone never fails it unless a project sets `jam.required: true`. See
+[jam-capability.md](jam-capability.md).
 
 ```
 specrelay models [<provider>]
@@ -146,7 +157,7 @@ command never performs a billable AI-provider invocation and never runs an
 adapter's preflight or preparation. See `context-adapters.md`.
 
 ```
-specrelay task create <spec-path> [--task-id <id>] [--allow-dirty-baseline]
+specrelay task create <input-path> [--task-id <id>] [--allow-dirty-baseline]
 specrelay task show <task-ref>
 specrelay task status [<task-ref>]
 specrelay task list
@@ -172,6 +183,13 @@ recorded") rather than fabricated. `--json` prints the same summary as
 machine-readable JSON. See
 [verification-and-timeline.md](verification-and-timeline.md) for the full
 design.
+`task show` additionally reports concise bundle provenance when the task has
+an input bundle (spec 0023): input kind, original input path, primary
+functional/technical specification paths, bundle file count and total size,
+external/Jam reference counts, manifest/snapshot/resolved-specification
+paths, and integrity status. A task created before spec 0023 reports this
+honestly as "not recorded" rather than fabricating it.
+
 Lower-level task lifecycle operations. `create` only creates (state
 `DRAFT`); it does not approve or run. `approve` is the human-approval gate
 (`DRAFT`/`WAITING_FOR_HUMAN` → `READY_FOR_EXECUTOR`). `requeue`, `accept`,

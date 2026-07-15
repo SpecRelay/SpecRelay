@@ -40,6 +40,13 @@ export SPECRELAY_HOME="$SPECRELAY_ROOT"
 # `claude` fixture (see contextplus_adapter_test.sh).
 export SPECRELAY_CONTEXTPLUS_CLAUDE_BIN="/nonexistent/specrelay-test-no-claude"
 
+# Same rationale as SPECRELAY_CONTEXTPLUS_CLAUDE_BIN above, for the Jam
+# capability adapter (spec 0023): pin its Claude-compatible binary to a
+# guaranteed-nonexistent path for the whole suite so no test accidentally
+# shells out to a real, network-dependent `claude mcp list`. Jam-specific
+# tests override this per-invocation with their own fixture.
+export SPECRELAY_JAM_CLAUDE_BIN="/nonexistent/specrelay-test-no-claude"
+
 TESTS_RUN=0
 TESTS_FAILED=0
 

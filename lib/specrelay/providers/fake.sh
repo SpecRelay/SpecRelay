@@ -254,7 +254,7 @@ specrelay::provider::fake::executor_run() {
   if [ "$outputs" = "1" ]; then
     printf 'Fake executor log for round %s.\n' "$round" > "$task_dir/03-executor-log.md"
     printf 'Fake test output for round %s: 1 example, 0 failures.\n' "$round" > "$task_dir/07-tests.txt"
-    printf 'Fake executor summary for round %s.\n' "$round" > "$task_dir/08-executor-summary.md"
+    printf 'Fake executor summary for round %s.\n## Input Coverage\nFake coverage: all bundle inputs treated as inspected and used (deterministic test fixture).\n' "$round" > "$task_dir/08-executor-summary.md"
     [ -n "$missing_artifact" ] && rm -f "$task_dir/$missing_artifact"
   fi
 
@@ -312,7 +312,7 @@ specrelay::provider::fake::reviewer_run() {
     return 2
   fi
 
-  printf 'Fake reviewer notes for round %s.\n' "$round" > "$task_dir/09-consultant-review.md"
+  printf 'Fake reviewer notes for round %s.\n## Input Coverage\nFake coverage: Executor input-coverage claim treated as truthful (deterministic test fixture).\n' "$round" > "$task_dir/09-consultant-review.md"
   if [ "$decision" = "accept" ]; then
     printf 'Fake business summary for round %s.\n' "$round" > "$task_dir/10-business-summary.md"
     # Simulate a real reviewer agent that enacts its own decision (accept is

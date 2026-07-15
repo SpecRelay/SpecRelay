@@ -62,6 +62,12 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/state.sh"
 # shellcheck source=lib/specrelay/task.sh
 . "$LIB_DIR/task.sh"
+# shellcheck source=lib/specrelay/jam.sh
+. "$LIB_DIR/jam.sh"
+# shellcheck source=lib/specrelay/bundle.sh
+. "$LIB_DIR/bundle.sh"
+# shellcheck source=lib/specrelay/resolved_spec.sh
+. "$LIB_DIR/resolved_spec.sh"
 # shellcheck source=lib/specrelay/lock.sh
 . "$LIB_DIR/lock.sh"
 # shellcheck source=lib/specrelay/auth.sh

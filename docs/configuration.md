@@ -396,6 +396,59 @@ task rather than resuming the old one.
   existing task never silently switches adapters when the project
   configuration changes later (same principle as `roles_effective` above).
 
+### `bundle.require_functional_spec` (spec 0023)
+
+- **Purpose:** whether a specification **directory** input must have
+  `spec.md` at its root. Never applies to a single-file input (the file is
+  always the specification, regardless of its name).
+- **Type:** boolean.
+- **Default:** `true`. SpecRelay never silently accepts a missing `spec.md`
+  and guesses the objective — task creation fails with an actionable error
+  instead.
+
+### `bundle.exclude` (spec 0023)
+
+- **Purpose:** extra comma-separated exclusion patterns for directory
+  discovery, on top of the built-in defaults (`.git/`, `.specrelay-runs/`,
+  `node_modules/`, `.DS_Store`, `*.tmp`, `*.swp`).
+- **Type:** string (comma-separated glob/name patterns).
+- **Default:** `""` (no extra exclusions).
+
+### `bundle.max_files` / `bundle.max_total_bytes` (spec 0023)
+
+- **Purpose:** discovery limits for a specification directory. Exceeding
+  either fails task creation clearly, reporting the affected path, file
+  count, bundle size, and the applicable limit — never a silent partial
+  ingestion.
+- **Type:** integer.
+- **Default:** `max_files: 2000`, `max_total_bytes: 209715200` (200 MiB).
+
+### `jam.retrieval_command` (spec 0023)
+
+- **Purpose:** the real retrieval adapter for a referenced Jam recording:
+  any executable invoked as `<cmd> <canonical-id> <url> <out-dir>`, expected
+  to write `<evidence-class>.raw` files (e.g. `transcript.raw`,
+  `network-errors.raw`) into `<out-dir>` for whatever evidence it can
+  retrieve, then exit `0`. SpecRelay normalizes, redacts, and snapshots
+  whatever it finds; missing evidence classes are reported honestly rather
+  than failing the whole retrieval. See `jam-capability.md`.
+- **Type:** string (a command; not validated beyond existence at retrieval
+  time).
+- **Default:** unset — a Jam reference with no configured adapter fails
+  retrieval clearly rather than fabricating success.
+
+### `jam.required` (spec 0023)
+
+- **Purpose:** global Jam capability policy. Jam is optional by default: its
+  absence never fails `specrelay doctor`'s overall readiness, and a project
+  with no Jam configuration and no task referencing Jam is fully usable.
+  Setting this to `true` makes Jam globally required (an unready Jam then
+  fails overall `doctor` readiness too). Independently of this setting, a
+  task whose bundle contains a recognised Jam reference always requires Jam
+  for that task — see `jam-capability.md`.
+- **Type:** boolean.
+- **Default:** `false`.
+
 ### `validation.full_test_command`
 
 - **Purpose:** the command SpecRelay **reports** as this project's full

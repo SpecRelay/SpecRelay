@@ -146,6 +146,29 @@ specrelay run specs/0001-add-login/spec.md
 creates the spec root, and adds a safe `.gitignore` entry for runtime
 evidence. Edit the config to choose your providers, then run a spec.
 
+## Specification input: file or directory
+
+`run` and `task create` accept either a single spec file, or a **specification
+directory** — a functional spec plus a technical spec and supporting evidence
+(logs, screenshots, PDFs, JSON/YAML fixtures, Jam recording links, ...):
+
+```sh
+specrelay run specs/0001-add-login/spec.md            # single file (unchanged)
+specrelay run specs/0002-fix-checkout-bug/             # directory bundle
+```
+
+A specification directory's `spec.md` is the primary **functional** authority;
+an optional `tech-spec.md` (or `tech_spec.md`) is the primary **technical**
+authority — both names are accepted, but never both at once. Every accepted
+file is discovered recursively, snapshotted immutably beneath the task's
+`01-input-bundle/`, recorded in a deterministic `01-input-manifest.json`, and
+analysed into a durable `02-resolved-specification.md` — the implementation
+brief handed to both the Executor and the Reviewer, alongside the full
+snapshot — **before** either role runs. See
+[docs/task-lifecycle.md](docs/task-lifecycle.md) and
+[docs/jam-capability.md](docs/jam-capability.md) (external Jam-recording
+evidence) for the full contract.
+
 ## Configuration
 
 Project configuration lives in `.specrelay/config.yml` (created by
@@ -172,6 +195,14 @@ roles:
 context:
   adapter: none
   required: false
+bundle:
+  require_functional_spec: true   # a specification DIRECTORY must have spec.md
+  max_files: 2000
+  max_total_bytes: 209715200
+jam:
+  required: false   # globally optional; a task that REFERENCES a Jam
+                     # recording still requires it for that task (see
+                     # docs/jam-capability.md)
 validation:
   full_test_command: "echo 'set validation.full_test_command'"
 policy:
@@ -252,6 +283,9 @@ always logs the reason (spec 0010).
 - No credentials are stored in config; provider logs are not designed to carry
   secrets.
 - Installing/updating the tool never rewrites a consumer project's config.
+- External evidence (e.g. Jam recordings) is retrieved once, redacted before
+  durable storage (authorization headers, cookies, session ids, and tokens are
+  never preserved in the snapshot), and never silently re-fetched on resume.
 
 See [docs/architecture.md](docs/architecture.md) and
 [SECURITY.md](SECURITY.md).

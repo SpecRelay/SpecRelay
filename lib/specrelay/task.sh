@@ -93,6 +93,58 @@ specrelay::task::resolve_spec_path() {
   printf '%s\n' "$abs"
 }
 
+# specrelay::task::resolve_input_path <project-root> <input-path-arg>
+# Resolves a user-supplied spec FILE OR DIRECTORY path (spec 0023, section 4:
+# "run and task create accept a file or a directory"). Prints two lines on
+# success: the input kind (file|directory), then the resolved absolute path
+# (which must not escape the project root). Fails clearly (never guesses) on
+# a missing path, a special filesystem entry, or a path escaping the
+# project root — mirrors resolve_spec_path's safety rules for the file case.
+specrelay::task::resolve_input_path() {
+  local root="$1" arg="$2" abs kind
+  if [ -e "$arg" ] || [ -L "$arg" ]; then
+    if [ -d "$arg" ]; then
+      abs="$(cd "$arg" && pwd -P)"
+    else
+      abs="$(cd "$(dirname "$arg")" && pwd -P)/$(basename "$arg")"
+    fi
+  elif [ -e "$root/$arg" ] || [ -L "$root/$arg" ]; then
+    if [ -d "$root/$arg" ]; then
+      abs="$(cd "$root/$arg" && pwd -P)"
+    else
+      abs="$(cd "$(dirname "$root/$arg")" && pwd -P)/$(basename "$root/$arg")"
+    fi
+  else
+    specrelay::out::err "input path not found: $arg"
+    return 1
+  fi
+
+  case "$abs" in
+    "$root"/*|"$root") ;;
+    *)
+      specrelay::out::err "refusing input path outside the project root: $abs"
+      return 1
+      ;;
+  esac
+
+  kind="$(specrelay::bundle::classify_input "$abs")" || return 1
+  printf '%s\n%s\n' "$kind" "$abs"
+}
+
+# specrelay::task::id_from_input_path <input-abs-path> <input-kind>
+# Derives a task id: for a directory input, the directory's OWN basename
+# (it IS the one-dir-per-task bundle root); for a file input, the file's
+# PARENT directory name (unchanged one-dir-per-spec convention).
+specrelay::task::id_from_input_path() {
+  local abs="$1" kind="$2" dir_for_name
+  if [ "$kind" = "directory" ]; then
+    dir_for_name="$(cd "$abs" && pwd -P)" || return 1
+  else
+    dir_for_name="$(cd "$(dirname "$abs")" && pwd -P)" || return 1
+  fi
+  specrelay::task::sanitize "$(basename "$dir_for_name")"
+}
+
 # specrelay::task::list_ids <project-root>
 # Lists every existing task id (directory name) under the configured runs
 # root that contains a state.json, one per line, sorted.
