@@ -202,7 +202,55 @@ Coordinator support is additive and disabled by default
 (`roles.coordinator.enabled: false`); every project without it configured
 behaves exactly as before spec 0025.
 
-## 9. History
+## 9. Verification-policy engine (spec 0026)
+
+Verification is an engine-owned capability, not an AI-invented command. AI
+roles (Executor, Reviewer, Coordinator) may request or recommend a
+verification level or a named check set; the deterministic engine alone
+resolves what actually runs and executes it:
+
+```text
+AI role requests level/check set
+              │
+              ▼
+Deterministic verification planner
+  changed paths + config + risk rules
+              │
+              ▼
+Selected service/check dependency graph
+              │
+              ▼
+Bounded parallel executor
+              │
+              ▼
+Per-check durable evidence
+              │
+              ▼
+Deterministic verification gate
+```
+
+The engine (`lib/specrelay/verification_policy.sh` for configuration/
+planning/reporting, `lib/specrelay/verification_runner.sh` for execution,
+both backed by `lib/specrelay/py/verification_policy_lib.py`) owns:
+configuration parsing/validation, changed-path matching, service/check
+selection for the `changed`/`full`/`flexible` levels, dependency-graph
+validation and ordering, bounded parallel execution with per-check
+timeouts, required/optional result classification, and durable per-check
+evidence (`26-verification-plan.json`, `27-verification-summary.json`,
+`28-verification-summary.md`, and `verification/services/<service>/<check>/
+{command.json,stdout.txt,stderr.txt,result.json}` in the task directory).
+A project's existing single-command `validation.full_test_command` continues
+to work unmodified, translated internally to an equivalent one-service,
+one-check configuration (`project.full-test`); a project may not configure
+both at once (an ambiguity error, not a silently-resolved default). UI
+runtime/browser/screenshot verification is deliberately left to a later
+specification — this one only reserves `kind: ui` in the schema.
+
+See docs/verification-and-timeline.md ("Verification-policy engine") and
+docs/configuration.md ("`verification.*`, spec 0026") for the full
+configuration contract, and docs/task-lifecycle.md for the artifact layout.
+
+## 10. History
 
 SpecRelay was originally incubated inside a host repository before being
 extracted into this standalone repository. That former in-host layout

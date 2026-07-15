@@ -5,21 +5,17 @@
 
 ## Current objective
 
-**Configurable test levels and multi-service verification** (Phase 3).
-Replace the single `full_test_command` string with a real policy: `changed`
-/ `full` / `flexible` levels, across multiple services and checks (unit,
-lint, type-check, integration, contract, smoke), run in parallel where
-independent, evidence kept deterministic per service/command. This is the
-next architecture milestone — **not** releasing spec 0025 (see below).
-
-## Next objective
-
 **UI runtime and visual verification** (Phase 4). Real app startup,
 Playwright flows, screenshot capture vs. supplied expected references,
 traces/video/console/network evidence, independent Reviewer verification.
 Explicit `BLOCKED` — never a silent skip — when the app, flow, credentials,
-or an expected reference is unavailable. One more check kind inside Phase
-3's policy.
+or an expected reference is unavailable. One more check kind (`kind: ui`,
+already reserved in the schema) inside Phase 3's now-implemented policy.
+
+## Next objective
+
+Not yet selected — see "Later objectives" below for the dependency-ordered
+candidates.
 
 ## Later objectives
 
@@ -35,6 +31,13 @@ In dependency order (roadmap §5):
 
 ## Recently completed architecture milestones
 
+- **Spec 0026 — Configurable verification policy and multi-service
+  execution**: the single `full_test_command` string is now one option
+  alongside a real multi-service, multi-check policy — `changed`/`full`/
+  `flexible` levels, dependencies, bounded parallel execution, per-check
+  evidence. Legacy configuration keeps working unmodified; a project
+  configuring both at once gets an ambiguity error, not a guess.
+  *Releasing it is a separate, later operational decision.*
 - **Spec 0025 — AI Coordinator role**: implemented, reviewed, committed,
   pushed. Recommends a next action but can never perform one directly; every
   decision is validated against an engine-computed allowlist first.

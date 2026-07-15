@@ -99,6 +99,32 @@ capabilities; not-configured/configured/registered/connected/authenticated/
 tools-available/ready), no conflicting active engine lock. Returns non-zero
 if any mandatory check fails — Jam's absence alone never fails it unless a
 project sets `jam.required: true`. See [jam-capability.md](jam-capability.md).
+`doctor` also reports the verification-policy engine's configuration mode
+(new/legacy/absent/invalid), service/check counts, defaults, placement, and
+a wasteful-full-suite-placement warning (spec 0026) — see below.
+
+```
+specrelay verification plan [--level changed|full|flexible]
+                             [--phase executor|reviewer|final_gate]
+                             [--changed-from <ref>] [--json]
+```
+Read-only (spec 0026): validates the verification-policy engine
+configuration and prints the selected services/checks, dependency-respecting
+execution order, and any fallback/risk-rule decision for the given
+level/phase — computed from actual changed paths (`git diff --name-status`
+against `--changed-from`, default `HEAD`, plus untracked files). Executes no
+configured command.
+
+```
+specrelay verification run [--level changed|full|flexible]
+                            [--phase executor|reviewer|final_gate] [--json]
+```
+Plans (as above), then executes the selected checks with bounded,
+dependency-aware parallelism, writing durable per-check evidence under
+`.specrelay-runs/adhoc-verification/` (a project-level, not task-scoped,
+scratch directory — the Executor/Reviewer's own in-task run writes into the
+task directory instead, via the same engine). Exits non-zero unless the
+overall status is `PASSED`/`NOT_REQUIRED`.
 
 ```
 specrelay models [<provider>]

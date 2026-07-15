@@ -476,10 +476,18 @@ specrelay::config::verification_policy() {
       bad "verification configuration is not a mapping (got #{verification.class})"
     end
 
-    known_top = ["executor", "reviewer"]
+    # "version", "defaults", "placement", "services", "risk_rules" belong to
+    # the spec-0026 verification-POLICY-ENGINE schema (multi-service/check
+    # selection) — a disjoint key set from this bounded-run-count policy
+    # (spec 0019). Both live under the same top-level `verification:` mapping
+    # so a project can configure them together; this parser recognizes those
+    # keys ONLY to avoid rejecting them as unknown — their actual validation
+    # happens in specrelay::config::verification_engine_raw / py/
+    # verification_policy_lib.py, never here.
+    known_top = ["executor", "reviewer", "version", "defaults", "placement", "services", "risk_rules"]
     unknown_top = verification.keys - known_top
     unless unknown_top.empty?
-      bad "verification configuration has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: executor, reviewer"
+      bad "verification configuration has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: executor, reviewer, version, defaults, placement, services, risk_rules"
     end
 
     int_keys = {
@@ -524,6 +532,63 @@ specrelay::config::verification_policy() {
 
     result.each { |k, v| puts "#{k}=#{v}" }
   ' "$path" <<< "$(specrelay::config::_verification_defaults)"
+}
+
+# --- verification-policy ENGINE configuration (spec 0026) --------------------
+#
+# Unlike every other section above, deep structural validation of this
+# section (nested services/checks arrays, dependency-graph/cycle checks, safe
+# cwd/root checks, duplicate-identity detection, unknown-kind checks, ...) is
+# deliberately done in Python (py/verification_policy_lib.py), not here. This
+# function's ONLY job is the part that genuinely needs Ruby: safely parsing
+# YAML (YAML.safe_load, never YAML.load/unsafe_load — same rationale as the
+# rest of this file) and re-emitting it as plain JSON so a single Python
+# module can own the rest of the schema (nested arrays of mappings do not fit
+# this file's flat `key=value` accessor convention, and hand-rolling
+# graph/cycle validation in a `ruby -e` heredoc would just duplicate logic
+# that is already exercised, in one place, by verification_policy_lib.py).
+#
+# Prints one JSON object on success (exit 0):
+#   {"legacy_full_test_command": <string|null>, "verification": <mapping|null>}
+# "verification" is the RAW (unvalidated) `verification:` mapping from the
+# config file, or null if the section is absent. On a YAML syntax error,
+# prints a human-readable error DETAIL on stdout and returns 1 (mirrors the
+# rest of this file's ok/bad convention — a malformed config file is reported
+# the same way everywhere).
+specrelay::config::verification_engine_raw() {
+  local root="$1" path
+  path="$(specrelay::config::path "$root")"
+
+  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+    printf '{"legacy_full_test_command": null, "verification": null}\n'
+    return 0
+  fi
+
+  ruby -e '
+    require "yaml"
+    require "json"
+    path = ARGV[0]
+
+    begin
+      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+    rescue Psych::SyntaxError, Psych::DisallowedClass => e
+      puts "malformed config (#{e.class}): #{e.message}"
+      exit 1
+    end
+    data = {} unless data.is_a?(Hash)
+
+    legacy = nil
+    validation = data["validation"]
+    if validation.is_a?(Hash)
+      cmd = validation["full_test_command"]
+      legacy = cmd if cmd.is_a?(String) && !cmd.strip.empty?
+    end
+
+    verification = data["verification"]
+    verification = nil unless verification.is_a?(Hash) || verification.is_a?(Array) || verification.nil?
+
+    puts({"legacy_full_test_command" => legacy, "verification" => verification}.to_json)
+  ' "$path"
 }
 
 # --- phase budget configuration (spec 0019) ----------------------------------

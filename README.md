@@ -213,6 +213,15 @@ Config holds only project policy — never secrets, credentials, or
 machine-specific absolute paths. Every key is documented in
 [docs/configuration.md](docs/configuration.md).
 
+The single `validation.full_test_command` string above remains fully
+supported (no migration required). A repository with multiple services,
+languages, or check types can instead configure a `verification:` engine —
+multiple services, multiple checks per service, `changed`/`full`/`flexible`
+levels, dependencies, bounded parallel execution, and per-check evidence —
+see [docs/verification-and-timeline.md](docs/verification-and-timeline.md)
+("Verification-policy engine") and
+[docs/configuration.md](docs/configuration.md).
+
 ## Providers
 
 Each role is configured with three explicit, provider-neutral keys:

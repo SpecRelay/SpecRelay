@@ -251,6 +251,30 @@ Historical tasks with **no** `engine_version`/`schema_version` are treated as
 unknown-origin / implicit v1 and are **not** blocked; no action is needed for
 them.
 
+### 6a. Verification-policy configuration drift (spec 0026)
+
+A separate, narrower guard applies only to the verification-policy engine
+(`verification.services`, spec 0026). The first time a task plans
+verification it snapshots a digest of the project's effective configuration
+into `verification/effective-config.json` inside the task directory. A
+later planning/execution pass **for that same task** refuses — rather than
+silently switching policy mid-task — if the project's `verification:`
+configuration has since changed:
+
+```text
+verification run: refused — the project's verification configuration changed
+since this task first captured it at ... — resume refuses to silently switch
+policy (spec 0026, section 51); this requires explicit human recovery
+```
+
+To recover: either revert the configuration change so it matches what this
+task originally captured, or — only if the new policy is intentional for
+this task — remove `verification/effective-config.json` from the task
+directory to deliberately re-capture the new policy. There is no automatic
+override flag for this guard (unlike the engine/schema guards above):
+verification-policy drift is a project-configuration decision, not an
+engine-compatibility one.
+
 ## 7. Coordinator failure and human-decision packets (spec 0025)
 
 The optional, disabled-by-default AI Coordinator (see

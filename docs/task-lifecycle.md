@@ -567,15 +567,20 @@ coordinator only ever participates in the middle two:
    zero effect, and the engine records the rejection durably
    (`23-coordinator-decisions.jsonl`) and falls back to a safe default
    (typically `REQUEST_HUMAN_DECISION`).
-4. **Role invocation / human handoff** — only a validated `BLOCK_TASK` or
-   `REQUEST_HUMAN_DECISION` decision is enacted immediately in this initial
-   specification, and only through the SAME pre-existing, independently
-   guarded transition functions every other caller uses. Every other
-   decision (`START_EXECUTION`, `REPAIR_ARTIFACTS`,
-   `RUN_TARGETED_VERIFICATION`, `SEND_TO_REVIEW`, `RETURN_TO_EXECUTOR`) is
-   durably recorded as a recommendation for a human or a future
-   specification to act on (spec 0025, section 8: full autonomous routing is
-   explicitly out of this initial scope).
+4. **Role invocation / human handoff** — a validated `BLOCK_TASK` or
+   `REQUEST_HUMAN_DECISION` decision is enacted immediately, through the SAME
+   pre-existing, independently guarded transition functions every other
+   caller uses. `RUN_TARGETED_VERIFICATION` is also enacted, but only through
+   the deterministic verification-policy engine (spec 0026): when a project
+   configures the engine, the Coordinator's recommendation triggers exactly
+   the checks that engine's own `placement.reviewer` policy already resolves
+   — the Coordinator never supplies a command or a check identity itself; for
+   a project with no engine configured, this decision is deferred (recorded,
+   no action) exactly as before. Every remaining decision (`START_EXECUTION`,
+   `REPAIR_ARTIFACTS`, `SEND_TO_REVIEW`, `RETURN_TO_EXECUTOR`) is durably
+   recorded as a recommendation for a human or a future specification to act
+   on (spec 0025, section 8: full autonomous routing beyond this remains out
+   of scope).
 
 Coordinator context (when configured) is prepared and validated
 **independently** of Executor/Reviewer context — it never inherits their
@@ -586,3 +591,40 @@ Inspect coordinator activity read-only with `specrelay task show <ref>`,
 `specrelay task report <ref>`, or `specrelay task coordination <ref>
 [--json]`; a task that never invoked the coordinator reports this honestly
 as "not recorded".
+
+## 14. Verification-policy engine artifacts (spec 0026)
+
+Additive to the numbered artifacts above — no existing file is renamed or
+reused. Numbers 26-28 were chosen because 12-25 are already reserved (see
+the archived-artifact list in section 8 and the Coordinator artifacts in
+section 13 above).
+
+```text
+26-verification-plan.json      # schema_version, requested/effective level,
+                                # phase, changed_paths, matched_risk_rules,
+                                # selected_services/checks, skipped_checks
+                                # (each with a reason), fallback_reason,
+                                # concurrency
+27-verification-summary.json   # overall_status, required/optional pass-fail
+                                # counts, per-check results, duplicate_of,
+                                # start/finish/duration
+28-verification-summary.md     # human-readable equivalent of the above
+verification/
+  selection.json                # the same selection, written at planning time
+  effective-config.json         # captured effective-config digest (spec 51)
+  run-ledger.json                # duplicate-execution detection ledger
+  services/<service>/<check>/
+    command.json                 # identity, command, cwd, timeout, deps,
+                                  # environment_names/redacted_names — never
+                                  # a secret VALUE
+    stdout.txt                   # this check's own stdout ONLY
+    stderr.txt                   # this check's own stderr ONLY
+    result.json                  # status, exit_code, duration, blocked_by
+```
+
+Every selected check gets its own `services/<service>/<check>/` directory —
+concurrent checks never share or interleave a stdout/stderr file. A task
+created before spec 0026 (or one whose project has no `verification:` engine
+configured) simply has none of these files; `specrelay task show`/`report`
+report this as "Verification policy: not recorded" rather than fabricating a
+result.

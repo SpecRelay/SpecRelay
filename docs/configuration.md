@@ -586,6 +586,96 @@ task rather than resuming the old one.
   kill arbitrary agent-issued commands to enforce this, per spec 0019's "Soft
   Limit versus Hard Refusal."
 
+### `verification.*` (spec 0026, verification-policy engine)
+
+- **Purpose:** a first-class, multi-service, multi-check verification
+  policy — an alternative to (never simultaneous with) the legacy
+  `validation.full_test_command` string above. Coexists with the spec-0019
+  keys documented in the previous section under the same `verification:`
+  mapping (disjoint sub-keys: this section only recognizes `version`,
+  `defaults`, `placement`, `services`, `risk_rules`).
+- **Shape:**
+  ```yaml
+  verification:
+    version: 1
+    defaults:
+      level: changed              # changed | full | flexible
+      changed_fallback: full      # changed | full
+      concurrency: 4
+      timeout_seconds: 900
+      shell: bash
+    placement:
+      executor: changed           # none | changed | targeted | full | flexible
+      reviewer: targeted
+      final_gate: full
+    services:
+      - name: backend
+        root: services/backend
+        affected_paths: ["services/backend/**", "shared/contracts/**"]
+        checks:
+          - name: unit
+            kind: unit             # unit|lint|typecheck|build|integration|
+                                    # contract|smoke|security|custom (ui reserved)
+            command: bundle exec rspec
+            cwd: services/backend  # repo-relative; no absolute path or '..'
+            timeout_seconds: 1200
+            required: true
+            levels: [changed, full]
+            depends_on: []
+            parallel_group: backend-fast
+            enabled: true
+            environment: [RAILS_ENV, DATABASE_URL]   # NAMES only, never values
+    risk_rules:
+      - name: shared-contract-change
+        paths: ["shared/contracts/**"]
+        force_level: full
+        rationale: Shared contracts may affect every service.
+  ```
+- **Selection:** `changed` selects services matched by `affected_paths`/
+  `always_affected_by` against the actual changed paths (both old and new
+  path for a rename); an unmatched changed path triggers `changed_fallback`
+  (default `full`), never silent omission. `full` selects every check whose
+  `levels` includes `full`. `flexible` resolves deterministically (matched
+  risk rules, more than one distinct affected service, or a prior recorded
+  required-check failure for the task escalate to `full`; otherwise it
+  resolves like `changed`) and always records why. `placement.reviewer:
+  targeted` narrows to required checks (plus anything a matched risk rule
+  requires) rather than repeating the Executor's full check list.
+- **Dependencies:** `depends_on` (check identities `<service>.<check>`) are
+  validated (unknown identity, or a cycle, fails configuration before any
+  execution) and enforced at run time — a dependent check never starts
+  before its dependency passes, and becomes `BLOCKED_BY_DEPENDENCY` (or
+  `BLOCKED_OPTIONAL`) when its dependency fails.
+- **Execution:** independent checks run concurrently up to
+  `defaults.concurrency`; each check gets its own `command.json`/
+  `stdout.txt`/`stderr.txt`/`result.json` (never shared/mixed between
+  checks); a check exceeding its `timeout_seconds` is terminated and
+  recorded `TIMED_OUT`/`TIMED_OUT_OPTIONAL` (never reported as passed).
+  `environment` declares variable NAMES only — the check's real
+  environment already inherits them from the running process; durable
+  evidence never records a value, and any name that looks secret-shaped
+  (`TOKEN`, `SECRET`, `PASSWORD`, `DATABASE_URL`, ...) is listed separately
+  as `redacted_names`.
+- **AI roles:** may request a level or a named, already-configured check
+  subset — never arbitrary shell text, an unknown check, or a narrowing
+  that excludes a required check. `specrelay verification plan` previews a
+  selection with no execution; `specrelay verification run` executes it.
+- **Legacy compatibility:** a project with only `validation.full_test_command`
+  set is automatically treated as one service (`project`) with one check
+  (`project.full-test`, `levels: [full]`); `specrelay doctor` reports this as
+  `Verification-policy engine: mode=legacy ...`. A project with neither
+  `validation.full_test_command` nor a `verification.services` block reports
+  `Verification-policy engine (spec 0026): absent`. Configuring both
+  `validation.full_test_command` and a new-style `verification.services` at
+  once is an ambiguity error, not a silently-resolved default.
+- **Inspection:** `specrelay doctor` reports configuration mode (new/legacy/
+  absent/invalid), service/check counts, defaults, placement, missing
+  service working directories, and a warning (never a failure) when the
+  full suite is placed at every phase without distinct rationale.
+  `specrelay task show`/`task report` show the recorded overall status,
+  required/optional pass-fail counts, and evidence path; a historical task
+  with no recorded run honestly reports "Verification policy: not recorded."
+
 ### `performance.phase_budgets.*` (spec 0019, phase budgets)
 
 - **Purpose:** SOFT (advisory) per-phase duration budgets used only to

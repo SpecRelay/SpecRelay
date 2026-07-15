@@ -346,6 +346,79 @@ An explicit completion gate, enforced independently of provider exit code:
   SAME `20-execution-events.jsonl` event log spec 0019 already writes — no
   new event-log namespace.
 
+## G. Verification-policy engine (spec 0026)
+
+Everything above (A) is a bounded *count* of how many times a role may run a
+loosely-classified command. Spec 0026 adds a separate, deterministic
+*policy engine* that a project may configure instead of (never alongside)
+`validation.full_test_command`: multiple services, multiple checks per
+service, changed-path-aware selection, dependencies, bounded parallel
+execution, and durable per-check evidence. See `docs/configuration.md`
+(`verification.*`, spec 0026) for the full schema.
+
+- **Levels.** `changed` selects only the services affected by actually
+  changed paths (both old/new path for a rename); an unmatched changed path
+  is never silently ignored — it triggers the configured `changed_fallback`
+  (default `full`). `full` selects every check configured for the full
+  level. `flexible` is resolved by deterministic rules (matched risk rules,
+  more than one distinct affected service, or a prior recorded required
+  failure for this task escalate to `full`) — never an arbitrary AI choice
+  — and the engine always records why.
+- **Placement.** `verification.placement` controls which level applies at
+  the Executor, Reviewer, and final gate (defaults: `changed` / `targeted` /
+  `full`). `targeted` narrows to required checks (plus anything a matched
+  risk rule requires), never simply repeating the complete Executor check
+  list.
+- **Dependencies and parallelism.** `depends_on` edges are validated (an
+  unknown dependency or a cycle fails configuration before any execution
+  starts) and enforced at run time: a dependent check never starts before
+  its dependency passes, and becomes `BLOCKED_BY_DEPENDENCY` when its
+  dependency fails or is blocked. Independent checks execute concurrently up
+  to `defaults.concurrency`, but final report ordering is always
+  deterministic (service declaration order, then dependency order, then
+  check declaration order) regardless of actual completion order.
+- **Required/optional and timeouts.** A required check must reach `PASSED`
+  — `FAILED`/`TIMED_OUT`/`BLOCKED`/`BLOCKED_BY_DEPENDENCY`/
+  `CONFIGURATION_ERROR` all fail the gate. An optional check's
+  `FAILED_OPTIONAL`/`TIMED_OUT_OPTIONAL`/`BLOCKED_OPTIONAL` stays visible in
+  the summary but never fails the gate on its own. A missing configured
+  command/cwd/tool is always `CONFIGURATION_ERROR` — never a silent pass or
+  a silent skip.
+- **Evidence.** `26-verification-plan.json`, `27-verification-summary.json`,
+  and `28-verification-summary.md` in the task directory, plus
+  `verification/selection.json` and one
+  `verification/services/<service>/<check>/{command.json,stdout.txt,
+  stderr.txt,result.json}` directory per selected check — stdout/stderr are
+  always separate files, so concurrent checks can never mix output.
+  Environment variable NAMES a check declares are recorded as
+  `environment_names`; any name that looks secret-shaped is additionally
+  listed as `redacted_names` — a VALUE is never written to durable
+  evidence.
+- **Effective-configuration capture.** The first time a task plans
+  verification, the engine snapshots a digest of the effective
+  configuration into `verification/effective-config.json`. A later
+  planning pass for the SAME task that finds the project's configuration
+  has since changed refuses (rather than silently switching policy
+  mid-task) — see `docs/operator-recovery.md`.
+- **Duplicate detection.** An identical check re-run for the same task,
+  iteration, phase, effective configuration, and working-tree state is
+  reported (`duplicate_of`, a timestamp) rather than silently claimed as
+  fresh evidence.
+- **Legacy compatibility.** `validation.full_test_command` alone continues
+  to work, unmodified, translated internally to a one-service, one-check
+  `full` configuration. Configuring both it and `verification.services` at
+  once is an ambiguity error. A historical task with no recorded run
+  reports "Verification policy: not recorded" — never a fabricated result.
+- **CLI.** `specrelay verification plan [--level ...] [--phase ...]
+  [--changed-from <ref>] [--json]` is read-only (validates configuration,
+  shows selection/dependencies/fallback reasoning, executes nothing).
+  `specrelay verification run [--level ...] [--phase ...]` executes the
+  selected checks and exits non-zero unless the overall status is
+  `PASSED`/`NOT_REQUIRED`.
+- **UI verification.** `kind: ui` is reserved in the check schema for a
+  later specification; this engine implements no UI-runtime, browser, or
+  screenshot behavior.
+
 ## Task inspection
 
 `specrelay task timeline <task-ref> [--json]` (see `docs/commands.md`) prints

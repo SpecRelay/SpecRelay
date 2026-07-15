@@ -318,6 +318,30 @@ specrelay::coordinator::dispatch() {
     NO_ACTION)
       printf '%s — no automatic action taken\n' "$desc"
       ;;
+    RUN_TARGETED_VERIFICATION)
+      # Spec 0026, section 24: "RUN_TARGETED_VERIFICATION must map to
+      # configured check identities selected by the deterministic engine.
+      # The Coordinator must not construct commands." The Coordinator's own
+      # decision schema (spec 0025) never carries raw check-identity text —
+      # it only recommends the ACTION. The engine alone resolves what
+      # "targeted" verification means from this project's OWN configured
+      # `placement.reviewer` policy (default: targeted) and executes exactly
+      # those configured checks; nothing here is ever AI-supplied text.
+      local eng_mode
+      eng_mode="$(specrelay::verification_policy::mode "$root" 2>/dev/null | head -n1)"
+      if [ "$eng_mode" != "new" ] && [ "$eng_mode" != "legacy" ]; then
+        printf '%s — deferred: no verification-policy engine configuration is present for this project (mode=%s)\n' "$desc" "${eng_mode:-absent}"
+        return 0
+      fi
+      local changed_json
+      changed_json="$(specrelay::verification_policy::changed_paths "$root" 2>/dev/null)"
+      [ -n "$changed_json" ] || changed_json='[]'
+      if specrelay::verification_runner::run "$root" "$task_dir" "$task_id" "$(specrelay::state::get "$state_file" iteration 2>/dev/null || echo 1)" reviewer "" "$changed_json" '[]' >/dev/null 2>&1; then
+        printf '%s — enacted (configured reviewer-placement checks ran; see 27-verification-summary.json)\n' "$desc"
+      else
+        printf '%s — enacted (configured reviewer-placement checks ran and did NOT pass; see 27-verification-summary.json)\n' "$desc"
+      fi
+      ;;
     *)
       printf '%s — recorded as a recommendation only; not yet automatically executed in this initial scope (spec 0025, section 8)\n' "$desc"
       ;;

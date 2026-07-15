@@ -70,6 +70,24 @@ rules:
       - test/test_selection_test.sh
       - test/release_readiness_test.sh
 
+  - id: verification-policy-engine
+    paths:
+      - lib/specrelay/verification_policy.sh
+      - lib/specrelay/verification_runner.sh
+      - lib/specrelay/py/verification_policy_lib.py
+      - lib/specrelay/config.sh
+      - lib/specrelay/doctor.sh
+      - lib/specrelay/coordinator.sh
+      - lib/specrelay/py/coordinator_lib.py
+      - lib/specrelay/workflow.sh
+      - test/fixtures/verification-fixture.sh
+    tests:
+      - test/verification_policy_engine_test.sh
+      - test/verification_multi_service_test.sh
+      - test/verification_engine_integration_test.sh
+      - test/doctor_hooks_test.sh
+      - test/coordinator_test.sh
+
   - id: verification-and-timeline
     paths:
       - lib/specrelay/verification.sh

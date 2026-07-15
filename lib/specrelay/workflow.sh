@@ -975,6 +975,9 @@ specrelay::workflow::build_reviewer_prompt() {
     echo "   Exceeding this budget requires recording, BEFORE the extra run:"
     echo "     ADDITIONAL_VERIFICATION_REASON: <why>"
     echo "   Running the full suite 'because it is available' is never sufficient."
+    echo
+    specrelay::verification_policy::prompt_block "$root" "$task_dir" reviewer
+    echo
     echo "5. Evaluate every acceptance criterion in the spec below explicitly."
     echo "6. Decide exactly one of ACCEPT or REQUEST_CHANGES. Use severities"
     echo "   BLOCKER/HIGH -> REQUEST_CHANGES, MEDIUM -> your judgment (explain),"
@@ -1171,6 +1174,8 @@ specrelay::workflow::commit_staged_input() {
     echo "doctor runs <= $doctor_max, version runs <= $version_max. Any additional run"
     echo "beyond these needs a recorded reason:"
     echo "  ADDITIONAL_VERIFICATION_REASON: <why>"
+    echo
+    specrelay::verification_policy::prompt_block "$root" "$task_dir" executor
     echo
     echo "Completion contract (spec 0021, 'Agent Execution Efficiency and"
     echo "Completion Gate'):"

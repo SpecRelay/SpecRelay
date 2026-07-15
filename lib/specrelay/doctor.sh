@@ -338,6 +338,73 @@ specrelay::doctor::_verification_policy() {
   specrelay::doctor::_info "Verification policy (reviewer): default_mode=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_default_mode=//p') focused_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_focused_max_runs=//p') targeted_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_targeted_max_runs=//p') full_suite_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_full_suite_max_runs=//p') smoke_max_runs=$(printf '%s\n' "$blob" | sed -n 's/^reviewer_smoke_max_runs=//p')"
 }
 
+# specrelay::doctor::_verification_engine <root>
+# Read-only (spec 0026, section 35, "Doctor behavior"). Never executes a
+# configured check command. Reports configuration mode (new/legacy/absent),
+# schema validity, service/check counts, default level, changed fallback,
+# concurrency, placement policy, missing service working directories, and
+# the wasteful-full-suite-placement warning. Dependency cycles/unknown
+# dependencies/duplicate identities/unsafe paths are all part of the SAME
+# schema validation that produces "invalid" here — a structurally invalid
+# `verification:` engine section is a mandatory failure, mirroring every
+# other config-shape check in this file (every run with this configuration
+# would refuse before check execution).
+specrelay::doctor::_verification_engine() {
+  local root="$1" blob mode
+  blob="$(specrelay::verification_policy::doctor_summary "$root" 2>/dev/null)"
+  mode="$(printf '%s' "$blob" | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("mode","absent"))
+except Exception:
+    print("absent")' 2>/dev/null)"
+
+  case "$mode" in
+    invalid)
+      local detail
+      detail="$(printf '%s' "$blob" | python3 -c 'import json,sys
+print(json.load(sys.stdin).get("error",""))' 2>/dev/null)"
+      specrelay::doctor::_fail "Verification-policy engine: INVALID configuration — $detail (source: $(specrelay::config::path "$root"))"
+      return 0
+      ;;
+    absent)
+      specrelay::doctor::_info "Verification-policy engine (spec 0026): absent (no verification: services configured; legacy/no test-command policy applies)"
+      return 0
+      ;;
+  esac
+
+  printf '%s' "$blob" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print("mode=%s services=%d checks=%d default_level=%s changed_fallback=%s concurrency=%s" % (
+    d["mode"], d["service_count"], d["check_count"], d["defaults"]["level"],
+    d["defaults"]["changed_fallback"], d["defaults"]["concurrency"],
+))
+print("placement: executor=%s reviewer=%s final_gate=%s" % (
+    d["placement"]["executor"], d["placement"]["reviewer"], d["placement"]["final_gate"],
+))
+' 2>/dev/null | while IFS= read -r line; do
+    specrelay::doctor::_info "Verification-policy engine: $line"
+  done
+
+  local missing
+  missing="$(printf '%s' "$blob" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+m = d.get("missing_service_roots") or []
+print(", ".join(m))' 2>/dev/null)"
+  if [ -n "$missing" ]; then
+    specrelay::doctor::_warn "Verification-policy engine: configured service root(s) do not exist on disk: $missing"
+  fi
+
+  printf '%s' "$blob" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+for w in d.get("warnings", []):
+    print(w)' 2>/dev/null | while IFS= read -r w; do
+    [ -n "$w" ] && specrelay::doctor::_warn "Verification-policy engine: $w"
+  done
+
+  specrelay::doctor::_ok "Verification-policy engine: ready (configuration valid; no configured command executed by doctor)"
+}
+
 # specrelay::doctor::_phase_budgets <root>
 # Read-only (spec 0019, "Phase Budgets"). A structurally invalid
 # `performance:` section is a mandatory failure for the same reason as the
@@ -656,6 +723,13 @@ specrelay::doctor::run() {
 
   # --- Bounded verification policy + phase budgets (spec 0019) -------------
   specrelay::doctor::_verification_policy "$root"
+
+  # --- Verification-policy ENGINE (spec 0026) -------------------------------
+  # Reported separately from the spec-0019 bounded-run-count policy above —
+  # these are two independent verification specs sharing the same
+  # `verification:` config mapping (see config.sh's known_top comment).
+  specrelay::doctor::_verification_engine "$root"
+
   specrelay::doctor::_phase_budgets "$root"
   specrelay::doctor::_execution_efficiency "$root"
 

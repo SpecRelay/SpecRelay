@@ -329,8 +329,7 @@ is a separate, later operational decision — see
 own right; this roadmap does not treat "release spec 0025" as a phase.*
 
 ### Phase 3 — Configurable test levels and multi-service verification
-**committed next milestone.** The immediate next architecture work, ahead of
-any further Coordinator capability. Replaces the single
+**implemented (spec 0026).** Replaces the single
 `validation.full_test_command` string and the fixed `focused`/`targeted`/
 `full`/`smoke` levels (spec 0019) with a first-class multi-service,
 multi-check verification policy — `changed` / `full` / `flexible` (rule-based,
@@ -534,7 +533,7 @@ Phase 12). Every capability is labeled with exactly one maturity term:
   architectural roadmap.
 
 ### C2 — Configurable test levels and multi-service verification (Phase 3)
-- **Maturity: committed next milestone.**
+- **Maturity: implemented (spec 0026).**
 - **Objective:** Replace the single `validation.full_test_command` string and
   the fixed focused/targeted/full/smoke levels (spec 0019) with a
   first-class, multi-service, multi-check verification policy.
@@ -568,13 +567,20 @@ Phase 12). Every capability is labeled with exactly one maturity term:
   roadmap explicitly warns against it.
 - **Dependencies:** Phase 1's verification/evidence infrastructure (spec
   0019–0021); independent of C1.
-- **Expected specification(s):** none yet — a new spec, no number reserved.
+- **Expected specification(s):** spec 0026 ("Configurable Verification Policy
+  and Multi-Service Execution").
 - **Exit criteria:** multiple services/checks configurable and independently
   reported; `changed`/`full`/`flexible` all deterministic and testable with
   the `fake` provider; parallel execution of independent checks proven not to
   interleave evidence; the wasteful-repeated-full-suite anti-pattern
   detectable and warned about, mirroring spec 0019's duplicate-work reporting.
-- **Implementation status:** **Not started.**
+- **Implementation status:** **Implemented.** `lib/specrelay/verification_policy.sh`
+  / `verification_runner.sh` / `py/verification_policy_lib.py`; legacy
+  `validation.full_test_command` translated automatically; Coordinator's
+  `RUN_TARGETED_VERIFICATION` wired to the engine's own `placement.reviewer`
+  resolution; `specrelay doctor`/`task show`/`task report`/`verification
+  plan`/`verification run` all integrated. UI-runtime behavior (Phase 4,
+  below) remains unimplemented — only `kind: ui` is reserved in the schema.
 
 ### C3 — UI runtime and visual verification (Phase 4)
 - **Maturity: committed next milestone.**

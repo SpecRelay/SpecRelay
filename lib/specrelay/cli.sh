@@ -39,6 +39,23 @@ Discovery (read-only):
                          (configured/resolved/validation level), context
                          capability, and conflicting active-lock detection.
                          Exits non-zero if any mandatory check fails.
+  verification plan [--level changed|full|flexible] [--phase executor|reviewer|final_gate]
+                         [--changed-from <ref>] [--json]
+                         Read-only (spec 0026): validates the verification-
+                         policy engine configuration and shows selected
+                         services/checks, dependency order, and fallback/
+                         risk-rule decisions for the given level/phase.
+                         Performs NO verification command execution.
+  verification run [--level changed|full|flexible] [--phase executor|reviewer|final_gate]
+                         [--changed-from <ref>] [--json]
+                         Plans (as above) THEN executes the selected checks
+                         with bounded, dependency-aware parallelism, writing
+                         durable per-check evidence under the current
+                         directory's .specrelay-verification/ scratch area
+                         (or, when run from inside 'run'/'resume', under the
+                         task's own runtime directory). Exits non-zero when
+                         the overall verification status is not PASSED/
+                         NOT_REQUIRED.
   models [<provider>]    Model-selection guidance for configured automated
                          providers: the supported configuration forms
                          (provider-default, semantic alias, exact model id),
@@ -770,6 +787,64 @@ specrelay::cli::cmd_contexts() {
   specrelay::contexts::run "$root" "${1:-}"
 }
 
+# --- verification-policy engine CLI (spec 0026, section 34) -----------------
+
+specrelay::cli::_parse_verification_args() {
+  local level="" phase="" from_ref="HEAD" as_json=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --level) level="${2:?--level requires a value}"; shift 2 ;;
+      --level=*) level="${1#*=}"; shift ;;
+      --phase) phase="${2:?--phase requires a value}"; shift 2 ;;
+      --phase=*) phase="${1#*=}"; shift ;;
+      --changed-from) from_ref="${2:?--changed-from requires a value}"; shift 2 ;;
+      --changed-from=*) from_ref="${1#*=}"; shift ;;
+      --json) as_json=1; shift ;;
+      *) specrelay::out::err "unknown option: $1"; return 2 ;;
+    esac
+  done
+  case "$level" in ""|changed|full|flexible) ;; *) specrelay::out::err "invalid --level: $level (must be changed, full, or flexible)"; return 2 ;; esac
+  case "$phase" in ""|executor|reviewer|final_gate) ;; *) specrelay::out::err "invalid --phase: $phase (must be executor, reviewer, or final_gate)"; return 2 ;; esac
+  printf '%s\n%s\n%s\n%s\n' "$level" "$phase" "$from_ref" "$as_json"
+}
+
+specrelay::cli::cmd_verification_plan() {
+  local root parsed level phase from_ref as_json changed_json
+  root="$(specrelay::cli::require_project_root)" || return 1
+  parsed="$(specrelay::cli::_parse_verification_args "$@")" || return 2
+  level="$(printf '%s\n' "$parsed" | sed -n '1p')"
+  phase="$(printf '%s\n' "$parsed" | sed -n '2p')"
+  from_ref="$(printf '%s\n' "$parsed" | sed -n '3p')"
+  as_json="$(printf '%s\n' "$parsed" | sed -n '4p')"
+
+  changed_json="$(specrelay::verification_policy::changed_paths "$root" "$from_ref")"
+  local -a extra=()
+  [ "$as_json" -eq 1 ] && extra+=(--json)
+  specrelay::verification_policy::plan "$root" "$phase" "$level" "$changed_json" "" ${extra[@]+"${extra[@]}"}
+}
+
+# specrelay::cli::cmd_verification_run <flags>
+# A project-level (not task-scoped) manual entrypoint (spec section 34: "add
+# an execution command only if it fits existing CLI architecture cleanly").
+# Writes durable evidence under a single reusable adhoc scratch directory
+# rather than a numbered task directory, since there is no task context here.
+specrelay::cli::cmd_verification_run() {
+  local root parsed level phase from_ref as_json changed_json scratch_dir
+  root="$(specrelay::cli::require_project_root)" || return 1
+  parsed="$(specrelay::cli::_parse_verification_args "$@")" || return 2
+  level="$(printf '%s\n' "$parsed" | sed -n '1p')"
+  phase="$(printf '%s\n' "$parsed" | sed -n '2p')"
+  from_ref="$(printf '%s\n' "$parsed" | sed -n '3p')"
+  as_json="$(printf '%s\n' "$parsed" | sed -n '4p')"
+
+  changed_json="$(specrelay::verification_policy::changed_paths "$root" "$from_ref")"
+  scratch_dir="$root/.specrelay-runs/adhoc-verification"
+  mkdir -p "$scratch_dir"
+  local -a extra=()
+  [ "$as_json" -eq 1 ] && extra+=(--json)
+  specrelay::verification_runner::run "$root" "$scratch_dir" "adhoc" 1 "$phase" "$level" "$changed_json" '[]' ${extra[@]+"${extra[@]}"}
+}
+
 specrelay::cli::cmd_resume() {
   local root ref="" verbose=0 task_id
   root="$(specrelay::cli::require_project_root)" || return 1
@@ -922,6 +997,7 @@ specrelay::cli::task_show() {
 
   specrelay::cli::_task_show_bundle_summary "$task_dir"
   specrelay::cli::_task_show_timeline_summary "$task_dir"
+  specrelay::verification_policy::report "$task_dir"
   specrelay::coordinator::report_text "$task_dir"
 }
 
@@ -1071,6 +1147,7 @@ specrelay::cli::_task_full_report() {
       COMMANDS_JSON="$(specrelay::command_timing::report "$task_dir" "$task_id" "$mode" --json 2>/dev/null)" \
       EFFICIENCY_JSON="$(specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode" --json 2>/dev/null)" \
       COORDINATOR_JSON="$(specrelay::coordinator::report_json "$task_dir" 2>/dev/null)" \
+      VERIFICATION_JSON="$(specrelay::verification_policy::report_json "$task_dir" 2>/dev/null)" \
       TASK_ID="$task_id" python3 -c '
 import json, os
 
@@ -1089,6 +1166,7 @@ print(json.dumps({
     "command_timing": load("COMMANDS_JSON"),
     "agent_efficiency": load("EFFICIENCY_JSON"),
     "coordinator": load("COORDINATOR_JSON"),
+    "verification": load("VERIFICATION_JSON"),
 }, indent=2, sort_keys=True))
 '
       return 0
@@ -1108,9 +1186,11 @@ print("no" if d.get("recorded") is False else "yes")' 2>/dev/null)"
   if [ "$recorded" != "yes" ]; then
     if [ "$usage_cmd" = "report" ]; then
       echo "Task report: not recorded for task '$task_id' (legacy task, or no invocation has run yet)."
-      # Coordinator activity is independent of execution-timeline recording
-      # (spec 0025, section 33) — a task may have coordinator decisions
-      # without ever having run an Executor/Reviewer round yet.
+      # Verification-policy (spec 0026) and coordinator activity (spec 0025,
+      # section 33) are both independent of execution-timeline recording — a
+      # task may have either without ever having run an Executor/Reviewer
+      # round yet.
+      specrelay::verification_policy::report "$task_dir"
       specrelay::coordinator::report_text "$task_dir"
     else
       echo "Execution timeline: not recorded for task '$task_id' (legacy task, or no invocation has run yet)."
@@ -1144,6 +1224,10 @@ print("no" if d.get("recorded") is False else "yes")' 2>/dev/null)"
   # a write; a task with no recorded completion-gate/command-timing evidence
   # at all reports "not recorded" via 'task efficiency' instead of here.
   specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode"
+
+  # Verification-policy engine summary (spec 0026). Honest "not recorded"
+  # for a task that never ran the engine (legacy/historical task).
+  specrelay::verification_policy::report "$task_dir"
 
   # Coordinator activity summary (spec 0025, section 33). Honest "not
   # recorded" for a task that never invoked the coordinator.
@@ -1658,6 +1742,26 @@ specrelay::cli::main() {
       ;;
     doctor)
       specrelay::doctor::run "$home"
+      ;;
+    verification)
+      case "${1:-}" in
+        plan)
+          shift
+          specrelay::cli::cmd_verification_plan "$@"
+          ;;
+        run)
+          shift
+          specrelay::cli::cmd_verification_run "$@"
+          ;;
+        "")
+          specrelay::out::err "usage: specrelay verification <plan|run>"
+          return 2
+          ;;
+        *)
+          specrelay::out::err "unknown 'verification' subcommand: $1"
+          return 2
+          ;;
+      esac
       ;;
     models)
       specrelay::cli::cmd_models "$@"
