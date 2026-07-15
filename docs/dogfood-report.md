@@ -1,5 +1,14 @@
 # SpecRelay Dogfood Report (SDD 0085)
 
+> **Historical document.** This report documents historical dogfood scenarios
+> run against the former in-host SpecRelay architecture (`tools/specrelay/`
+> incubated inside a host repository, `.ai/scripts/` compatibility shims,
+> `.ai-runs/` task runtime) using a fake provider (SDD 0085). That
+> architecture is no longer a supported current product surface. See
+> README.md and docs/architecture.md for the current standalone architecture
+> (`bin/specrelay` / installed `specrelay`, `.specrelay/config.yml`,
+> `.specrelay-runs/`).
+
 ## Status and an important, deliberate limitation
 
 This report documents three dogfood scenarios run against the REAL, shipped

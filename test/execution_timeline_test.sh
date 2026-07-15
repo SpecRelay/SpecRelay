@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # execution_timeline_test.sh — execution-timeline instrumentation, JSON
 # durability, and multi-resume history (spec 0019, "D. Execution Timeline").
-#   tools/specrelay/test/execution_timeline_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"

@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 # auth.sh — runner-owned transition authorization for EXECUTOR_RUNNING ->
-# READY_FOR_REVIEW (spec section 11, "Runner-owned transitions").
-#
-# Reimplements the same proven property as the legacy workflow's
-# authorize-submit.sh / submit-review.sh pair (see
-# docs/current-workflow-contract.md, section 5), as SpecRelay's own code:
+# READY_FOR_REVIEW (spec section 11, "Runner-owned transitions"). See
+# docs/current-workflow-contract.md, section 5:
 #
 #   - A random, single-use token is minted into a file OUTSIDE the task's own
 #     folder (<runs-root>/.transition-auth/<task-id>.json, mode 0600, parent
@@ -18,11 +15,11 @@
 #   - A trap in the orchestrator deletes the file on every exit path, so a
 #     capability never outlives one submission attempt even on a crash.
 #
-# This is a prompt/process-ownership contract, not an OS-level sandbox: like
-# the legacy mechanism, it does not defend against a process that ignores its
-# instructions and directly edits state.json or calls a lower-level function
-# with a forged/stolen token file. That limitation is accepted and documented
-# identically to .ai/protocol.md's "Runner-Owned Transition Ownership".
+# This is a prompt/process-ownership contract, not an OS-level sandbox: it
+# does not defend against a process that ignores its instructions and
+# directly edits state.json or calls a lower-level function with a
+# forged/stolen token file. That limitation is accepted and documented (see
+# docs/current-workflow-contract.md, "Runner-owned transitions").
 
 # specrelay::auth::file <project-root> <task-id>
 specrelay::auth::file() {

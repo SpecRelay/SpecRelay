@@ -1,5 +1,14 @@
 # SpecRelay Dogfood Orchestration Model (SDD 0085B)
 
+> **Historical document.** This document describes a historical dogfood
+> orchestration exercise (SDD 0085B) that defined safe orchestration models
+> for the former in-host SpecRelay architecture (`tools/specrelay/` incubated
+> inside a host repository, `.ai/scripts/` compatibility shims, `.ai-runs/`
+> task runtime). That architecture is no longer a supported current product
+> surface. See README.md and docs/architecture.md for the current standalone
+> architecture (`bin/specrelay` / installed `specrelay`,
+> `.specrelay/config.yml`, `.specrelay-runs/`).
+
 This document defines the **safe** way to drive real-provider dogfood scenarios
 through SpecRelay, and the **prohibited** pattern that broke SDD 0085. It is
 mandatory reading before running any real-provider dogfood task.

@@ -1,5 +1,14 @@
 # SpecRelay Extraction (Standalone Repository)
 
+> **Historical document.** This document describes the historical procedures for
+> extracting the former in-host SpecRelay architecture (`tools/specrelay/`
+> incubated inside a host repository, `.ai/scripts/` compatibility shims,
+> `.ai-runs/` task runtime) into a standalone repository. That architecture is
+> no longer a supported current product surface. See README.md and
+> docs/architecture.md for the current standalone architecture
+> (`bin/specrelay` / installed `specrelay`, `.specrelay/config.yml`,
+> `.specrelay-runs/`).
+
 ## E1. Goal
 
 SpecRelay is being incubated **inside** a host repository at `tools/specrelay/`.

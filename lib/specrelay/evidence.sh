@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # evidence.sh — durable git evidence capture (spec section 29).
 #
-# Reimplements the legacy capture-evidence.sh's intent-to-add/reset dance so
-# untracked (new) files show up as full additions in the diff/stat, then are
-# restored to untracked — never left staged. Writes the same artifact names
-# as the legacy workflow (Artifact Compatibility Strategy: Option A — see
-# docs/engine-parity.md) so a human comparing a SpecRelay task folder to a
-# legacy one sees the same shape.
+# Uses an intent-to-add/reset dance so untracked (new) files show up as full
+# additions in the diff/stat, then are restored to untracked — never left
+# staged. Writes the numbered artifact names documented in
+# docs/task-lifecycle.md (Artifact Compatibility Strategy: Option A).
 
 # specrelay::evidence::capture <project-root> <task-dir>
 specrelay::evidence::capture() {

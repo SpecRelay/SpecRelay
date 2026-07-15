@@ -1,14 +1,7 @@
 # SpecRelay Command Reference
 
-SpecRelay is this repository's **only active** workflow engine (SDD 0085B); the
-legacy `.ai/` engine is **frozen** (rollback/reference only — see
-`architecture.md`, "Legacy engine freeze"). This is the command reference
-required by spec section 45.
-
-**Canonical active command set (SDD 0085B, section 2.3).** All new
-operator/developer work uses the `specrelay` CLI directly — `bin/specrelay ...`
-from a standalone source checkout, or the installed `specrelay ...` on your
-`PATH` — never `.ai/scripts/*`:
+This is the command reference for the standalone SpecRelay CLI: `bin/specrelay
+...` from a source checkout, or the installed `specrelay ...` on your `PATH`.
 
 | Command | Purpose | Exit-code semantics |
 |---|---|---|
@@ -39,8 +32,8 @@ immutably snapshots the whole bundle, then analyses it into
 `02-resolved-specification.md` — see "Specification-bundle analysis phase" in
 `docs/task-lifecycle.md`. Full lifecycle for the resulting task: create/resolve
 the task, approve it (running
-`run` IS the human approval for that spec — see "Approval semantics" in
-`engine-parity.md`), run executor/reviewer rounds until
+`run` IS the human approval for that spec — see docs/task-lifecycle.md,
+section 3), run executor/reviewer rounds until
 `READY_FOR_HUMAN_REVIEW`, a `CHANGES_REQUESTED`-only stop (manual reviewer),
 `BLOCKED`, a provider failure, or the configured maximum iterations. Exit
 codes: `0` success, `1` usage/config/lookup error, `2` reviewer is `manual`
@@ -78,8 +71,7 @@ in the same invocation** and reaches `READY_FOR_HUMAN_REVIEW` — no second manu
 `resume` is required (spec 0010). `READY_FOR_REVIEW` is an internal handoff state
 for the automated reviewer, not the normal endpoint of a successful run; `resume`
 only rests there when the reviewer is `manual` or the automated reviewer fails,
-and always logs an explicit reason. Also used by the `run-ai-loop.sh`
-compatibility shim.
+and always logs an explicit reason.
 
 ```
 specrelay status [<task-ref>]
@@ -89,22 +81,22 @@ specrelay list
 Read-only. `status` (no arg) lists every task's id/state/iteration;
 `status <task-ref>` and `show <task-ref>` give one task's detail (`show` is
 richer). `<task-ref>` accepts a full task id, a unique numeric prefix, or a
-unique partial slug (e.g. `specrelay show 0084`). These work for tasks
-created by either engine (SpecRelay or legacy), never mutate anything.
+unique partial slug (e.g. `specrelay show 0084`). These work read-only for
+any task regardless of its recorded `engine` field (including a task with no
+`engine` field at all, e.g. one created before engine-ownership tracking
+existed), and never mutate anything.
 
 ```
 specrelay doctor
 ```
-Read-only readiness diagnostics (added in SDD 0085): git repository
-detected, project root, config readable, spec root exists, task runtime
-root accessible, executor/reviewer provider availability, context
-capability, **Jam capability readiness** (spec 0023 — reported separately from
-repository context capabilities; not-configured/configured/registered/
-connected/authenticated/tools-available/ready), current engine mode,
-compatibility shims installed, rollback engine exists, no conflicting active
-engine lock. Returns non-zero if any mandatory check fails — Jam's absence
-alone never fails it unless a project sets `jam.required: true`. See
-[jam-capability.md](jam-capability.md).
+Read-only readiness diagnostics: git repository detected, project root,
+config readable, spec root exists, task runtime root accessible,
+executor/reviewer provider availability, context capability, **Jam capability
+readiness** (spec 0023 — reported separately from repository context
+capabilities; not-configured/configured/registered/connected/authenticated/
+tools-available/ready), no conflicting active engine lock. Returns non-zero
+if any mandatory check fails — Jam's absence alone never fails it unless a
+project sets `jam.required: true`. See [jam-capability.md](jam-capability.md).
 
 ```
 specrelay models [<provider>]
@@ -194,9 +186,9 @@ Lower-level task lifecycle operations. `create` only creates (state
 `DRAFT`); it does not approve or run. `approve` is the human-approval gate
 (`DRAFT`/`WAITING_FOR_HUMAN` → `READY_FOR_EXECUTOR`). `requeue`, `accept`,
 `request-changes` are normally driven automatically by `run`/`resume`;
-`authorize-submit` is the manual-recovery equivalent of the legacy
-`authorize-submit.sh` for the runner-owned `EXECUTOR_RUNNING` →
-`READY_FOR_REVIEW` transition. `block` moves a stuck `EXECUTOR_RUNNING` task
+`authorize-submit` is the manual-recovery entry point for the runner-owned
+`EXECUTOR_RUNNING` → `READY_FOR_REVIEW` transition. `block` moves a stuck
+`EXECUTOR_RUNNING` task
 to `BLOCKED` when the executor genuinely cannot complete.
 
 `recover` (SDD 0085B, section 3) is the SpecRelay-native way back out of an
@@ -290,8 +282,8 @@ daily-check dismissal state. Full behavior, the daily-check contract, CI
 safety, and rollback design are in [updates.md](updates.md).
 
 ```
-specrelay run <spec> --verbose
-specrelay resume <task> --verbose
+specrelay run <input-path> --verbose
+specrelay resume <task-ref> --verbose
 ```
 `--verbose` prints the full execution-timeline/command-timing/agent-efficiency
 detail inline, **in addition to** the concise default summary (see
@@ -335,54 +327,19 @@ annotated tag from a clean, committed tree; it refuses a dirty tree or an
 existing tag and never pushes. See [release-process.md](release-process.md)
 for the release-impact metadata contract and the pre-1.0 versioning policy.
 
-## Compatibility commands (`.ai/scripts/`) — deprecated wrappers
-
-These public shims survive **only** as deprecated wrappers during the cutover
-window (SDD 0085B, section 2.4). They are **not** the supported path for new
-work — use the `specrelay` CLI directly (`bin/specrelay ...` from a source
-checkout, or the installed `specrelay ...`). Under the default
-engine selection each shim delegates unambiguously to the direct CLI below and
-propagates its exit code; a shim **never** silently falls back to legacy.
-Selecting legacy requires the explicit, rollback-only opt-in
-(`SPECRELAY_ENGINE=legacy`). By default they delegate as:
-
-| Compatibility command | Delegates to (default engine) |
-|---|---|
-| `.ai/scripts/start-spec-task.sh <spec>` | `specrelay run <spec>` |
-| `.ai/scripts/show-task.sh <task-ref>` | `specrelay show <task-ref>` |
-| `.ai/scripts/approve-task.sh <task-id>` | `specrelay task approve <task-ref>` |
-| `.ai/scripts/run-ai-loop.sh <task-id>` | loops `specrelay resume <task-id>` |
-| `.ai/scripts/start-ai-task.sh <task-id>` | no safe mapping — refuses cleanly (see `engine-parity.md`) |
-
-## Rollback mode
-
-The legacy engine remains available ONLY as an explicit, temporary rollback
-(see `architecture.md`, "H7. Rollback"):
-
-```
-SPECRELAY_ENGINE=legacy .ai/scripts/start-spec-task.sh <spec>
-# or, equivalently:
-.ai/scripts/legacy/start-spec-task.sh <spec>
-```
-
-`SPECRELAY_ENGINE` accepts only `specrelay` or `legacy`; any other value is
-a hard error (never a silent fallback). With no override, the engine is
-read from `.specrelay/config.yml`'s `workflow.current_engine` (default
-`specrelay` if the field or file is absent).
-
 ## Engine ownership behavior
 
 Every task's `state.json` records which engine owns mutating it
-(`"engine": "specrelay"`, or absent for a legacy/pre-0085 task). Read-only
-commands (`show`/`status`/`list`, and the legacy `show-task.sh`/
-`list-tasks.sh`) work regardless of ownership. Mutating commands on either
-engine refuse a task they do not own — see `engine-parity.md`,
-"Compatibility cutover (SDD 0085)" for the full evidence table.
+(`"engine": "specrelay"`, or absent for a task created before engine-ownership
+tracking existed, or by another tool). Read-only commands (`show`/`status`/
+`list`) work regardless of ownership. Mutating commands refuse a task they do
+not own, naming the reason explicitly.
 
 ## Exit semantics
 
-Compatibility shims propagate the real underlying `specrelay` (or legacy)
-exit code unchanged. `specrelay run`'s own exit codes are documented above
-under `run`. No command in either engine auto-commits, auto-pushes,
-auto-merges, or deploys; reaching `READY_FOR_HUMAN_REVIEW` always requires a
-separate human final review.
+`specrelay run`'s exit codes are documented above under `run`. No command
+auto-commits, auto-pushes, auto-merges, or deploys; reaching
+`READY_FOR_HUMAN_REVIEW` always requires a separate human final review.
+
+If you are migrating a project away from a former in-host `.ai/scripts/`/
+`tools/specrelay/` layout, see docs/migration.md.

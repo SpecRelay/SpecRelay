@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # run_all.sh — runs every SpecRelay test file in this directory and reports
 # an overall pass/fail summary. Each test file is self-contained (isolated
-# temp git fixtures only; never this repository's own .ai/ or .ai-runs/).
-#   tools/specrelay/test/run_all.sh
+# temp git fixtures only; never this repository's own .ai/ or .specrelay-runs/).
 
 set -uo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

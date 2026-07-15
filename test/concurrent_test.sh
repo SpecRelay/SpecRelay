@@ -3,7 +3,6 @@
 # mutate the same task (spec section 63). Uses real backgrounded CLI
 # processes (not just unit-level lock.sh calls) against a shared temp
 # fixture, with deterministic timing via a fake-executor plan that pauses.
-#   tools/specrelay/test/concurrent_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"

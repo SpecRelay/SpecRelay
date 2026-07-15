@@ -3,7 +3,6 @@
 # recovery (spec 0019, "C. Mandatory Decision Marker" / marker_recovery.sh).
 # Uses only the deterministic 'fake' provider (missing_marker / marker_artifacts
 # plan keys — see providers/fake.sh).
-#   tools/specrelay/test/marker_recovery_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -43,7 +42,7 @@ specrelay_test::assert_contains "ACCEPT recovery: reports success without repeat
   "$out1" "the full review was NOT repeated"
 n_reviewer_rounds1="$(printf '%s\n' "$out1" | grep -c '\[fake-reviewer\] round')"
 specrelay_test::assert_eq "ACCEPT recovery: reviewer:fake ran exactly once (not repeated)" "1" "$n_reviewer_rounds1"
-state1="$proj1/.ai-runs/tasks/0001-accept-recovery/state.json"
+state1="$proj1/.specrelay-runs/tasks/0001-accept-recovery/state.json"
 specrelay_test::assert_contains "ACCEPT recovery: state.json reflects acceptance" \
   "$(cat "$state1")" "READY_FOR_HUMAN_REVIEW"
 
@@ -73,9 +72,9 @@ proj3="$(specrelay_test::mktemp_specrelay_project)"
 specrelay_test::_new_task "$proj3" "0003-narrow-prompt"
 plan3="$(specrelay_test::_plan "decision=missing_marker,marker_artifacts=accept")"
 (cd "$proj3" && SPECRELAY_FAKE_REVIEWER_PLAN="$plan3" "$SPECRELAY_BIN" resume 0003-narrow-prompt >/dev/null 2>&1)
-recovery_stdout="$(cat "$proj3/.ai-runs/tasks/0003-narrow-prompt/21-marker-recovery-stdout.txt" 2>/dev/null)"
+recovery_stdout="$(cat "$proj3/.specrelay-runs/tasks/0003-narrow-prompt/21-marker-recovery-stdout.txt" 2>/dev/null)"
 specrelay_test::assert_true "corrective attempt wrote its own capture file" \
-  "$([ -s "$proj3/.ai-runs/tasks/0003-narrow-prompt/21-marker-recovery-stdout.txt" ] && echo 0 || echo 1)"
+  "$([ -s "$proj3/.specrelay-runs/tasks/0003-narrow-prompt/21-marker-recovery-stdout.txt" ] && echo 0 || echo 1)"
 prompt_ref="$(printf '%s\n' "$recovery_stdout" | sed -n 's/^\[fake-reviewer-recovery\] prompt file: //p')"
 if [ -n "$prompt_ref" ] && [ -f "$prompt_ref" ]; then
   narrow_prompt="$(cat "$prompt_ref")"
@@ -106,7 +105,7 @@ specrelay_test::assert_contains "failed correction leaves the task in REVIEWER_R
   "$out4" "marker-only recovery failed"
 specrelay_test::assert_true "failed correction: exit is non-zero" \
   "$([ "$rc4" -ne 0 ] && echo 0 || echo 1)"
-state4="$proj4/.ai-runs/tasks/0004-recovery-fails/state.json"
+state4="$proj4/.specrelay-runs/tasks/0004-recovery-fails/state.json"
 specrelay_test::assert_contains "failed correction: state.json remains REVIEWER_RUNNING" \
   "$(cat "$state4")" "REVIEWER_RUNNING"
 specrelay_test::assert_not_contains "failed correction never fabricates acceptance" \
@@ -172,7 +171,7 @@ specrelay_test::assert_eq "eligibility: REQUEST_CHANGES WITH 11-next-executor-pr
 # =============================================================================
 # 9 — recovery is recorded in the timeline.
 # =============================================================================
-timeline_json1="$(cat "$proj1/.ai-runs/tasks/0001-accept-recovery/20-execution-timeline.json" 2>/dev/null)"
+timeline_json1="$(cat "$proj1/.specrelay-runs/tasks/0001-accept-recovery/20-execution-timeline.json" 2>/dev/null)"
 specrelay_test::assert_contains "timeline records the marker-recovery outcome" \
   "$timeline_json1" '"marker_recovery"'
 specrelay_test::assert_contains "timeline reports the recovery as successful" \

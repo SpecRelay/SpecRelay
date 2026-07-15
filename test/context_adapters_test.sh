@@ -66,7 +66,7 @@ write_cfg() {
     echo "specs:"
     echo "  root: docs/sdd"
     echo "tasks:"
-    echo "  runs_root: .ai-runs/tasks"
+    echo "  runs_root: .specrelay-runs/tasks"
     echo "  max_iterations: 3"
     echo "roles:"
     echo "  executor:"
@@ -87,7 +87,7 @@ mk_run_project() {
   local ctx="$1" slug="$2" exec_provider="${3:-fake}" rev_provider="${4:-fake}" proj
   proj="$(specrelay_test::mktemp_project)"
   write_cfg "$proj" "$ctx" "$exec_provider" "$rev_provider"
-  printf '.ai-runs/\n' > "$proj/.gitignore"
+  printf '.specrelay-runs/\n' > "$proj/.gitignore"
   mkdir -p "$proj/docs/sdd/$slug"
   printf '# fixture spec\n' > "$proj/docs/sdd/$slug/spec.md"
   (cd "$proj" && git add -A && git commit -q -m "fixture")
@@ -275,7 +275,7 @@ specrelay_test::assert_contains "2: a configured unknown adapter is marked not u
 p3="$(mk_run_project "context:
   adapter: context-pluss" 0015-badctx)"
 out3="$(cd "$p3" && "$SPECRELAY_BIN" run docs/sdd/0015-badctx/spec.md 2>&1)"; rc3=$?
-task3="$p3/.ai-runs/tasks/0015-badctx"
+task3="$p3/.specrelay-runs/tasks/0015-badctx"
 specrelay_test::assert_true "3a: run with an unknown adapter exits non-zero" \
   "$([ "$rc3" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_contains "3a: the error names the invalid executor adapter" \
@@ -291,7 +291,7 @@ p3b="$(mk_run_project "context:
   required: true" 0015-reqpre)"
 out3b="$(cd "$p3b" && SPECRELAY_FAKE_CONTEXT_PREFLIGHT=fail \
   "$SPECRELAY_BIN" run docs/sdd/0015-reqpre/spec.md 2>&1)"; rc3b=$?
-task3b="$p3b/.ai-runs/tasks/0015-reqpre"
+task3b="$p3b/.specrelay-runs/tasks/0015-reqpre"
 specrelay_test::assert_true "3b: required preflight failure exits non-zero" \
   "$([ "$rc3b" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_eq "3b: the task never entered EXECUTOR_RUNNING" \
@@ -306,7 +306,7 @@ p3c="$(mk_run_project "context:
     adapter: none
   reviewer:
     adapter: bogus-reviewer-adapter" 0015-badrev)"
-task3c="$p3c/.ai-runs/tasks/0015-badrevtask"
+task3c="$p3c/.specrelay-runs/tasks/0015-badrevtask"
 mkdir -p "$task3c"
 cat > "$task3c/state.json" <<'JSON'
 {
@@ -329,7 +329,7 @@ specrelay_test::assert_true "3c: the reviewer provider was never invoked" \
 p3d="$(mk_run_project "context:
   adapter: fake
   required: true" 0015-revpre)"
-task3d="$p3d/.ai-runs/tasks/0015-revpretask"
+task3d="$p3d/.specrelay-runs/tasks/0015-revpretask"
 mkdir -p "$task3d"
 cat > "$task3d/state.json" <<'JSON'
 {
@@ -355,7 +355,7 @@ p4="$(mk_run_project "context:
   required: false" 0015-optional)"
 out4="$(cd "$p4" && SPECRELAY_FAKE_CONTEXT_PREFLIGHT=fail \
   "$SPECRELAY_BIN" run docs/sdd/0015-optional/spec.md 2>&1)"; rc4=$?
-task4="$p4/.ai-runs/tasks/0015-optional"
+task4="$p4/.specrelay-runs/tasks/0015-optional"
 specrelay_test::assert_eq "4: optional context failure still reaches READY_FOR_HUMAN_REVIEW" "0" "$rc4"
 specrelay_test::assert_contains "4: degradation is logged honestly" \
   "$out4" "continuing without external context because required=false"
@@ -381,7 +381,7 @@ p5="$(mk_run_project "context:
   required: true" 0015-reqprep)"
 out5="$(cd "$p5" && SPECRELAY_FAKE_CONTEXT_PREPARE=fail \
   "$SPECRELAY_BIN" run docs/sdd/0015-reqprep/spec.md 2>&1)"; rc5=$?
-task5="$p5/.ai-runs/tasks/0015-reqprep"
+task5="$p5/.specrelay-runs/tasks/0015-reqprep"
 specrelay_test::assert_true "5a: required preparation failure exits non-zero" \
   "$([ "$rc5" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_eq "5a: the task never entered EXECUTOR_RUNNING" \
@@ -397,7 +397,7 @@ p5b="$(mk_run_project "context:
   required: true" 0015-missing)"
 out5b="$(cd "$p5b" && SPECRELAY_FAKE_CONTEXT_ARTIFACT=missing \
   "$SPECRELAY_BIN" run docs/sdd/0015-missing/spec.md 2>&1)"; rc5b=$?
-task5b="$p5b/.ai-runs/tasks/0015-missing"
+task5b="$p5b/.specrelay-runs/tasks/0015-missing"
 specrelay_test::assert_true "5b: missing required artifact exits non-zero" \
   "$([ "$rc5b" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_contains "5b: the error names the missing artifact" \
@@ -425,7 +425,7 @@ p6="$(mk_run_project "context:
   required: true" 0015-prep)"
 out6="$(cd "$p6" && FAKE_SECRET_TOKEN=super-secret-value-xyz \
   "$SPECRELAY_BIN" run docs/sdd/0015-prep/spec.md 2>&1)"; rc6=$?
-task6="$p6/.ai-runs/tasks/0015-prep"
+task6="$p6/.specrelay-runs/tasks/0015-prep"
 specrelay_test::assert_eq "6: prepared-context run reaches READY_FOR_HUMAN_REVIEW" "0" "$rc6"
 specrelay_test::assert_contains "6: the executor artifact was prepared role-specifically" \
   "$(cat "$task6/fake-context-executor.txt")" "role=executor"
@@ -434,9 +434,9 @@ specrelay_test::assert_contains "6: the reviewer artifact was prepared independe
 exec_inv6="$(cat "$task6/fake-executor-invocation.txt")"
 rev_inv6="$(cat "$task6/fake-reviewer-invocation.txt")"
 specrelay_test::assert_contains "6: the normalized handoff reached the executor invocation" \
-  "$exec_inv6" "context=file:.ai-runs/tasks/0015-prep/fake-context-executor.txt"
+  "$exec_inv6" "context=file:.specrelay-runs/tasks/0015-prep/fake-context-executor.txt"
 specrelay_test::assert_contains "6: the normalized handoff reached the reviewer invocation" \
-  "$rev_inv6" "context=file:.ai-runs/tasks/0015-prep/fake-context-reviewer.txt"
+  "$rev_inv6" "context=file:.specrelay-runs/tasks/0015-prep/fake-context-reviewer.txt"
 specrelay_test::assert_not_contains "6: executor context never leaked into the reviewer" \
   "$rev_inv6" "fake-context-executor"
 specrelay_test::assert_not_contains "6: reviewer context never leaked into the executor" \
@@ -450,7 +450,7 @@ p6b="$(mk_run_project "context:
   reviewer:
     adapter: none" 0015-mixed)"
 out6b="$(cd "$p6b" && "$SPECRELAY_BIN" run docs/sdd/0015-mixed/spec.md 2>&1)"; rc6b=$?
-task6b="$p6b/.ai-runs/tasks/0015-mixed"
+task6b="$p6b/.specrelay-runs/tasks/0015-mixed"
 specrelay_test::assert_eq "6: mixed-adapter run reaches READY_FOR_HUMAN_REVIEW" "0" "$rc6b"
 specrelay_test::assert_contains "6: the fake-adapter executor received its handoff" \
   "$(cat "$task6b/fake-executor-invocation.txt")" "context=file:"
@@ -469,11 +469,11 @@ specrelay_test::assert_eq "7: the executor preparation status is captured" \
 specrelay_test::assert_eq "7: the executor artifact kind is captured" \
   "file" "$(ctx_state "$task6" executor artifact_kind)"
 specrelay_test::assert_eq "7: the executor artifact reference is project-relative" \
-  ".ai-runs/tasks/0015-prep/fake-context-executor.txt" "$(ctx_state "$task6" executor artifact_reference)"
+  ".specrelay-runs/tasks/0015-prep/fake-context-executor.txt" "$(ctx_state "$task6" executor artifact_reference)"
 specrelay_test::assert_eq "7: the executor freshness report is captured" \
   "fresh" "$(ctx_state "$task6" executor freshness)"
 specrelay_test::assert_eq "7: the reviewer preparation is captured distinctly" \
-  ".ai-runs/tasks/0015-prep/fake-context-reviewer.txt" "$(ctx_state "$task6" reviewer artifact_reference)"
+  ".specrelay-runs/tasks/0015-prep/fake-context-reviewer.txt" "$(ctx_state "$task6" reviewer artifact_reference)"
 specrelay_test::assert_contains "7: executor context evidence file exists with metadata" \
   "$(cat "$task6/14-executor-context.json")" "\"role\": \"executor\""
 specrelay_test::assert_contains "7: reviewer context evidence file is distinct" \
@@ -486,7 +486,7 @@ specrelay_test::assert_not_contains "7: no secrets in context evidence" \
 # old task state (no context metadata) remains readable and displayable
 p7="$(specrelay_test::mktemp_project)"
 write_cfg "$p7" ""
-old_task="$p7/.ai-runs/tasks/0009-old"
+old_task="$p7/.specrelay-runs/tasks/0009-old"
 mkdir -p "$old_task"
 cat > "$old_task/state.json" <<'JSON'
 {
@@ -509,7 +509,7 @@ specrelay_test::assert_contains "7: old task context status reports not recorded
 p8="$(mk_run_project "context:
   adapter: fake
   required: false" 0015-resume)"
-task8="$p8/.ai-runs/tasks/0015-resume"
+task8="$p8/.specrelay-runs/tasks/0015-resume"
 plan8="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-plan.XXXXXX")/rev.txt"
 printf 'exit=1\n' > "$plan8"
 (cd "$p8" && SPECRELAY_FAKE_REVIEWER_PLAN="$plan8" \
@@ -522,7 +522,7 @@ write_cfg "$p8" "context:
 out8="$(cd "$p8" && "$SPECRELAY_BIN" resume 0015-resume 2>&1)"; rc8=$?
 specrelay_test::assert_eq "8a: resume reaches READY_FOR_HUMAN_REVIEW" "0" "$rc8"
 specrelay_test::assert_contains "8a: the resumed reviewer still used the CAPTURED fake adapter" \
-  "$(cat "$task8/fake-reviewer-invocation.txt")" "context=file:.ai-runs/tasks/0015-resume/fake-context-reviewer.txt"
+  "$(cat "$task8/fake-reviewer-invocation.txt")" "context=file:.specrelay-runs/tasks/0015-resume/fake-context-reviewer.txt"
 
 # 8b — a reusable artifact is reused across rounds (executor round 2).
 p8b="$(mk_run_project "context:
@@ -554,7 +554,7 @@ specrelay_test::assert_not_contains "8c: nothing was silently reused" \
 p8d="$(mk_run_project "context:
   adapter: fake
   required: true" 0015-gone)"
-task8d="$p8d/.ai-runs/tasks/0015-gone"
+task8d="$p8d/.specrelay-runs/tasks/0015-gone"
 plan8d="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-plan.XXXXXX")/rev.txt"
 printf 'exit=1\n' > "$plan8d"
 (cd "$p8d" && SPECRELAY_FAKE_REVIEWER_PLAN="$plan8d" \
@@ -569,7 +569,7 @@ specrelay_test::assert_contains "8d: the missing artifact triggered an explicit 
 p8e="$(mk_run_project "context:
   adapter: fake
   required: true" 0015-stale)"
-task8e="$p8e/.ai-runs/tasks/0015-stale"
+task8e="$p8e/.specrelay-runs/tasks/0015-stale"
 plan8e="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-plan.XXXXXX")/rev.txt"
 printf 'exit=1\n' > "$plan8e"
 (cd "$p8e" && SPECRELAY_FAKE_REVIEWER_PLAN="$plan8e" \
@@ -634,7 +634,7 @@ specrelay_test::assert_contains "9: task show reports the executor context statu
 specrelay_test::assert_contains "9: task show reports the reviewer context distinctly" \
   "$show9" "Reviewer context status: prepared"
 specrelay_test::assert_contains "9: task show reports the executor artifact" \
-  "$show9" "Executor context artifact: file:.ai-runs/tasks/0015-prep/fake-context-executor.txt"
+  "$show9" "Executor context artifact: file:.specrelay-runs/tasks/0015-prep/fake-context-executor.txt"
 
 # =============================================================================
 # 10 — compatibility: adapter 'none' preserves current behavior
@@ -643,7 +643,7 @@ p10="$(specrelay_test::mktemp_specrelay_project)"
 mkdir -p "$p10/docs/sdd/0015-none"
 echo "# none spec" > "$p10/docs/sdd/0015-none/spec.md"
 out10="$(cd "$p10" && "$SPECRELAY_BIN" run docs/sdd/0015-none/spec.md 2>&1)"; rc10=$?
-task10="$p10/.ai-runs/tasks/0015-none"
+task10="$p10/.specrelay-runs/tasks/0015-none"
 specrelay_test::assert_eq "10: an adapter-none run reaches READY_FOR_HUMAN_REVIEW" "0" "$rc10"
 specrelay_test::assert_contains "10: the none adapter announces no external context" \
   "$out10" "context: adapter 'none'; no external context requested"

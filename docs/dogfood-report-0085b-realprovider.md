@@ -1,5 +1,14 @@
 # SpecRelay Real-Provider Dogfood Report (SDD 0085B)
 
+> **Historical document.** This report documents historical real-provider
+> dogfood runs (SDD 0085B) against the former in-host SpecRelay architecture
+> (`tools/specrelay/` incubated inside a host repository, `.ai/scripts/`
+> compatibility shims, `.ai-runs/` task runtime). That architecture is no
+> longer a supported current product surface. See README.md and
+> docs/architecture.md for the current standalone architecture
+> (`bin/specrelay` / installed `specrelay`, `.specrelay/config.yml`,
+> `.specrelay-runs/`).
+
 Status: durable evidence capture for SDD 0085B, Section 9 (§9.4, §9.5, §9.6, §9.7).
 
 ## What this report is (and is not)

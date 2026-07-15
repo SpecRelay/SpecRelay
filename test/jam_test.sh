@@ -68,7 +68,7 @@ printf '# Spec\n\nNo external evidence here.\n' > "$proj/docs/sdd/0200-no-jam/sp
 (cd "$proj" && SPECRELAY_JAM_CLAUDE_BIN=/nonexistent "$SPECRELAY_BIN" task create docs/sdd/0200-no-jam >/tmp/specrelay-jam-out.$$ 2>&1)
 rc=$?
 specrelay_test::assert_true "a task with no Jam reference succeeds with no Jam configured" "$rc"
-ext_count="$(python3 -c "import json; print(len(json.load(open('$proj/.ai-runs/tasks/0200-no-jam/01-input-manifest.json'))['external_evidence']))")"
+ext_count="$(python3 -c "import json; print(len(json.load(open('$proj/.specrelay-runs/tasks/0200-no-jam/01-input-manifest.json'))['external_evidence']))")"
 specrelay_test::assert_eq "a task with no Jam reference records zero external evidence entries" "0" "$ext_count"
 
 # --- (33) general doctor reports Jam optional and not configured, no overall failure ---
@@ -100,20 +100,20 @@ rc=$?
 specrelay_test::assert_true "a Jam reference with no retrieval path available blocks task creation" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_contains "the block names the Jam requirement reason" "$err" "jam"
 specrelay_test::assert_true "a blocked Jam-referencing task leaves no task directory behind" \
-  "$([ ! -d "$proj2/.ai-runs/tasks/0201-jam-required" ] && echo 0 || echo 1)"
+  "$([ ! -d "$proj2/.specrelay-runs/tasks/0201-jam-required" ] && echo 0 || echo 1)"
 
 # --- happy path: fake retrieval adapter succeeds; task is created -----------
 (cd "$proj2" && SPECRELAY_JAM_CLAUDE_BIN=/nonexistent SPECRELAY_JAM_FAKE_RETRIEVE="$FAKE_JAM_SCRIPT" \
   "$SPECRELAY_BIN" task create docs/sdd/0201-jam-required >/tmp/specrelay-jam-out2.$$ 2>&1)
 rc=$?
 specrelay_test::assert_true "with a working retrieval adapter, the Jam-referencing task is created" "$rc"
-jam_dir="$proj2/.ai-runs/tasks/0201-jam-required/01-input-bundle/external/jam/xyz789"
+jam_dir="$proj2/.specrelay-runs/tasks/0201-jam-required/01-input-bundle/external/jam/xyz789"
 specrelay_test::assert_true "Jam snapshot directory exists at the canonical-id path" "$([ -d "$jam_dir" ] && echo 0 || echo 1)"
 
 # --- (38) referencing local files are recorded as provenance ---------------
 provenance="$(python3 -c "
 import json
-m = json.load(open('$proj2/.ai-runs/tasks/0201-jam-required/01-input-manifest.json'))
+m = json.load(open('$proj2/.specrelay-runs/tasks/0201-jam-required/01-input-manifest.json'))
 print(m['external_evidence'][0]['referencing_local_files'])
 ")"
 specrelay_test::assert_contains "manifest external_evidence records the referencing local file" "$provenance" "spec.md"
@@ -131,7 +131,7 @@ specrelay_test::assert_contains "console-logs (never provided by the fixture) is
 specrelay_test::assert_contains "network-requests (never provided by the fixture) is honestly reported missing" "$missing" "network-requests"
 
 # --- (45) resolved specification includes Jam-derived findings with provenance ---
-resolved_jam="$(cat "$proj2/.ai-runs/tasks/0201-jam-required/02-resolved-specification.md")"
+resolved_jam="$(cat "$proj2/.specrelay-runs/tasks/0201-jam-required/02-resolved-specification.md")"
 specrelay_test::assert_contains "resolved specification's External Evidence section cites the Jam canonical id" "$resolved_jam" "xyz789"
 specrelay_test::assert_contains "resolved specification's External Evidence section cites the Jam snapshot path" "$resolved_jam" "01-input-bundle/external/jam/xyz789"
 
@@ -161,11 +161,11 @@ EOF
 (cd "$proj4" && git add -A && git commit -q -m fixture)
 (cd "$proj4" && SPECRELAY_JAM_CLAUDE_BIN=/nonexistent SPECRELAY_JAM_FAKE_RETRIEVE="$FAKE_JAM_SCRIPT" \
   "$SPECRELAY_BIN" task create docs/sdd/0203-dup-jam >/tmp/specrelay-jam-out4.$$ 2>&1)
-ext_count4="$(python3 -c "import json; print(len(json.load(open('$proj4/.ai-runs/tasks/0203-dup-jam/01-input-manifest.json'))['external_evidence']))")"
+ext_count4="$(python3 -c "import json; print(len(json.load(open('$proj4/.specrelay-runs/tasks/0203-dup-jam/01-input-manifest.json'))['external_evidence']))")"
 specrelay_test::assert_eq "duplicate references to the same recording resolve to one canonical entry" "1" "$ext_count4"
 refs4="$(python3 -c "
 import json
-m = json.load(open('$proj4/.ai-runs/tasks/0203-dup-jam/01-input-manifest.json'))
+m = json.load(open('$proj4/.specrelay-runs/tasks/0203-dup-jam/01-input-manifest.json'))
 print(sorted(m['external_evidence'][0]['referencing_local_files']))
 ")"
 specrelay_test::assert_eq "the canonical entry retains provenance from BOTH referencing files" "['notes.md', 'spec.md']" "$refs4"
@@ -196,7 +196,7 @@ YAML
 (cd "$proj5" && SPECRELAY_JAM_CLAUDE_BIN=/nonexistent "$SPECRELAY_BIN" task create docs/sdd/0204-retrieval-command >/tmp/specrelay-jam-out5.$$ 2>&1)
 rc=$?
 specrelay_test::assert_true "jam.retrieval_command (config, not just the test-env hook) retrieves successfully" "$rc"
-status5="$(python3 -c "import json; print(json.load(open('$proj5/.ai-runs/tasks/0204-retrieval-command/01-input-bundle/external/jam/cfg001/reference.json'))['retrieval_status'])" 2>/dev/null)"
+status5="$(python3 -c "import json; print(json.load(open('$proj5/.specrelay-runs/tasks/0204-retrieval-command/01-input-bundle/external/jam/cfg001/reference.json'))['retrieval_status'])" 2>/dev/null)"
 specrelay_test::assert_eq "jam.retrieval_command retrieval is marked retrieved" "retrieved" "$status5"
 
 specrelay_test::summary

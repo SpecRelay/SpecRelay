@@ -2,7 +2,6 @@
 # execution_efficiency_config_test.sh — execution-efficiency policy
 # configuration parsing, validation, and durable capture (spec 0021,
 # "Configuration" / "Durable Effective Policy").
-#   tools/specrelay/test/execution_efficiency_config_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"

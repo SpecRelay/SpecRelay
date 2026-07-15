@@ -43,14 +43,14 @@ distinguishes an *interrupted* task is that the owning process is no longer
 alive. SpecRelay tracks the owner in a lock directory:
 
 ```
-.ai-runs/tasks/.specrelay-locks/<task-id>.lock/owner
+.specrelay-runs/tasks/.specrelay-locks/<task-id>.lock/owner
 ```
 
 That `owner` file records the holding process's `pid`, `host`, and
 `acquired_at`. Reading it is read-only and always safe:
 
 ```
-cat .ai-runs/tasks/.specrelay-locks/<task-id>.lock/owner
+cat .specrelay-runs/tasks/.specrelay-locks/<task-id>.lock/owner
 # pid=12345
 # host=<this-host>
 # acquired_at=2026-07-11T11:37:32Z
@@ -256,7 +256,7 @@ them.
 | Situation | Command |
 |---|---|
 | Check a task's state (read-only) | `specrelay show <task-ref>` |
-| Inspect the lock owner (read-only) | `cat .ai-runs/tasks/.specrelay-locks/<task-id>.lock/owner` |
+| Inspect the lock owner (read-only) | `cat .specrelay-runs/tasks/.specrelay-locks/<task-id>.lock/owner` |
 | Recover an interrupted `EXECUTOR_RUNNING` task | `specrelay task recover <task-ref> --reason "…"` |
 | Re-run an interrupted reviewer | `specrelay resume <task-ref>` |
 | Mark a task that cannot complete | `specrelay task block <task-ref> "<reason>"` |

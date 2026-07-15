@@ -3,7 +3,6 @@
 # subcommands (spec sections 14-16, 65): task create/show/status/list/
 # approve/requeue/accept/request-changes/block/authorize-submit, ambiguous
 # task lookup, and an unsupported provider configuration.
-#   tools/specrelay/test/cli_workflow_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -23,7 +22,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -67,7 +66,7 @@ show_out="$(cd "$proj" && "$SPECRELAY_BIN" task show 0001-cli-fixture 2>&1)"
 specrelay_test::assert_contains "task show prints the task id" "$show_out" "0001-cli-fixture"
 specrelay_test::assert_contains "task show prints the state" "$show_out" "READY_FOR_EXECUTOR"
 specrelay_test::assert_contains "task show prints the executor provider" "$show_out" "Executor provider: fake"
-specrelay_test::assert_contains "task show prints the task runtime path" "$show_out" ".ai-runs/tasks/0001-cli-fixture"
+specrelay_test::assert_contains "task show prints the task runtime path" "$show_out" ".specrelay-runs/tasks/0001-cli-fixture"
 
 # --- run one executor round via resume, then reviewer round via CLI ---------
 (cd "$proj" && "$SPECRELAY_BIN" resume 0001-cli-fixture >/dev/null 2>&1)
@@ -75,7 +74,7 @@ status_out="$(cd "$proj" && "$SPECRELAY_BIN" task status 0001-cli-fixture 2>&1)"
 specrelay_test::assert_contains "resume runs the executor and reaches READY_FOR_REVIEW" "$status_out" "READY_FOR_REVIEW"
 
 # --- task request-changes (manual reviewer path) ----------------------------
-task_dir="$proj/.ai-runs/tasks/0001-cli-fixture"
+task_dir="$proj/.specrelay-runs/tasks/0001-cli-fixture"
 printf 'manual reviewer notes\n' > "$task_dir/09-consultant-review.md"
 printf 'manual next prompt\n' > "$task_dir/11-next-executor-prompt.md"
 (cd "$proj" && "$SPECRELAY_BIN" task request-changes 0001-cli-fixture "please fix X" >/dev/null)
@@ -107,7 +106,7 @@ echo "# block fixture" > "$proj/docs/sdd/0002-block-fixture/spec.md"
 (cd "$proj" && git add -A && git commit -q -m "spec2")
 (cd "$proj" && "$SPECRELAY_BIN" task create docs/sdd/0002-block-fixture/spec.md >/dev/null)
 (cd "$proj" && "$SPECRELAY_BIN" task approve 0002-block-fixture >/dev/null)
-task_dir2="$proj/.ai-runs/tasks/0002-block-fixture"
+task_dir2="$proj/.specrelay-runs/tasks/0002-block-fixture"
 python3 - "$task_dir2/state.json" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -131,7 +130,7 @@ echo "# authsubmit fixture" > "$proj/docs/sdd/0003-authsubmit/spec.md"
 # resume already submits automatically via the orchestrator; force the task
 # back to EXECUTOR_RUNNING with required outputs present to test the manual
 # authorize-submit path directly.
-task_dir3="$proj/.ai-runs/tasks/0003-authsubmit"
+task_dir3="$proj/.specrelay-runs/tasks/0003-authsubmit"
 python3 - "$task_dir3/state.json" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -146,9 +145,9 @@ status_out="$(cd "$proj" && "$SPECRELAY_BIN" task status 0003-authsubmit 2>&1)"
 specrelay_test::assert_contains "task authorize-submit transitions to READY_FOR_REVIEW" "$status_out" "READY_FOR_REVIEW"
 
 # --- ambiguous / unknown task reference via CLI -----------------------------
-mkdir -p "$proj/.ai-runs/tasks/00aa-one" "$proj/.ai-runs/tasks/00aa-two"
-: > "$proj/.ai-runs/tasks/00aa-one/state.json"
-: > "$proj/.ai-runs/tasks/00aa-two/state.json"
+mkdir -p "$proj/.specrelay-runs/tasks/00aa-one" "$proj/.specrelay-runs/tasks/00aa-two"
+: > "$proj/.specrelay-runs/tasks/00aa-one/state.json"
+: > "$proj/.specrelay-runs/tasks/00aa-two/state.json"
 ambi_out="$(cd "$proj" && "$SPECRELAY_BIN" show 00aa 2>&1)"
 rc=$?
 specrelay_test::assert_true "show with an ambiguous ref exits non-zero" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
@@ -162,7 +161,7 @@ version: 1
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
 roles:
   executor:
     provider: not-a-real-provider

@@ -2,7 +2,6 @@
 # config_test.sh — tests for .specrelay/config.yml discovery, loading, and
 # error handling (missing / malformed config). Uses only temporary fixture
 # directories — never the real repository's .specrelay/config.yml.
-#   tools/specrelay/test/config_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -17,7 +16,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
 validation:
   full_test_command: bin/test
 YAML
@@ -32,7 +31,7 @@ specrelay_test::assert_contains "project inspect reads project.name" \
 specrelay_test::assert_contains "project inspect reads specs.root" \
   "$out" "Configured spec root: docs/sdd"
 specrelay_test::assert_contains "project inspect reads tasks.runs_root" \
-  "$out" "Configured task-run root: .ai-runs/tasks"
+  "$out" "Configured task-run root: .specrelay-runs/tasks"
 specrelay_test::assert_contains "project inspect reads validation.full_test_command" \
   "$out" "Configured validation command: bin/test"
 

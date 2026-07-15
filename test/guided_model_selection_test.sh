@@ -58,7 +58,7 @@ write_cfg() {
     echo "specs:"
     echo "  root: docs/sdd"
     echo "tasks:"
-    echo "  runs_root: .ai-runs/tasks"
+    echo "  runs_root: .specrelay-runs/tasks"
     echo "  max_iterations: 3"
     echo "roles:"
     echo "  executor:"
@@ -291,7 +291,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -318,7 +318,7 @@ out4="$(cd "$p4" && \
   SPECRELAY_FAKE_DECLARED_ALIASES="swift=fake-model-swift" \
   "$SPECRELAY_BIN" run docs/sdd/0014-forward/spec.md 2>&1)"
 rc4=$?
-task4="$p4/.ai-runs/tasks/0014-forward"
+task4="$p4/.specrelay-runs/tasks/0014-forward"
 specrelay_test::assert_eq "4: alias/id run reaches READY_FOR_HUMAN_REVIEW (exit 0)" "0" "$rc4"
 specrelay_test::assert_contains "4: RESOLVED alias reached the executor invocation" \
   "$(cat "$task4/fake-executor-invocation.txt")" "model=fake-model-swift"
@@ -364,7 +364,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -384,7 +384,7 @@ YAML
 (cd "$p5" && git add -A && git commit -q -m "alias config")
 mkdir -p "$p5/docs/sdd/0014-resume"
 echo "# resume spec" > "$p5/docs/sdd/0014-resume/spec.md"
-task5="$p5/.ai-runs/tasks/0014-resume"
+task5="$p5/.specrelay-runs/tasks/0014-resume"
 
 # Run 1: alias swift -> old-resolution; reviewer FAILS so the task stays open.
 plan5="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-plan.XXXXXX")/rev.txt"
@@ -420,7 +420,7 @@ specrelay_test::assert_eq "5: durable state still records the captured resolutio
 # readable and displayable.
 p5b="$(specrelay_test::mktemp_project)"
 write_cfg "$p5b" "" ""
-old_task_dir="$p5b/.ai-runs/tasks/0009-old"
+old_task_dir="$p5b/.specrelay-runs/tasks/0009-old"
 mkdir -p "$old_task_dir"
 cat > "$old_task_dir/state.json" <<'JSON'
 {
@@ -451,7 +451,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -475,7 +475,7 @@ out6="$(cd "$p6" && \
   SPECRELAY_FAKE_CAPABILITY_LEVEL=aliases SPECRELAY_FAKE_DECLARED_ALIASES="swift" \
   "$SPECRELAY_BIN" run docs/sdd/0014-badalias/spec.md 2>&1)"
 rc6=$?
-task6="$p6/.ai-runs/tasks/0014-badalias"
+task6="$p6/.specrelay-runs/tasks/0014-badalias"
 specrelay_test::assert_true "6a: run with an invalid alias exits non-zero" \
   "$([ "$rc6" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_contains "6a: the error names the invalid alias, role, provider" \
@@ -495,7 +495,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -513,7 +513,7 @@ policy:
   human_final_review_required: true
 YAML
 (cd "$p6b" && git add -A && git commit -q -m "invalid reviewer alias")
-task6b="$p6b/.ai-runs/tasks/0014-badrev"
+task6b="$p6b/.specrelay-runs/tasks/0014-badrev"
 mkdir -p "$task6b"
 cat > "$task6b/state.json" <<'JSON'
 {
@@ -661,7 +661,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -679,10 +679,10 @@ validation:
 policy:
   human_final_review_required: true
 YAML
-printf '.ai-runs/\n' > "$p8/.gitignore"
+printf '.specrelay-runs/\n' > "$p8/.gitignore"
 echo "# argv spec" > "$p8/docs/sdd/0014-argv/spec.md"
 (cd "$p8" && git add -A && git commit -q -m "argv fixture")
-task8="$p8/.ai-runs/tasks/0014-argv"
+task8="$p8/.specrelay-runs/tasks/0014-argv"
 argv_exec="$FAKE_CLI_DIR/exec-argv.log"
 argv_rev="$FAKE_CLI_DIR/rev-argv.log"
 
@@ -721,7 +721,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -738,10 +738,10 @@ validation:
 policy:
   human_final_review_required: true
 YAML
-printf '.ai-runs/\n' > "$p8b/.gitignore"
+printf '.specrelay-runs/\n' > "$p8b/.gitignore"
 echo "# raw id spec" > "$p8b/docs/sdd/0014-argv-id/spec.md"
 (cd "$p8b" && git add -A && git commit -q -m "raw id fixture")
-task8b="$p8b/.ai-runs/tasks/0014-argv-id"
+task8b="$p8b/.specrelay-runs/tasks/0014-argv-id"
 argv8b="$FAKE_CLI_DIR/id-argv.log"
 EXEC_WRAP_B="$FAKE_CLI_DIR/claude-id"
 cat > "$EXEC_WRAP_B" <<WRAP

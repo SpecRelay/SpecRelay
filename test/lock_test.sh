@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # lock_test.sh — unit tests for lock.sh: acquire/release, mutual exclusion,
 # and stale-lock reclaim after a crashed owner (spec sections 51, 63).
-#   tools/specrelay/test/lock_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"

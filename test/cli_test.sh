@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # cli_test.sh — tests for basic SpecRelay CLI behavior (version/help/unknown
 # command/project root/unimplemented commands). Run directly:
-#   tools/specrelay/test/cli_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"

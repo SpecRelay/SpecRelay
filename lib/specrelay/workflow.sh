@@ -4,9 +4,8 @@
 # This is the ONLY code that composes transitions + providers + context
 # adapters + locking into the full lifecycle. It owns the runner-owned
 # submit transition (mint -> submit -> cleanup) and the "specrelay run"
-# iteration loop, mirroring the legacy run-executor.sh / run-reviewer.sh /
-# run-workflow.sh / run-ai-loop.sh composition (see
-# docs/current-workflow-contract.md) as SpecRelay's own engine code.
+# iteration loop (see docs/current-workflow-contract.md) as SpecRelay's own
+# engine code.
 
 # --- project-policy accessors (never hardcoded — always read from config) --
 
@@ -2108,7 +2107,7 @@ specrelay::workflow::run() {
 
   case "$current" in
     DRAFT|WAITING_FOR_HUMAN)
-      specrelay::out::log "[specrelay] approving task '$task_id' (this 'specrelay run' invocation IS the human approval — see docs/engine-parity.md, 'Approval semantics')"
+      specrelay::out::log "[specrelay] approving task '$task_id' (this 'specrelay run' invocation IS the human approval — see docs/task-lifecycle.md, section 3)"
       specrelay::timeline::start "$task_dir" task_approval
       if ! specrelay::transitions::approve "$root" "$task_id"; then
         specrelay::timeline::finish "$task_dir" task_approval failed

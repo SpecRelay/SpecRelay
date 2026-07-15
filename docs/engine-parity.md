@@ -1,5 +1,20 @@
 # SpecRelay Engine Parity (SDD 0084, extended by SDD 0085)
 
+> **Historical document.** This is migration evidence from the SDD 0084/0085
+> transition away from the former in-host `.ai/` workflow engine
+> (`tools/specrelay/` incubated inside a host repository, `.ai/scripts/`
+> compatibility shims, `.ai-runs/` task runtime, `SPECRELAY_ENGINE=legacy`
+> rollback). The legacy side described throughout this document is historical
+> and no longer exists as a supported product surface; standalone SpecRelay
+> is the only current supported engine. The parity rows below are a record of
+> the equivalence/improvement proof done at migration time — they do not
+> represent a continuing compatibility promise, and several of the tests
+> cited as evidence (e.g. `rollback_test.sh`, `shim_loop_test.sh`,
+> `host_repo_safety_test.sh`, `engine_ownership_cases_test.sh`'s legacy-side
+> case) have since been removed as part of retiring that legacy surface (spec
+> 0024). See docs/task-lifecycle.md and docs/architecture.md for SpecRelay's
+> current, standalone behavior.
+
 This is the migration parity checklist required by SDD
 `0084-migrate-ai-workflow-engine-into-specrelay`. It compares the now-frozen,
 rollback-only legacy `.ai/` workflow (documented in

@@ -48,7 +48,7 @@ specrelay_test::assert_contains "scenario 1: reviewer stream carries the provide
   "$out1" "[reviewer:fake] [fake-reviewer] round 1"
 
 # Durable evidence: raw, complete, and NOT prefixed with the live scope.
-task1="$proj1/.ai-runs/tasks/0001-streaming"
+task1="$proj1/.specrelay-runs/tasks/0001-streaming"
 exec_cap="$(cat "$task1/12-executor-stdout.txt" 2>/dev/null)"
 rev_cap="$(cat "$task1/15-reviewer-stdout.txt" 2>/dev/null)"
 specrelay_test::assert_contains "scenario 1: executor evidence still holds the complete output" \
@@ -83,7 +83,7 @@ specrelay_test::assert_contains "scenario 2: the failing executor's output was s
   "$out2" "[executor:fake] [fake-executor] round 1"
 specrelay_test::assert_not_contains "scenario 2: streaming did not fake success" \
   "$out2" "reached READY_FOR_HUMAN_REVIEW"
-task2="$proj2/.ai-runs/tasks/0002-streaming-fail"
+task2="$proj2/.specrelay-runs/tasks/0002-streaming-fail"
 specrelay_test::assert_contains "scenario 2: task remained EXECUTOR_RUNNING (not submitted)" \
   "$(cat "$task2/state.json")" "EXECUTOR_RUNNING"
 

@@ -7,7 +7,6 @@
 # required. READY_FOR_REVIEW is an internal handoff state; the loop only rests
 # there for an explicit `manual` reviewer or a reviewer failure, and never
 # silently. Uses only the deterministic 'fake'/'manual' providers.
-#   tools/specrelay/test/reviewer_continuation_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -24,7 +23,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -71,7 +70,7 @@ specrelay_test::assert_eq "resume from READY_FOR_EXECUTOR (automated reviewer) e
 specrelay_test::assert_contains "resume runs the reviewer in the same invocation" "$out1" "reviewer:fake"
 specrelay_test::assert_contains "resume reaches READY_FOR_HUMAN_REVIEW in one invocation" \
   "$out1" "READY_FOR_HUMAN_REVIEW"
-state1="$proj1/.ai-runs/tasks/0001-resume-auto/state.json"
+state1="$proj1/.specrelay-runs/tasks/0001-resume-auto/state.json"
 specrelay_test::assert_contains "final state.json is READY_FOR_HUMAN_REVIEW" \
   "$(cat "$state1")" "READY_FOR_HUMAN_REVIEW"
 # #4: the single resume already reached the terminal state — it must NOT have
@@ -130,7 +129,7 @@ specrelay_test::assert_contains "manual stop tells the operator what to do next 
   "$out3" "specrelay task accept"
 specrelay_test::assert_contains "manual stop tells the operator what to do next (request-changes)" \
   "$out3" "specrelay task request-changes"
-state3="$proj3/.ai-runs/tasks/0003-resume-manual/state.json"
+state3="$proj3/.specrelay-runs/tasks/0003-resume-manual/state.json"
 specrelay_test::assert_contains "manual reviewer leaves the task at READY_FOR_REVIEW" \
   "$(cat "$state3")" "READY_FOR_REVIEW"
 
@@ -153,7 +152,7 @@ specrelay_test::assert_contains "reviewer failure is reported clearly with a rec
   "$out4" "automated reviewer failed"
 specrelay_test::assert_not_contains "reviewer failure never falsely accepts" \
   "$out4" "READY_FOR_HUMAN_REVIEW"
-state4="$proj4/.ai-runs/tasks/0004-resume-revfail/state.json"
+state4="$proj4/.specrelay-runs/tasks/0004-resume-revfail/state.json"
 specrelay_test::assert_contains "interrupted review remains in REVIEWER_RUNNING for recovery (spec 0011)" \
   "$(cat "$state4")" "REVIEWER_RUNNING"
 
@@ -173,7 +172,7 @@ specrelay_test::assert_eq "resume rework loop reaches acceptance (exit 0)" "0" "
 specrelay_test::assert_contains "resume rework requests changes in round 1" "$out5" "CHANGES_REQUESTED"
 specrelay_test::assert_contains "resume rework runs a second executor round" "$out5" "round 2"
 specrelay_test::assert_contains "resume rework reaches READY_FOR_HUMAN_REVIEW" "$out5" "READY_FOR_HUMAN_REVIEW"
-task_dir5="$proj5/.ai-runs/tasks/0005-resume-rework"
+task_dir5="$proj5/.specrelay-runs/tasks/0005-resume-rework"
 specrelay_test::assert_eq "resume rework: final iteration is 2" \
   "2" "$(grep -o '"iteration": [0-9]*' "$task_dir5/state.json" | grep -o '[0-9]*')"
 
@@ -194,7 +193,7 @@ printf 'exit=1\n' > "$plan6/reviewer-plan.txt"
 out6a="$(cd "$proj6" && SPECRELAY_FAKE_REVIEWER_PLAN="$plan6/reviewer-plan.txt" "$SPECRELAY_BIN" resume 0006-resume-revrunning 2>&1)"
 rc6a=$?
 specrelay_test::assert_eq "first resume (reviewer crash) exits 4" "4" "$rc6a"
-state6="$proj6/.ai-runs/tasks/0006-resume-revrunning/state.json"
+state6="$proj6/.specrelay-runs/tasks/0006-resume-revrunning/state.json"
 specrelay_test::assert_contains "crashed automated review is left in REVIEWER_RUNNING" \
   "$(cat "$state6")" "REVIEWER_RUNNING"
 

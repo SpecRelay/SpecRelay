@@ -60,7 +60,7 @@ write_fake_config() {
     echo "specs:"
     echo "  root: docs/sdd"
     echo "tasks:"
-    echo "  runs_root: .ai-runs/tasks"
+    echo "  runs_root: .specrelay-runs/tasks"
     echo "  max_iterations: 3"
     echo "roles:"
     echo "  executor:"
@@ -177,7 +177,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -203,7 +203,7 @@ specrelay_test::assert_true "2f: run with a malformed model exits non-zero" \
 specrelay_test::assert_contains "2f: run reports the invalid model configuration" \
   "$out2f" "invalid model configuration"
 specrelay_test::assert_true "2f: the fake executor never recorded an invocation" \
-  "$([ ! -f "$proj2f/.ai-runs/tasks/0012-bad-model/fake-executor-invocation.txt" ] && echo 0 || echo 1)"
+  "$([ ! -f "$proj2f/.specrelay-runs/tasks/0012-bad-model/fake-executor-invocation.txt" ] && echo 0 || echo 1)"
 
 # =============================================================================
 # 3 + 4 + 5 — effective state, forwarding evidence, logging (end-to-end fake)
@@ -216,7 +216,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -240,7 +240,7 @@ mkdir -p "$proj3/docs/sdd/0012-distinct"
 echo "# distinct-model spec" > "$proj3/docs/sdd/0012-distinct/spec.md"
 out3="$(cd "$proj3" && "$SPECRELAY_BIN" run docs/sdd/0012-distinct/spec.md 2>&1)"
 rc3=$?
-task3="$proj3/.ai-runs/tasks/0012-distinct"
+task3="$proj3/.specrelay-runs/tasks/0012-distinct"
 
 specrelay_test::assert_eq "3: distinct-model run reaches READY_FOR_HUMAN_REVIEW (exit 0)" "0" "$rc3"
 
@@ -278,7 +278,7 @@ proj3b="$(specrelay_test::mktemp_specrelay_project)"  # default fixture: no mode
 mkdir -p "$proj3b/docs/sdd/0012-default"
 echo "# default-model spec" > "$proj3b/docs/sdd/0012-default/spec.md"
 (cd "$proj3b" && "$SPECRELAY_BIN" run docs/sdd/0012-default/spec.md >/dev/null 2>&1)
-task3b="$proj3b/.ai-runs/tasks/0012-default"
+task3b="$proj3b/.specrelay-runs/tasks/0012-default"
 specrelay_test::assert_eq "3: no-model config stores executor model=provider-default" \
   "provider-default" "$(specrelay::state::get "$task3b/state.json" roles_effective | python3 -c 'import json,sys; print(json.load(sys.stdin)["executor"]["model"])')"
 specrelay_test::assert_contains "4: provider-default is forwarded to the fake executor as-is" \
@@ -306,7 +306,7 @@ specrelay_test::assert_contains "6: doctor marks the provider-default reviewer m
 # 7a — direct resolution: captured roles_effective is authoritative over config.
 proj7="$(specrelay_test::mktemp_project)"
 write_fake_config "$proj7" "model: model-A-exec" "model: model-A-rev"
-task7_dir="$proj7/.ai-runs/tasks/0012-resume"
+task7_dir="$proj7/.specrelay-runs/tasks/0012-resume"
 mkdir -p "$task7_dir"
 cat > "$task7_dir/state.json" <<'JSON'
 {
@@ -340,7 +340,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -360,7 +360,7 @@ YAML
 (cd "$proj7b" && git add -A && git commit -q -m "resume model A config")
 mkdir -p "$proj7b/docs/sdd/0012-resume-e2e"
 echo "# resume spec" > "$proj7b/docs/sdd/0012-resume-e2e/spec.md"
-task7b="$proj7b/.ai-runs/tasks/0012-resume-e2e"
+task7b="$proj7b/.specrelay-runs/tasks/0012-resume-e2e"
 
 # Run 1: executor succeeds (captures A), reviewer FAILS -> task REVIEWER_RUNNING.
 plan7b_run1="$(mktemp -d "${TMPDIR:-/tmp}/specrelay-plan.XXXXXX")/rev.txt"

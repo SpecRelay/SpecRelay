@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # verification_policy_test.sh — bounded verification policy configuration and
 # command classification (spec 0019, "Bounded Verification Policy").
-#   tools/specrelay/test/verification_policy_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -155,7 +154,7 @@ mkdir -p "$task_proj/docs/sdd/0001-verify-capture"
 echo "# spec" > "$task_proj/docs/sdd/0001-verify-capture/spec.md"
 (cd "$task_proj" && git add -A && git commit -q -m "spec")
 (cd "$task_proj" && "$SPECRELAY_BIN" run docs/sdd/0001-verify-capture/spec.md >/dev/null 2>&1)
-state_blob="$(cat "$task_proj/.ai-runs/tasks/0001-verify-capture/state.json")"
+state_blob="$(cat "$task_proj/.specrelay-runs/tasks/0001-verify-capture/state.json")"
 specrelay_test::assert_contains "task state.json durably captures the effective verification policy" \
   "$state_blob" "verification_policy_effective"
 specrelay_test::assert_contains "captured policy includes the executor limit" \

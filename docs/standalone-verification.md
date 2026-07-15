@@ -1,5 +1,14 @@
 # Standalone Verification Matrix
 
+> **Historical document.** This document records historical
+> standalone-extraction verification results (SDD 0086) captured against the
+> former in-host SpecRelay architecture (`tools/specrelay/` incubated inside a
+> host repository, `.ai/scripts/` compatibility shims, `.ai-runs/` task
+> runtime). That architecture is no longer a supported current product
+> surface. See README.md and docs/architecture.md for the current standalone
+> architecture (`bin/specrelay` / installed `specrelay`,
+> `.specrelay/config.yml`, `.specrelay-runs/`).
+
 This document records how each SpecRelay capability was verified across the
 environments that matter for standalone extraction (SDD 0086, section 65). It
 is evidence-based: a cell is `PASS` only where the capability was actually

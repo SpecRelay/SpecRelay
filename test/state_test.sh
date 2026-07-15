@@ -2,7 +2,6 @@
 # state_test.sh — unit tests for state.sh / py/state_lib.py: state parsing,
 # atomic init/transition, legacy-alias normalization, allowed vs forbidden
 # transitions.
-#   tools/specrelay/test/state_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -12,7 +11,7 @@
 . "$SPECRELAY_ROOT/lib/specrelay/state.sh"
 
 proj="$(specrelay_test::mktemp_project)"
-task_dir="$proj/.ai-runs/tasks/0001-fixture"
+task_dir="$proj/.specrelay-runs/tasks/0001-fixture"
 mkdir -p "$task_dir"
 state_file="$(specrelay::state::path "$task_dir")"
 
@@ -32,7 +31,7 @@ rm -f /tmp/specrelay-init-again.$$
 specrelay_test::assert_eq "normalize passes through a canonical state" "READY_FOR_REVIEW" "$(specrelay::state::normalize "READY_FOR_REVIEW")"
 specrelay_test::assert_eq "normalize maps the legacy alias" "READY_FOR_REVIEW" "$(specrelay::state::normalize "READY_FOR_CODEX_REVIEW")"
 
-legacy_dir="$proj/.ai-runs/tasks/0002-legacy"
+legacy_dir="$proj/.specrelay-runs/tasks/0002-legacy"
 mkdir -p "$legacy_dir"
 legacy_state="$(specrelay::state::path "$legacy_dir")"
 specrelay::state::init "$legacy_state" '{"task_id": "0002-legacy", "state": "READY_FOR_CODEX_REVIEW"}' >/dev/null
@@ -59,7 +58,7 @@ rc=$?
 specrelay_test::assert_eq "transition allowed-list matches a legacy-aliased current state" "0" "$rc"
 
 # --- invalid JSON is refused clearly --------------------------------------
-bad_state_dir="$proj/.ai-runs/tasks/0003-bad"
+bad_state_dir="$proj/.specrelay-runs/tasks/0003-bad"
 mkdir -p "$bad_state_dir"
 bad_state="$(specrelay::state::path "$bad_state_dir")"
 printf 'not valid json' > "$bad_state"

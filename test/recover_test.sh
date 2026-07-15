@@ -12,7 +12,6 @@
 #        by lock_test.sh — this adds the missing foreign-host guard case).
 #   plus: refuses a task owned by another engine (respects _require_owned),
 #         and refuses an unsupported source state (never fabricates success).
-#   tools/specrelay/test/recover_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -37,7 +36,7 @@ THIS_HOST="$(hostname 2>/dev/null || echo unknown-host)"
 # evidence files that recovery must preserve.
 _make_running_task() {
   local proj="$1" id="$2" dir
-  dir="$proj/.ai-runs/tasks/$id"
+  dir="$proj/.specrelay-runs/tasks/$id"
   mkdir -p "$dir"
   specrelay::state::init "$(specrelay::state::path "$dir")" \
     "{\"task_id\": \"$id\", \"state\": \"EXECUTOR_RUNNING\", \"engine\": \"specrelay\", \"iteration\": 1, \"claimed_at\": \"2026-01-01T00:00:00Z\", \"claimed_by\": \"specrelay-runner\"}" >/dev/null
@@ -136,7 +135,7 @@ specrelay_test::assert_true "8.5: the foreign-host lock was not force-removed" "
 
 # ---- guard: refuse a task owned by another engine (respects _require_owned)
 proj5="$(specrelay_test::mktemp_specrelay_project)"
-dir5="$proj5/.ai-runs/tasks/0504-legacy-owned"
+dir5="$proj5/.specrelay-runs/tasks/0504-legacy-owned"
 mkdir -p "$dir5"
 # No engine field == not owned by SpecRelay.
 specrelay::state::init "$(specrelay::state::path "$dir5")" \
@@ -148,7 +147,7 @@ specrelay_test::assert_contains "guard: refusal names the ownership reason" "$ou
 
 # ---- guard: refuse an unsupported source state (never fabricate success) ---
 proj6="$(specrelay_test::mktemp_specrelay_project)"
-dir6="$proj6/.ai-runs/tasks/0505-not-running"
+dir6="$proj6/.specrelay-runs/tasks/0505-not-running"
 mkdir -p "$dir6"
 specrelay::state::init "$(specrelay::state::path "$dir6")" \
   '{"task_id": "0505-not-running", "state": "READY_FOR_HUMAN_REVIEW", "engine": "specrelay", "iteration": 1}'

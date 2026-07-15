@@ -3,7 +3,6 @@
 # capture, including untracked (new) files showing up as full additions
 # (spec section 29) and the intent-to-add/reset dance never leaving files
 # staged afterward.
-#   tools/specrelay/test/evidence_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -13,14 +12,14 @@
 . "$SPECRELAY_ROOT/lib/specrelay/evidence.sh"
 
 proj="$(specrelay_test::mktemp_project)"
-task_dir="$proj/.ai-runs/tasks/0001-fixture"
+task_dir="$proj/.specrelay-runs/tasks/0001-fixture"
 mkdir -p "$task_dir"
 
 # Gitignore the task-runs root, matching this repository's real .gitignore
-# (.ai-runs/) — otherwise the task folder's OWN evidence files would show up
+# (.specrelay-runs/) — otherwise the task folder's OWN evidence files would show up
 # as "changes" in the very evidence they are capturing (a fixture artifact,
 # not a real production concern).
-printf '.ai-runs/\n' > "$proj/.gitignore"
+printf '.specrelay-runs/\n' > "$proj/.gitignore"
 
 # Baseline commit so there is a tracked file to modify.
 echo "line one" > "$proj/tracked.txt"
@@ -58,9 +57,9 @@ specrelay_test::assert_contains "the new file is restored to untracked (??) afte
 
 # --- clean tree: evidence files exist but are empty -------------------------
 clean_proj="$(specrelay_test::mktemp_project)"
-clean_task_dir="$clean_proj/.ai-runs/tasks/0002-clean"
+clean_task_dir="$clean_proj/.specrelay-runs/tasks/0002-clean"
 mkdir -p "$clean_task_dir"
-printf '.ai-runs/\n' > "$clean_proj/.gitignore"
+printf '.specrelay-runs/\n' > "$clean_proj/.gitignore"
 echo "content" > "$clean_proj/committed.txt"
 (cd "$clean_proj" && git add .gitignore committed.txt && git commit -q -m "seed")
 

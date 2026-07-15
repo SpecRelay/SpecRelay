@@ -2,7 +2,6 @@
 # task_timeline_cli_test.sh — `specrelay task timeline` inspection command and
 # `task show` timeline summary integration (spec 0019, "CLI Inspection" /
 # "Task Show Integration"). Read-only: never mutates task files.
-#   tools/specrelay/test/task_timeline_cli_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -51,7 +50,7 @@ specrelay_test::assert_contains "task timeline for an unknown task reports no ma
 # =============================================================================
 # A legacy task without timeline data remains inspectable.
 # =============================================================================
-legacy_dir="$proj/.ai-runs/tasks/0002-legacy-notimeline"
+legacy_dir="$proj/.specrelay-runs/tasks/0002-legacy-notimeline"
 mkdir -p "$legacy_dir"
 cat > "$legacy_dir/state.json" <<'JSON'
 {"task_id": "0002-legacy-notimeline", "state": "READY_FOR_HUMAN_REVIEW", "engine": "specrelay", "schema_version": 1}
@@ -82,8 +81,8 @@ specrelay_test::assert_contains "task show points at the timeline JSON path" "$s
 # Read-only commands never mutate task files: task timeline / task show must
 # not change the derived timeline JSON's mtime or the state.json's content.
 # =============================================================================
-timeline_path="$proj/.ai-runs/tasks/0001-cli-timeline/20-execution-timeline.json"
-state_path="$proj/.ai-runs/tasks/0001-cli-timeline/state.json"
+timeline_path="$proj/.specrelay-runs/tasks/0001-cli-timeline/20-execution-timeline.json"
+state_path="$proj/.specrelay-runs/tasks/0001-cli-timeline/state.json"
 before_mtime="$(stat -f %m "$timeline_path" 2>/dev/null || stat -c %Y "$timeline_path")"
 before_state="$(cat "$state_path")"
 (cd "$proj" && "$SPECRELAY_BIN" task timeline 0001-cli-timeline >/dev/null 2>&1)

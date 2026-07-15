@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # state.sh — thin bash wrapper around py/state_lib.py (SpecRelay's own,
-# independent task-state module — see that file's docstring for why this is
-# not a re-use of .ai/scripts/internal/lib/ai_state.py).
+# independent task-state module — see that file's docstring for its design
+# rationale).
 #
 # Every function below shells out to state_lib.py with plain positional
 # arguments (never interpolated into a python source string), so untrusted

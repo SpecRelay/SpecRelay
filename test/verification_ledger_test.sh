@@ -2,7 +2,6 @@
 # verification_ledger_test.sh — verification ledger: classification, count
 # and duration aggregation, role separation, and duplicate-work detection
 # (spec 0019, "D. Execution Timeline" / "Verification Ledger").
-#   tools/specrelay/test/verification_ledger_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"

@@ -119,12 +119,6 @@ specrelay_test::assert_eq "discovers exactly the *_test.sh files (helpers exclud
 order="$(printf '%s\n' "$out" | awk -F'=== | ===' '/^=== /{print $2}' | tr '\n' ',')"
 specrelay_test::assert_eq "discovery order is deterministic (sorted)" "aaa_test.sh,bbb_test.sh,ccc_test.sh," "$order"
 
-# host-integration names stay skipped and visible
-fx2="$(mk_tmp)"; add_test "$fx2" aaa_test.sh; add_test "$fx2" rollback_test.sh
-out="$(run_rt "$fx2" "$cache" 2>/dev/null)"; rc=$?
-specrelay_test::assert_eq "host-integration name is skipped (1 file runs)" "1" "$(printf '%s\n' "$out" | awk '/^Test files:/{print $3}')"
-specrelay_test::assert_contains "skipped host-integration list is visible" "$out" "rollback_test.sh"
-
 # explicit selection + order
 out="$(run_rt "$fx" "$cache" "$fx/bbb_test.sh" "$fx/aaa_test.sh" 2>/dev/null)"
 order="$(printf '%s\n' "$out" | awk -F'=== | ===' '/^=== /{print $2}' | tr '\n' ',')"

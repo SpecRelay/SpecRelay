@@ -10,7 +10,6 @@
 #   * a non-integer schema_version is refused clearly;
 #   * read-only inspection (task show) is NEVER blocked by the guard and
 #     surfaces the recorded schema version.
-#   tools/specrelay/test/schema_compat_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -78,7 +77,7 @@ specrelay_test::assert_contains "non-integer refusal is clear" "$out" "unreadabl
 
 # --- read-only inspection is NEVER blocked by the schema guard -------------
 sr_proj="$(specrelay_test::mktemp_specrelay_project)"
-show_dir="$sr_proj/.ai-runs/tasks/0050-future-schema"
+show_dir="$sr_proj/.specrelay-runs/tasks/0050-future-schema"
 mkdir -p "$show_dir"
 cat > "$show_dir/state.json" <<'JSON'
 {

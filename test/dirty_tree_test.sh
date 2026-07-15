@@ -4,7 +4,6 @@
 # the real CLI with the deterministic 'fake' provider. This is the
 # acceptance test for the fix to the legacy workflow's known limitation
 # (docs/current-workflow-contract.md, section 9).
-#   tools/specrelay/test/dirty_tree_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -71,7 +70,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -94,7 +93,7 @@ echo "# Case 3 spec" > "$proj3/docs/sdd/0003-case3/spec.md"
 # READY_FOR_REVIEW), then enact request-changes via the CLI to reach
 # CHANGES_REQUESTED so we can inject an external change before continuing.
 (cd "$proj3" && "$SPECRELAY_BIN" run docs/sdd/0003-case3/spec.md >/dev/null 2>&1)
-task_dir3="$proj3/.ai-runs/tasks/0003-case3"
+task_dir3="$proj3/.specrelay-runs/tasks/0003-case3"
 printf 'manual reviewer notes\n' > "$task_dir3/09-consultant-review.md"
 printf 'manual next prompt\n' > "$task_dir3/11-next-executor-prompt.md"
 (cd "$proj3" && "$SPECRELAY_BIN" task request-changes 0003-case3 "please fix X" >/dev/null 2>&1)

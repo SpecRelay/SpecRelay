@@ -2,7 +2,6 @@
 # reviewer_policy_template_test.sh — Reviewer Policy v2 template + plain
 # reviewer prompt contract (spec 0019, "B. Reviewer Policy v2" / "Reviewer
 # Prompt Contract"). Deterministic; needs no real Claude.
-#   tools/specrelay/test/reviewer_policy_template_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"

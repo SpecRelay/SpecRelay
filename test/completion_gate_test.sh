@@ -16,7 +16,6 @@
 #   * disabling unresolved_wait_is_failure never blocks completion;
 #   * Reviewer ACCEPT/REQUEST_CHANGES with required artifacts still pass
 #     through the gate unchanged (spec 0019 rules remain authoritative).
-#   tools/specrelay/test/completion_gate_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -68,7 +67,7 @@ for artifact in 03-executor-log.md 07-tests.txt 08-executor-summary.md; do
   specrelay_test::assert_contains "B ($artifact): never falsely reaches READY_FOR_HUMAN_REVIEW" \
     "$(printf '%s\n' "$out_b" | grep -c 'reached READY_FOR_HUMAN_REVIEW')" "0"
 
-  task_dir_b="$proj_b/.ai-runs/tasks/0002-$slug"
+  task_dir_b="$proj_b/.specrelay-runs/tasks/0002-$slug"
   specrelay_test::assert_contains "B ($artifact): task remains EXECUTOR_RUNNING" \
     "$(cat "$task_dir_b/state.json")" "EXECUTOR_RUNNING"
   specrelay_test::assert_contains "B ($artifact): efficiency artifact records the gate failure reason" \
@@ -113,7 +112,7 @@ out_d="$(SPECRELAY_FAKE_EXECUTOR_PLAN="$plan_dir_d/exec-plan.txt" \
   specrelay_test::run "$proj_d" "docs/sdd/0004-exec-wait/spec.md" 2>&1)"
 specrelay_test::assert_contains "D: Executor Result card says INCOMPLETE for unresolved waiting" "$out_d" "INCOMPLETE"
 specrelay_test::assert_contains "D: names the unresolved-work reason" "$out_d" "declared background work"
-task_dir_d="$proj_d/.ai-runs/tasks/0004-exec-wait"
+task_dir_d="$proj_d/.specrelay-runs/tasks/0004-exec-wait"
 specrelay_test::assert_contains "D: task remains EXECUTOR_RUNNING" \
   "$(cat "$task_dir_d/state.json")" "EXECUTOR_RUNNING"
 

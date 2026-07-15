@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# legacy_compat_test.sh — SpecRelay must be able to INSPECT tasks created by
-# the legacy .ai/ workflow (accepted, changes-requested, multi-iteration)
+# legacy_compat_test.sh — SpecRelay must be able to INSPECT tasks that carry
+# no "engine" field (e.g. created before engine-ownership tracking existed, or
+# by an external tool) — accepted, changes-requested, multi-iteration —
 # without mutating them, and must REFUSE to mutate them (spec sections 48-50,
-# 64). Fixtures below mirror the real shape documented in
-# tools/specrelay/docs/current-workflow-contract.md (state.json fields,
-# canonical states, legacy READY_FOR_CODEX_REVIEW alias) without embedding
-# any real project data — never the real repository's own .ai-runs/ tasks.
-#   tools/specrelay/test/legacy_compat_test.sh
+# 64). Fixtures below mirror the documented state.json fields, canonical
+# states, and the legacy READY_FOR_CODEX_REVIEW state-name alias, without
+# embedding any real project data — never the real repository's own
+# .specrelay-runs/ tasks.
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
 
 proj="$(specrelay_test::mktemp_specrelay_project)"
-tasks_dir="$proj/.ai-runs/tasks"
+tasks_dir="$proj/.specrelay-runs/tasks"
 
 # --- fixture 1: an accepted legacy task (READY_FOR_HUMAN_REVIEW) ------------
 accepted_dir="$tasks_dir/0040-legacy-accepted"
@@ -90,7 +90,7 @@ echo "round 1 prompt (backed up)" > "$multi_dir/02-executor-prompt.before-requeu
 # fixture file changed. `ls -ld` (first 10 columns = the mode string), `wc -c`,
 # and `cksum` are all POSIX and identical on both platforms.
 snapshot() {
-  (cd "$proj" && find .ai-runs -type f -exec sh -c '
+  (cd "$proj" && find .specrelay-runs -type f -exec sh -c '
       for f; do
         mode=$(ls -ld "$f" | cut -c1-10)
         size=$(wc -c < "$f" | tr -d " ")

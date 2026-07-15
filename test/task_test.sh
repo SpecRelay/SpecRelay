@@ -2,7 +2,6 @@
 # task_test.sh — unit tests for task.sh: id derivation/validation, runs-root
 # resolution, spec-path resolution/safety, and ref lookup (exact / unique
 # numeric prefix / ambiguous).
-#   tools/specrelay/test/task_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -69,7 +68,7 @@ rm -rf "$outside"
 # --- resolve_ref: exact / unique prefix / ambiguous / not found -----------
 # NOTE: $proj has no .specrelay/config.yml, so runs_root resolves to the
 # GENERIC standalone default (.specrelay-runs/tasks), not the host's
-# .ai-runs/tasks. Using the generic default here keeps this standalone test
+# .specrelay-runs/tasks. Using the generic default here keeps this standalone test
 # free of host-repository path coupling (spec 0086, section 21).
 mkdir -p "$proj/.specrelay-runs/tasks/0084-migrate-ai-workflow-engine-into-specrelay"
 : > "$proj/.specrelay-runs/tasks/0084-migrate-ai-workflow-engine-into-specrelay/state.json"

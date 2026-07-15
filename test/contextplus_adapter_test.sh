@@ -174,7 +174,7 @@ write_cfg() {
     echo "specs:"
     echo "  root: docs/sdd"
     echo "tasks:"
-    echo "  runs_root: .ai-runs/tasks"
+    echo "  runs_root: .specrelay-runs/tasks"
     echo "  max_iterations: 3"
     echo "roles:"
     echo "  executor:"
@@ -194,7 +194,7 @@ mk_run_project() {
   local ctx="$1" slug="$2" exec_provider="${3:-fake}" rev_provider="${4:-manual}" proj
   proj="$(specrelay_test::mktemp_project)"
   write_cfg "$proj" "$ctx" "$exec_provider" "$rev_provider"
-  printf '.ai-runs/\n' > "$proj/.gitignore"
+  printf '.specrelay-runs/\n' > "$proj/.gitignore"
   mkdir -p "$proj/docs/sdd/$slug"
   printf '# fixture spec\n' > "$proj/docs/sdd/$slug/spec.md"
   (cd "$proj" && git add -A && git commit -q -m "fixture")
@@ -533,7 +533,7 @@ p9a="$(mk_run_project "context:
     required: true" 0018-noreg claude manual)"
 out9a="$(cd "$p9a" && SPECRELAY_CONTEXTPLUS_CLAUDE_BIN="$FAKE_CLAUDE" SPECRELAY_CLAUDE_BIN="$FAKE_CLAUDE" \
   FAKE_CLAUDE_MCP_LIST_OUTPUT="" "$SPECRELAY_BIN" run docs/sdd/0018-noreg/spec.md 2>&1)"; rc9a=$?
-task9a="$p9a/.ai-runs/tasks/0018-noreg"
+task9a="$p9a/.specrelay-runs/tasks/0018-noreg"
 specrelay_test::assert_true "9a: missing registration blocks the run" "$([ "$rc9a" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_eq "9a: the task never entered EXECUTOR_RUNNING" \
   "READY_FOR_EXECUTOR" "$(specrelay::state::get "$task9a/state.json" state)"
@@ -546,7 +546,7 @@ p9b="$(mk_run_project "context:
 out9b="$(cd "$p9b" && SPECRELAY_CONTEXTPLUS_CLAUDE_BIN="$FAKE_CLAUDE" SPECRELAY_CLAUDE_BIN="$FAKE_CLAUDE" \
   FAKE_CLAUDE_MCP_LIST_OUTPUT="$(mcp_out_registered_disconnected contextplus)" \
   "$SPECRELAY_BIN" run docs/sdd/0018-disc/spec.md 2>&1)"; rc9b=$?
-task9b="$p9b/.ai-runs/tasks/0018-disc"
+task9b="$p9b/.specrelay-runs/tasks/0018-disc"
 specrelay_test::assert_true "9b: a disconnected server blocks the run" "$([ "$rc9b" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_eq "9b: the task never entered EXECUTOR_RUNNING" \
   "READY_FOR_EXECUTOR" "$(specrelay::state::get "$task9b/state.json" state)"
@@ -559,7 +559,7 @@ p9c="$(mk_run_project "context:
 out9c="$(cd "$p9c" && SPECRELAY_CONTEXTPLUS_CLAUDE_BIN="$FAKE_CLAUDE" SPECRELAY_CLAUDE_BIN="$FAKE_CLAUDE" \
   FAKE_CLAUDE_MCP_LIST_OUTPUT="$(mcp_out_registered_connected contextplus)" \
   "$SPECRELAY_BIN" run docs/sdd/0018-cfginc/spec.md 2>&1)"; rc9c=$?
-task9c="$p9c/.ai-runs/tasks/0018-cfginc"
+task9c="$p9c/.specrelay-runs/tasks/0018-cfginc"
 specrelay_test::assert_true "9c: config-incomplete blocks the run" "$([ "$rc9c" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_eq "9c: the task never entered EXECUTOR_RUNNING" \
   "READY_FOR_EXECUTOR" "$(specrelay::state::get "$task9c/state.json" state)"
@@ -571,7 +571,7 @@ p9d="$(mk_run_project "context:
     required: false" 0018-optional fake manual)"
 out9d="$(cd "$p9d" && SPECRELAY_CONTEXTPLUS_CLAUDE_BIN="$FAKE_CLAUDE" \
   FAKE_CLAUDE_MCP_LIST_OUTPUT="" "$SPECRELAY_BIN" run docs/sdd/0018-optional/spec.md 2>&1)"; rc9d=$?
-task9d="$p9d/.ai-runs/tasks/0018-optional"
+task9d="$p9d/.specrelay-runs/tasks/0018-optional"
 # rc=2 is the documented "manual reviewer stops the automated loop for human
 # review" sentinel (see reviewer_continuation_test.sh) — not an error; the
 # executor itself ran to completion despite the degraded (optional) context.
@@ -589,7 +589,7 @@ specrelay_test::assert_true "9d: the fake executor WAS invoked (degraded, not bl
 # contextplus gate is already covered by 9a-9d above.
 p9e="$(mk_project)"
 write_mcp_json "$p9e" '{"mcpServers": {"contextplus": {"command": "node", "args": ["server.js"], "env": {"API_KEY": "'"$SECRET"'"}}, "other-server": {"command": "node", "args": ["other.js"], "env": {"OTHER_SECRET": "should-never-appear"}}}}'
-task9e="$p9e/.ai-runs/tasks/0018-ready"
+task9e="$p9e/.specrelay-runs/tasks/0018-ready"
 mkdir -p "$task9e"
 argv_log9e="$FAKE_DIR/argv9e.log"
 capture9e="$FAKE_DIR/captured-mcp-config-9e.json"

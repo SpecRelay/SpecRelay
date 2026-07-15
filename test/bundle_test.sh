@@ -22,7 +22,7 @@ printf '# File Spec\n\n## Objective\nDo the thing.\n' > "$proj/docs/sdd/0100-fil
 out="$(cd "$proj" && "$SPECRELAY_BIN" task create docs/sdd/0100-file/spec.md 2>&1)"
 rc=$?
 specrelay_test::assert_true "file input: task create succeeds" "$rc"
-task_dir="$proj/.ai-runs/tasks/0100-file"
+task_dir="$proj/.specrelay-runs/tasks/0100-file"
 specrelay_test::assert_true "file input: manifest exists" "$([ -f "$task_dir/01-input-manifest.json" ] && echo 0 || echo 1)"
 kind="$(python3 -c "import json; print(json.load(open('$task_dir/01-input-manifest.json'))['input_kind'])")"
 specrelay_test::assert_eq "file input: manifest records input_kind=file" "file" "$kind"
@@ -42,7 +42,7 @@ printf '{"a": 1}\n' > "$proj2/docs/sdd/0101-dir/evidence/sample.json"
 (cd "$proj2" && "$SPECRELAY_BIN" task create docs/sdd/0101-dir >/tmp/specrelay-bundle-out.$$ 2>&1)
 rc=$?
 specrelay_test::assert_true "directory input with spec.md + tech-spec.md succeeds" "$rc"
-tdir="$proj2/.ai-runs/tasks/0101-dir"
+tdir="$proj2/.specrelay-runs/tasks/0101-dir"
 tech="$(python3 -c "import json; print(json.load(open('$tdir/01-input-manifest.json'))['technical_specification_path'])")"
 specrelay_test::assert_eq "tech-spec.md is recognized as the technical specification" "tech-spec.md" "$tech"
 fcount="$(python3 -c "import json; print(json.load(open('$tdir/01-input-manifest.json'))['bundle_file_count'])")"
@@ -55,7 +55,7 @@ printf '# Spec\n' > "$proj3/docs/sdd/0102-underscore/spec.md"
 printf '# Tech\n' > "$proj3/docs/sdd/0102-underscore/tech_spec.md"
 (cd "$proj3" && git add -A && git commit -q -m fixture && "$SPECRELAY_BIN" task create docs/sdd/0102-underscore >/tmp/specrelay-bundle-out2.$$ 2>&1)
 rc=$?
-tech3="$(python3 -c "import json; print(json.load(open('$proj3/.ai-runs/tasks/0102-underscore/01-input-manifest.json'))['technical_specification_path'])" 2>/dev/null)"
+tech3="$(python3 -c "import json; print(json.load(open('$proj3/.specrelay-runs/tasks/0102-underscore/01-input-manifest.json'))['technical_specification_path'])" 2>/dev/null)"
 specrelay_test::assert_eq "tech_spec.md (underscore variant) is recognized" "tech_spec.md" "$tech3"
 
 # --- (5) both technical filename variants fail with ambiguity (6.2) --------
@@ -69,7 +69,7 @@ err="$(cd "$proj4" && "$SPECRELAY_BIN" task create docs/sdd/0103-ambiguous 2>&1 
 rc=$?
 specrelay_test::assert_true "both tech-spec.md and tech_spec.md fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_contains "ambiguity error names both filenames" "$err" "tech-spec.md and tech_spec.md"
-specrelay_test::assert_true "ambiguous bundle leaves no task directory behind" "$([ ! -d "$proj4/.ai-runs/tasks/0103-ambiguous" ] && echo 0 || echo 1)"
+specrelay_test::assert_true "ambiguous bundle leaves no task directory behind" "$([ ! -d "$proj4/.specrelay-runs/tasks/0103-ambiguous" ] && echo 0 || echo 1)"
 
 # --- (6) missing required spec.md fails under default policy (6.1) ---------
 proj5="$(specrelay_test::mktemp_specrelay_project)"
@@ -89,7 +89,7 @@ printf 'z\n' > "$proj6/docs/sdd/0105-nested/z.txt"
 printf 'b\n' > "$proj6/docs/sdd/0105-nested/b/file.txt"
 printf 'a\n' > "$proj6/docs/sdd/0105-nested/a/file.txt"
 (cd "$proj6" && git add -A && git commit -q -m fixture && "$SPECRELAY_BIN" task create docs/sdd/0105-nested >/tmp/specrelay-bundle-out3.$$ 2>&1)
-paths="$(python3 -c "import json; print(','.join(f['relative_path'] for f in json.load(open('$proj6/.ai-runs/tasks/0105-nested/01-input-manifest.json'))['files']))" 2>/dev/null)"
+paths="$(python3 -c "import json; print(','.join(f['relative_path'] for f in json.load(open('$proj6/.specrelay-runs/tasks/0105-nested/01-input-manifest.json'))['files']))" 2>/dev/null)"
 specrelay_test::assert_eq "nested files discovered in deterministic normalized-path order" "a/file.txt,b/file.txt,spec.md,z.txt" "$paths"
 
 # --- (9)-(12) local evidence appears in the manifest with the right role ---
@@ -103,7 +103,7 @@ printf '%%PDF-1.4 fake pdf content' > "$proj7/docs/sdd/0106-evidence/doc.pdf"
 (cd "$proj7" && git add -A && git commit -q -m fixture && "$SPECRELAY_BIN" task create docs/sdd/0106-evidence >/tmp/specrelay-bundle-out4.$$ 2>&1)
 roles="$(python3 -c "
 import json
-m = json.load(open('$proj7/.ai-runs/tasks/0106-evidence/01-input-manifest.json'))
+m = json.load(open('$proj7/.specrelay-runs/tasks/0106-evidence/01-input-manifest.json'))
 print({f['relative_path']: f['role'] for f in m['files']})
 " 2>/dev/null)"
 specrelay_test::assert_contains "log appears in manifest as log-or-trace" "$roles" "'app.log': 'log-or-trace'"
@@ -119,12 +119,12 @@ printf '\x00\x01\x02\x03binarydata' > "$proj8/docs/sdd/0107-binary/blob.bin"
 (cd "$proj8" && git add -A && git commit -q -m fixture && "$SPECRELAY_BIN" task create docs/sdd/0107-binary >/tmp/specrelay-bundle-out5.$$ 2>&1)
 bin_role="$(python3 -c "
 import json
-m = json.load(open('$proj8/.ai-runs/tasks/0107-binary/01-input-manifest.json'))
+m = json.load(open('$proj8/.specrelay-runs/tasks/0107-binary/01-input-manifest.json'))
 print(next(f['role'] for f in m['files'] if f['relative_path'] == 'blob.bin'))
 " 2>/dev/null)"
 bin_cap="$(python3 -c "
 import json
-m = json.load(open('$proj8/.ai-runs/tasks/0107-binary/01-input-manifest.json'))
+m = json.load(open('$proj8/.specrelay-runs/tasks/0107-binary/01-input-manifest.json'))
 print(next(f['inspection_capability'] for f in m['files'] if f['relative_path'] == 'blob.bin'))
 " 2>/dev/null)"
 specrelay_test::assert_eq "unsupported binary is classified unknown-binary" "unknown-binary" "$bin_role"
@@ -150,7 +150,7 @@ specrelay_test::assert_true "a broken symlink is rejected" "$([ "$rc" -ne 0 ] &&
 specrelay_test::assert_contains "broken-symlink error names the rejection" "$err" "broken symlink"
 rm -f "$proj9/docs/sdd/0108-symlinks/broken"
 (cd "$proj9" && git add -A && git commit -q -m fixture3 && "$SPECRELAY_BIN" task create docs/sdd/0108-symlinks >/tmp/specrelay-bundle-out6.$$ 2>&1)
-specrelay_test::assert_true "the same directory (now clean of symlinks) creates successfully" "$([ -d "$proj9/.ai-runs/tasks/0108-symlinks" ] && echo 0 || echo 1)"
+specrelay_test::assert_true "the same directory (now clean of symlinks) creates successfully" "$([ -d "$proj9/.specrelay-runs/tasks/0108-symlinks" ] && echo 0 || echo 1)"
 
 # --- (16) excluded directories are not captured -----------------------------
 proj10="$(specrelay_test::mktemp_specrelay_project)"
@@ -158,7 +158,7 @@ mkdir -p "$proj10/docs/sdd/0109-excluded/node_modules"
 printf '# Spec\n' > "$proj10/docs/sdd/0109-excluded/spec.md"
 printf 'noise\n' > "$proj10/docs/sdd/0109-excluded/node_modules/pkg.js"
 (cd "$proj10" && git add -A && git commit -q -m fixture && "$SPECRELAY_BIN" task create docs/sdd/0109-excluded >/tmp/specrelay-bundle-out7.$$ 2>&1)
-paths10="$(python3 -c "import json; print([f['relative_path'] for f in json.load(open('$proj10/.ai-runs/tasks/0109-excluded/01-input-manifest.json'))['files']])" 2>/dev/null)"
+paths10="$(python3 -c "import json; print([f['relative_path'] for f in json.load(open('$proj10/.specrelay-runs/tasks/0109-excluded/01-input-manifest.json'))['files']])" 2>/dev/null)"
 specrelay_test::assert_eq "node_modules/ is excluded from discovery" "['spec.md']" "$paths10"
 
 # --- (17)-(18) size / count limit violations fail clearly -------------------
@@ -177,7 +177,7 @@ rc=$?
 specrelay_test::assert_true "exceeding the configured file-count limit fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_contains "file-count-limit error reports the limit" "$err" "limit=2"
 specrelay_test::assert_true "a file-count-limit failure leaves no task directory (no partial ingestion)" \
-  "$([ ! -d "$proj11/.ai-runs/tasks/0110-limits" ] && echo 0 || echo 1)"
+  "$([ ! -d "$proj11/.specrelay-runs/tasks/0110-limits" ] && echo 0 || echo 1)"
 
 proj12="$(specrelay_test::mktemp_specrelay_project)"
 mkdir -p "$proj12/docs/sdd/0111-sizelimit"
@@ -194,23 +194,23 @@ specrelay_test::assert_true "exceeding the configured total-size limit fails" "$
 specrelay_test::assert_contains "size-limit error reports the limit" "$err" "limit=100"
 
 # --- (20)-(21) snapshot + manifest digests match ----------------------------
-snap="$proj7/.ai-runs/tasks/0106-evidence/01-input-bundle/local/app.log"
+snap="$proj7/.specrelay-runs/tasks/0106-evidence/01-input-bundle/local/app.log"
 specrelay_test::assert_true "local files are snapshotted beneath 01-input-bundle/local/" "$([ -f "$snap" ] && echo 0 || echo 1)"
 digest_match="$(python3 -c "
 import json, hashlib
-m = json.load(open('$proj7/.ai-runs/tasks/0106-evidence/01-input-manifest.json'))
+m = json.load(open('$proj7/.specrelay-runs/tasks/0106-evidence/01-input-manifest.json'))
 f = next(x for x in m['files'] if x['relative_path'] == 'app.log')
-h = hashlib.sha256(open('$proj7/.ai-runs/tasks/0106-evidence/' + f['snapshot_path'], 'rb').read()).hexdigest()
+h = hashlib.sha256(open('$proj7/.specrelay-runs/tasks/0106-evidence/' + f['snapshot_path'], 'rb').read()).hexdigest()
 print('match' if h == f['sha256'] else 'mismatch')
 ")"
 specrelay_test::assert_eq "manifest digest matches the recomputed snapshot digest" "match" "$digest_match"
-(cd "$proj7" && specrelay::bundle::verify_snapshot "$proj7/.ai-runs/tasks/0106-evidence")
+(cd "$proj7" && specrelay::bundle::verify_snapshot "$proj7/.specrelay-runs/tasks/0106-evidence")
 specrelay_test::assert_true "specrelay::bundle::verify_snapshot succeeds on a valid snapshot" "$?"
 
 # --- (22) modifying the live source after task creation does not affect resume (10.3) ---
 live_spec="$proj7/docs/sdd/0106-evidence/spec.md"
 printf '# Spec (MUTATED AFTER TASK CREATION)\n' > "$live_spec"
-snap_spec_content="$(cat "$proj7/.ai-runs/tasks/0106-evidence/01-input-bundle/local/spec.md")"
+snap_spec_content="$(cat "$proj7/.specrelay-runs/tasks/0106-evidence/01-input-bundle/local/spec.md")"
 specrelay_test::assert_not_contains "task-local snapshot is unaffected by a live-source edit after creation" \
   "$snap_spec_content" "MUTATED AFTER TASK CREATION"
 

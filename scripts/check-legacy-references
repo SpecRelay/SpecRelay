@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# scripts/check-legacy-references — automated regression gate (spec 0024,
+# section 25): fails if a forbidden legacy in-host reference (`.ai/scripts/`,
+# `tools/specrelay/`, `.ai-runs/`, named legacy scripts, compatibility/legacy
+# shim wording) reappears in a current executable, template, test, or current
+# documentation file.
+#
+# Usage:
+#   scripts/check-legacy-references            # scan this repository
+#   scripts/check-legacy-references --root DIR # scan a different root (tests)
+#
+# Exits 0 if every match found is inside the exact historical allowlist below,
+# non-zero (and prints every offending file) otherwise. This is a search gate,
+# not a semantic classifier: a new match in a file NOT on the allowlist always
+# fails, even if a human would judge it historical — the allowlist must be
+# updated deliberately, file by file, never by directory wildcard.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ "${1:-}" = "--root" ]; then
+  ROOT="$(cd "$2" && pwd)"
+fi
+
+SCAN_PATHS="README.md CHANGELOG.md bin lib templates test scripts install docs"
+
+# --- forbidden legacy reference patterns (spec 0024, section 20) -----------
+PATTERN_A='\.ai/scripts|tools/specrelay|start-spec-task\.sh|show-task\.sh|approve-task\.sh|run-ai-loop\.sh|authorize-submit\.sh|new-task\.sh'
+PATTERN_B='\.ai-runs|compatibility shim|legacy shim'
+
+# --- exact historical allowlist (spec 0024, section 35) --------------------
+# Every entry names one exact file and the reason it is allowed to keep a
+# legacy reference. No directory wildcards. A new, unclassified file with a
+# forbidden reference is never allowed by omission.
+ALLOWLIST="
+CHANGELOG.md|historical changelog entries describing past released versions
+docs/architecture.md|current doc's brief, clearly-labelled 'History' section names the former layout for context only, stating it is no longer supported
+docs/commands.md|current doc's migration pointer sentence names the former layout only to direct readers to docs/migration.md
+docs/configuration.md|current doc's runs_root example sentence cites a hypothetical prior workflow only as an illustration of why a project might override the default
+docs/current-workflow-contract.md|historical document: reverse-engineered spec of the former in-host engine, labelled historical at the top
+docs/dogfood-orchestration.md|historical document: SDD 0085B dogfood orchestration record, labelled historical at the top
+docs/dogfood-report-0085b-realprovider.md|historical document: SDD 0085B real-provider dogfood report, labelled historical at the top
+docs/dogfood-report.md|historical document: SDD 0085 dogfood report, labelled historical at the top
+docs/engine-parity.md|historical document: SDD 0084/0085 migration parity evidence, labelled historical at the top
+docs/extraction.md|historical document: extraction procedure record, labelled historical at the top
+docs/knowledge-boundaries.md|historical document: knowledge classification for the former architecture, labelled historical at the top
+docs/migration.md|current doc explicitly describing migration AWAY from the former layout (spec 0024, section 14.3)
+docs/specs/0001-establish-docs-specs-convention-and-scrub-standalone-docs/spec.md|historical accepted spec
+docs/specs/0005-clarify-ai-review-state-names-and-schema-compatibility/spec.md|historical accepted spec
+docs/specs/0007-release-ci-license-readiness/spec.md|historical accepted spec
+docs/specs/0008-public-installation-and-upgrade-readiness/spec.md|historical accepted spec
+docs/specs/0024-remove-obsolete-in-host-legacy-surfaces/spec.md|this specification
+docs/standalone-verification.md|historical document: standalone-extraction verification record, labelled historical at the top
+lib/specrelay/cli.sh|current CLI help text honestly describes the former layout as unsupported and points to docs/migration.md; no compatibility behavior
+scripts/check-legacy-references|this gate's own pattern/allowlist definitions necessarily name the forbidden strings
+scripts/smoke|asserts the ABSENCE of the legacy path as a smoke-test guarantee, not a dependency
+test/ai_reviewer_agent_test.sh|current regression test whose own assertions verify current docs do NOT reference the incubation path
+test/check_legacy_references_test.sh|this gate's own test fixtures necessarily name the forbidden strings to exercise pass/fail cases
+test/discovery_test.sh|fixture data for the current, supported 'workflow inspect' migration-diagnostic feature; never a runtime dependency
+test/fixtures/dogfood-0085/scenario-a/02-executor-prompt.md|historical fixture evidence cited by historical dogfood reports; not exercised by any current test
+test/fixtures/dogfood-0085/scenario-c/02-executor-prompt.md|historical fixture evidence cited by historical dogfood reports; not exercised by any current test
+test/fixtures/dogfood-0085/scenario-c/run1-interrupted-stdout.log|historical fixture evidence cited by historical dogfood reports; not exercised by any current test
+"
+
+is_allowlisted() {
+  local rel="$1" line
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    local path="${line%%|*}"
+    [ "$path" = "$rel" ] && return 0
+  done <<EOF
+$ALLOWLIST
+EOF
+  return 1
+}
+
+VIOLATIONS=""
+MATCHED_FILES="$( (cd "$ROOT" && grep -RIlE "$PATTERN_A|$PATTERN_B" $SCAN_PATHS 2>/dev/null) | LC_ALL=C sort -u)"
+
+while IFS= read -r rel; do
+  [ -z "$rel" ] && continue
+  if ! is_allowlisted "$rel"; then
+    VIOLATIONS="$VIOLATIONS
+$rel"
+  fi
+done <<EOF
+$MATCHED_FILES
+EOF
+
+if [ -n "$VIOLATIONS" ]; then
+  echo "check-legacy-references: forbidden legacy reference(s) found outside the historical allowlist:" >&2
+  printf '%s\n' "$VIOLATIONS" | sed '/^$/d' | while IFS= read -r f; do
+    echo "  $f" >&2
+    (cd "$ROOT" && grep -nE "$PATTERN_A|$PATTERN_B" "$f" 2>/dev/null | head -5 | sed 's/^/    /') >&2
+  done
+  exit 1
+fi
+
+echo "check-legacy-references: no forbidden legacy reference outside the historical allowlist."
+exit 0

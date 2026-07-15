@@ -3,7 +3,6 @@
 # the deterministic 'fake' executor/reviewer providers (spec section 60).
 # Drives the real CLI (bin/specrelay) against isolated temp git fixtures —
 # never the real Claude/Codex CLI, never this repository's own tasks.
-#   tools/specrelay/test/workflow_fake_provider_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -31,7 +30,7 @@ specrelay_test::assert_contains "scenario A: reaches READY_FOR_HUMAN_REVIEW" "$o
 specrelay_test::assert_contains "scenario A: automated reviewer enters REVIEWER_RUNNING" \
   "$out_a" "entering REVIEWER_RUNNING"
 
-state_a="$proj_a/.ai-runs/tasks/0001-scenario-a/state.json"
+state_a="$proj_a/.specrelay-runs/tasks/0001-scenario-a/state.json"
 specrelay_test::assert_contains "scenario A: state.json records READY_FOR_HUMAN_REVIEW" \
   "$(cat "$state_a")" "READY_FOR_HUMAN_REVIEW"
 
@@ -55,7 +54,7 @@ specrelay_test::assert_contains "scenario B: requests changes in round 1" "$out_
 specrelay_test::assert_contains "scenario B: runs a second executor round" "$out_b" "round 2"
 specrelay_test::assert_contains "scenario B: reaches READY_FOR_HUMAN_REVIEW" "$out_b" "READY_FOR_HUMAN_REVIEW"
 
-task_dir_b="$proj_b/.ai-runs/tasks/0002-scenario-b"
+task_dir_b="$proj_b/.specrelay-runs/tasks/0002-scenario-b"
 specrelay_test::assert_eq "scenario B: final iteration is 2" "2" "$(cat "$task_dir_b/state.json" | grep -o '"iteration": [0-9]*' | grep -o '[0-9]*')"
 specrelay_test::assert_contains "scenario B: round 1 evidence survives (archived, not overwritten)" \
   "$(cat "$task_dir_b/iterations/round-1/08-executor-summary.md" 2>/dev/null)" "round 1"
@@ -75,7 +74,7 @@ out_c="$(SPECRELAY_FAKE_EXECUTOR_PLAN="$plan_dir_c/exec-plan.txt" specrelay_test
 rc_c=$?
 specrelay_test::assert_true "scenario C: run exits non-zero on executor failure" "$([ "$rc_c" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_not_contains "scenario C: never falsely reaches READY_FOR_HUMAN_REVIEW" "$out_c" "reached READY_FOR_HUMAN_REVIEW"
-task_dir_c="$proj_c/.ai-runs/tasks/0003-scenario-c"
+task_dir_c="$proj_c/.specrelay-runs/tasks/0003-scenario-c"
 specrelay_test::assert_contains "scenario C: task remains EXECUTOR_RUNNING (not submitted)" \
   "$(cat "$task_dir_c/state.json")" "EXECUTOR_RUNNING"
 specrelay_test::assert_eq "scenario C: no READY_FOR_REVIEW submission was recorded" \
@@ -97,7 +96,7 @@ out_d="$(SPECRELAY_FAKE_REVIEWER_PLAN="$plan_dir_d/reviewer-plan.txt" specrelay_
 rc_d=$?
 specrelay_test::assert_true "scenario D: run exits non-zero on reviewer failure" "$([ "$rc_d" -ne 0 ] && echo 0 || echo 1)"
 specrelay_test::assert_not_contains "scenario D: never falsely accepts" "$out_d" "accepted -> READY_FOR_HUMAN_REVIEW"
-task_dir_d="$proj_d/.ai-runs/tasks/0004-scenario-d"
+task_dir_d="$proj_d/.specrelay-runs/tasks/0004-scenario-d"
 specrelay_test::assert_contains "scenario D: interrupted review remains REVIEWER_RUNNING (no false accept, no rollback)" \
   "$(cat "$task_dir_d/state.json")" "REVIEWER_RUNNING"
 
@@ -116,7 +115,7 @@ specrelay_test::assert_true "scenario E: run exits non-zero at the max-round lim
 specrelay_test::assert_contains "scenario E: reports the maximum-iterations outcome explicitly" \
   "$out_e" "maximum of 3 iteration(s)"
 specrelay_test::assert_not_contains "scenario E: never pretends acceptance" "$out_e" "READY_FOR_HUMAN_REVIEW"
-task_dir_e="$proj_e/.ai-runs/tasks/0005-scenario-e"
+task_dir_e="$proj_e/.specrelay-runs/tasks/0005-scenario-e"
 specrelay_test::assert_not_contains "scenario E: final state.json is not READY_FOR_HUMAN_REVIEW" \
   "$(cat "$task_dir_e/state.json")" "READY_FOR_HUMAN_REVIEW"
 specrelay_test::assert_contains "scenario E: all 3 rounds' evidence is archived" \
@@ -142,7 +141,7 @@ specrelay_test::assert_not_contains "scenario F: no duplicate-transition warning
   "$out_f" "Refusing to transition task in state 'READY_FOR_HUMAN_REVIEW'"
 specrelay_test::assert_contains "scenario F: reaches READY_FOR_HUMAN_REVIEW cleanly" \
   "$out_f" "reached READY_FOR_HUMAN_REVIEW"
-state_f="$proj_f/.ai-runs/tasks/0006-scenario-f/state.json"
+state_f="$proj_f/.specrelay-runs/tasks/0006-scenario-f/state.json"
 specrelay_test::assert_contains "scenario F: final state.json is READY_FOR_HUMAN_REVIEW" \
   "$(cat "$state_f")" "READY_FOR_HUMAN_REVIEW"
 
@@ -184,7 +183,7 @@ project:
 specs:
   root: docs/sdd
 tasks:
-  runs_root: .ai-runs/tasks
+  runs_root: .specrelay-runs/tasks
   max_iterations: 3
 roles:
   executor:
@@ -210,7 +209,7 @@ specrelay_test::assert_not_contains "scenario H: no duplicate-transition warning
   "$out_h" "Refusing to transition task in state"
 specrelay_test::assert_contains "scenario H: reports manual reviewer handoff" \
   "$out_h" "reviewer provider is 'manual'"
-state_h="$proj_h/.ai-runs/tasks/0008-scenario-h/state.json"
+state_h="$proj_h/.specrelay-runs/tasks/0008-scenario-h/state.json"
 specrelay_test::assert_contains "scenario H: task stays READY_FOR_REVIEW for a human" \
   "$(cat "$state_h")" "READY_FOR_REVIEW"
 

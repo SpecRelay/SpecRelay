@@ -2,14 +2,12 @@
 # task.sh — task identity, directory resolution, and lookup.
 #
 # A safe task id is a single path segment matching ^[A-Za-z0-9._-]+$ (no
-# slashes, whitespace, or shell metacharacters) — identical to the legacy
-# workflow's rule (see docs/current-workflow-contract.md, "Task identity"),
-# reimplemented here as SpecRelay's own validation rather than sourced from
-# .ai/.
+# slashes, whitespace, or shell metacharacters) — see
+# docs/current-workflow-contract.md, "Task identity".
 
 # specrelay::task::sanitize <raw-string>
 # Replaces any run of unsafe characters with a single hyphen and strips
-# leading/trailing hyphens. Mirrors the legacy start-spec-task.sh derivation.
+# leading/trailing hyphens.
 specrelay::task::sanitize() {
   printf '%s' "$1" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+//; s/-+$//'
 }
@@ -38,8 +36,7 @@ specrelay::task::id_from_spec_path() {
 # from .specrelay/config.yml). The generic default when no project config
 # sets it is `.specrelay-runs/tasks` (SpecRelay's provider-neutral public
 # default — see docs/configuration.md). A consumer project that keeps its
-# runtime evidence elsewhere (e.g. a repository migrating from a pre-existing
-# `.ai-runs/tasks` workflow) sets `tasks.runs_root` explicitly in its config.
+# runtime evidence elsewhere sets `tasks.runs_root` explicitly in its config.
 specrelay::task::runs_root() {
   local root="$1" configured="tasks.runs_root"
   local value=".specrelay-runs/tasks"

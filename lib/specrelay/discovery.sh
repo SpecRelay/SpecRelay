@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# discovery.sh — read-only filesystem discovery of the existing (legacy)
-# workflow implementation, for `specrelay workflow inspect`.
+# discovery.sh — read-only filesystem discovery of a former, no-longer-
+# supported in-host AI workflow, for `specrelay workflow inspect`. This
+# assists migration only: it never creates, modifies, or delegates to
+# anything it finds, and it never touches .specrelay-runs/ task state.
 #
 # Everything here is READ-ONLY: it only stats/lists paths under the project
-# root. It never creates, modifies, or deletes anything, and it never touches
-# .ai-runs/ task state.
+# root.
 #
-# Nothing here hardcodes ".ai" as the ONLY possible legacy workflow location:
-# callers pass the project root, and the well-known relative path checked is
-# documented as such (this repository's actual current workflow root, per
-# tools/specrelay/docs/current-workflow-contract.md). A future repository
-# incubating SpecRelay with a differently-named legacy workflow directory
-# would configure it in .specrelay/config.yml instead (see
-# knowledge-boundaries.md, C3).
+# Nothing here hardcodes ".ai" as the ONLY possible former workflow location:
+# callers pass the project root, and the well-known relative path checked
+# here is just this repository's own documented former convention (see
+# docs/current-workflow-contract.md). A project that used a differently-named
+# prior workflow directory would record that in .specrelay/config.yml instead.
 
 # specrelay::discovery::ai_root <project-root>
-# Prints the legacy workflow root's absolute path if present, else nothing.
+# Prints the former workflow root's absolute path if present, else nothing.
 # Always returns 0: absence is a normal result, never an error (callers under
 # `set -e` must be able to write `x="$(specrelay::discovery::ai_root ...)"`
 # without a "not found" result aborting the script).
@@ -29,7 +28,7 @@ specrelay::discovery::ai_root() {
 
 # specrelay::discovery::public_entrypoints <project-root>
 # Lists the public (root-level, non-internal) workflow scripts, one per line,
-# sorted. Empty output if no legacy workflow root is present.
+# sorted. Empty output if no former workflow root is present.
 specrelay::discovery::public_entrypoints() {
   local root="$1" ai_root
   ai_root="$(specrelay::discovery::ai_root "$root")" || return 0
@@ -76,7 +75,7 @@ specrelay::discovery::reviewer_file() {
 # exists on disk (existence is reported separately by the caller).
 specrelay::discovery::task_run_root() {
   local root="$1" configured="$2"
-  printf '%s/%s\n' "$root" "${configured:-.ai-runs/tasks}"
+  printf '%s/%s\n' "$root" "${configured:-.specrelay-runs/tasks}"
 }
 
 # specrelay::discovery::provider_integrations <project-root>

@@ -20,10 +20,9 @@ specrelay::transitions::_now() {
 # <task-dir>/iterations/round-<N>/, WITHOUT removing or renaming the live
 # numbered files (Artifact Compatibility Strategy Option A is unaffected).
 # This is what makes multi-round history genuinely reconstructable (spec
-# section 36) instead of relying on later rounds simply overwriting earlier
-# ones the way the legacy workflow's numbered files do (see
-# docs/current-workflow-contract.md, section 8, "18-iteration-summary.md's
-# timeline is a best-effort reconstruction, not an authoritative log").
+# section 36) instead of later rounds simply overwriting earlier ones (see
+# docs/current-workflow-contract.md, "18-iteration-summary.md's timeline is a
+# best-effort reconstruction, not an authoritative log").
 # Idempotent: safe to call more than once for the same round (overwrites that
 # round's own archive, never a DIFFERENT round's).
 specrelay::transitions::_archive_round() {
@@ -135,10 +134,10 @@ print(json.dumps(fields))
 
 # specrelay::transitions::approve <project-root> <task-id>
 # DRAFT|WAITING_FOR_HUMAN -> READY_FOR_EXECUTOR. This is the human-approval
-# gate (spec section 45/`.ai/protocol.md` Safety Rules). `specrelay run`
-# treats the human's own explicit invocation of that command as this
-# approval (documented in docs/engine-parity.md); `specrelay task approve`
-# is the explicit, decoupled equivalent of the legacy `approve-task.sh`.
+# gate (spec section 45, "Human approval is required before any task becomes
+# READY_FOR_EXECUTOR"). `specrelay run` treats the human's own explicit
+# invocation of that command as this approval; `specrelay task approve` is
+# the explicit, decoupled equivalent for manual recovery.
 specrelay::transitions::approve() {
   local root="$1" task_id="$2" task_dir state_file
   task_dir="$(specrelay::task::dir "$root" "$task_id")"

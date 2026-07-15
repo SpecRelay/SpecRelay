@@ -7,9 +7,8 @@
 # Discovery order (first match wins):
 #   1. Git repository root (`git rev-parse --show-toplevel`), when the
 #      current directory is inside a git working tree. This is the preferred,
-#      evidence-based signal: it is what the existing `.ai/` workflow scripts
-#      themselves use to resolve paths (see
-#      tools/specrelay/docs/current-workflow-contract.md, "Task identity").
+#      evidence-based signal (see docs/current-workflow-contract.md, "Task
+#      identity").
 #   2. Otherwise, walk upward from the current directory looking for a
 #      `.specrelay/` directory (SpecRelay's own project marker), so a
 #      non-git project that has been explicitly configured for SpecRelay is

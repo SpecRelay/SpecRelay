@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # phase_budgets_test.sh — phase-budget configuration and warnings (spec 0019,
 # "E. Phase Budgets"). Warnings are advisory only and never alter task state.
-#   tools/specrelay/test/phase_budgets_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -177,7 +176,7 @@ YAML
 out_state="$(cd "$proj_state" && "$SPECRELAY_BIN" run docs/sdd/0001-budget-warn/spec.md 2>&1)"
 specrelay_test::assert_contains "an exceeded budget still reaches READY_FOR_HUMAN_REVIEW (no state change)" \
   "$out_state" "READY_FOR_HUMAN_REVIEW"
-state_json="$(cat "$proj_state/.ai-runs/tasks/0001-budget-warn/state.json")"
+state_json="$(cat "$proj_state/.specrelay-runs/tasks/0001-budget-warn/state.json")"
 specrelay_test::assert_contains "state.json reflects normal completion despite the budget warning" \
   "$state_json" '"state": "READY_FOR_HUMAN_REVIEW"'
 

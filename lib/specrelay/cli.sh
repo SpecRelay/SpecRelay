@@ -30,15 +30,15 @@ Discovery (read-only):
   project root           Print the discovered project root.
   project inspect        Print a read-only summary of this project's
                          SpecRelay configuration.
-  workflow inspect       Print a read-only summary of the existing (legacy)
-                         AI workflow discovered on disk.
+  workflow inspect       Print a read-only summary of the former in-host AI
+                         workflow (no longer supported), if still present on
+                         disk, to assist migration.
   doctor                 Read-only readiness diagnostics: git repo, config,
                          spec root, task runtime root, executor/reviewer
                          provider availability, role model selection
                          (configured/resolved/validation level), context
-                         capability, active engine mode, compatibility shims,
-                         rollback engine, and engine-lock conflicts. Exits
-                         non-zero if any mandatory check fails.
+                         capability, and conflicting active-lock detection.
+                         Exits non-zero if any mandatory check fails.
   models [<provider>]    Model-selection guidance for configured automated
                          providers: the supported configuration forms
                          (provider-default, semantic alias, exact model id),
@@ -143,8 +143,7 @@ Workflow engine:
   task authorize-submit <task-ref>
                              Manual-recovery entry point for the runner-owned
                              EXECUTOR_RUNNING -> READY_FOR_REVIEW submit
-                             transition (mirrors the legacy workflow's
-                             authorize-submit.sh; see docs/engine-parity.md).
+                             transition.
   task timeline <task-ref> [--json]
                              Read-only execution-timeline report: total wall
                              time, per-phase durations, invocation/resume
@@ -186,9 +185,9 @@ commands (show/status/list) work regardless, but mutating commands refuse a
 task they do not own.
 
 See the bundled README.md and docs/ (architecture, configuration, providers,
-context-adapters, task-lifecycle, installation) for background. When SpecRelay
-is incubated inside a repository that has a pre-existing `.ai/` workflow, see
-docs/migration.md and docs/engine-parity.md for the compatibility model.
+context-adapters, task-lifecycle, installation) for background. If you are
+migrating a project away from a former in-host `.ai/scripts/`/
+`tools/specrelay/` layout, see docs/migration.md.
 USAGE
 }
 
@@ -251,9 +250,9 @@ specrelay::cli::project_inspect() {
   local ai_root
   ai_root="$(specrelay::discovery::ai_root "$root")"
   if [ -n "$ai_root" ]; then
-    echo "Detected legacy/current AI workflow location: $ai_root"
+    echo "Detected legacy AI workflow location (no longer supported): $ai_root"
   else
-    echo "Detected legacy/current AI workflow location: (none found)"
+    echo "Detected legacy AI workflow location (no longer supported): (none found)"
   fi
 
   return 0
@@ -266,17 +265,17 @@ specrelay::cli::workflow_inspect() {
   local runs_root_configured=""
   if specrelay::config::exists "$root"; then
     specrelay::config::validate "$root" || return 1
-    runs_root_configured="$(specrelay::config::get "$root" "tasks.runs_root" ".ai-runs/tasks")"
+    runs_root_configured="$(specrelay::config::get "$root" "tasks.runs_root" ".specrelay-runs/tasks")"
   fi
 
   local ai_root
   ai_root="$(specrelay::discovery::ai_root "$root")"
   if [ -z "$ai_root" ]; then
-    echo "No legacy/current AI workflow detected under: $root/.ai"
+    echo "No legacy AI workflow detected under: $root/.ai"
     return 0
   fi
 
-  echo "Legacy/current AI workflow root: $ai_root"
+  echo "Legacy AI workflow root (no longer supported): $ai_root"
 
   specrelay::out::section "Public workflow entry points:"
   local found_entrypoints=0

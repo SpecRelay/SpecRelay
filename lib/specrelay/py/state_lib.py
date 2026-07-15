@@ -1,18 +1,13 @@
 """SpecRelay core task-state read/write helper.
 
-This is SpecRelay's OWN state module: it is written fresh for the SpecRelay
-engine (tools/specrelay/), not imported from .ai/scripts/internal/lib/ai_state.py
-(that module keeps serving the existing legacy workflow, unmodified). The two
-modules encode the same canonical state-machine knowledge documented in
-tools/specrelay/docs/current-workflow-contract.md because SpecRelay must
-preserve the same durable, on-disk state.json shape and transition semantics
-(state compatibility Strategy A: preserve existing persisted state names, see
-docs/engine-parity.md) — the reusable engine code itself must not depend on
-the legacy workflow being present.
+This is SpecRelay's own, independent state module, encoding the canonical
+state-machine knowledge documented in docs/current-workflow-contract.md: it
+preserves a durable, on-disk state.json shape and transition semantics
+(preserving existing persisted state names).
 
 state.json is always a JSON object written atomically (temp file in the same
-directory, then os.replace), exactly matching the legacy scripts' approach, so
-a crash mid-write never leaves a half-written state.json.
+directory, then os.replace), so a crash mid-write never leaves a half-written
+state.json.
 
 CLI usage (each subcommand prints to stdout on success, JSON diagnostics
 never required by callers, plain text errors to stderr):

@@ -1,5 +1,14 @@
 # Knowledge Boundaries: Generic vs Provider-Specific vs Repository-Specific
 
+> **Historical document.** This document historically classified generic vs.
+> provider-specific vs. repository-specific knowledge for the former in-host
+> SpecRelay architecture (`tools/specrelay/` incubated inside a host
+> repository, `.ai/scripts/` compatibility shims, `.ai-runs/` task runtime).
+> That architecture is no longer a supported current product surface. See
+> README.md and docs/architecture.md for the current standalone architecture
+> (`bin/specrelay` / installed `specrelay`, `.specrelay/config.yml`,
+> `.specrelay-runs/`).
+
 This document classifies what was learned reverse-engineering the current
 `.ai/` workflow (see `current-workflow-contract.md`) into three categories, so
 that a future SpecRelay core never hardcodes something that only happens to

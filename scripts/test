@@ -2,14 +2,9 @@
 # scripts/test — run SpecRelay's STANDALONE test suite (spec 0086, sections
 # 20-21; parallel test runner + timing profiler, spec 0016).
 #
-# This runs every test that operates purely on isolated temporary git fixtures
-# and needs NEITHER the host Rails application NOR a pre-existing `.ai/`
-# workflow. It therefore passes both in the incubation host and in a freshly
-# extracted standalone repository.
-#
-# Host-integration tests (which need the host's `.ai/scripts/` shims, rollback
-# engine, CLAUDE.md, or host spec history) are EXPLICITLY excluded here and are
-# run by test/run_all.sh in the host repository instead.
+# This runs every test in this directory. Each test operates purely on
+# isolated temporary git fixtures and needs no external application or
+# pre-existing workflow of any kind.
 #
 # The runner executes independent test files concurrently (bounded worker
 # count), captures each file's output in isolation, then prints the complete
@@ -143,25 +138,6 @@ validate_jobs() {
     return 1
   fi
   printf '%s' "$v"
-}
-
-# --- host-integration exclusion (unchanged auditable list) -------------------
-HOST_INTEGRATION_TESTS="
-compat_shim_test.sh
-rollback_test.sh
-legacy_freeze_test.sh
-shim_loop_test.sh
-shim_deprecation_test.sh
-engine_ownership_cases_test.sh
-dogfood_orchestration_test.sh
-host_repo_safety_test.sh
-"
-is_host_integration() {
-  local name="$1" t
-  for t in $HOST_INTEGRATION_TESTS; do
-    [ "$name" = "$t" ] && return 0
-  done
-  return 1
 }
 
 # --- argument parsing --------------------------------------------------------
@@ -408,16 +384,14 @@ fi
 # NAME[i], PATH_[i] hold the deterministic final-output order.
 NAME=()
 PATH_=()
-SKIPPED=""
 
-# Full discovery: executable *_test.sh in TEST_DIR, host-integration excluded,
-# deterministically sorted by basename (C locale). Populates NAME/PATH_/SKIPPED.
+# Full discovery: every executable *_test.sh in TEST_DIR, deterministically
+# sorted by basename (C locale). Populates NAME/PATH_.
 discover_standalone() {
   local names name
   names="$(for f in "$TEST_DIR"/*_test.sh; do [ -f "$f" ] && basename "$f"; done | LC_ALL=C sort -u)"
   while IFS= read -r name; do
     [ -z "$name" ] && continue
-    if is_host_integration "$name"; then SKIPPED="$SKIPPED $name"; continue; fi
     NAME+=("$name")
     PATH_+=("$TEST_DIR/$name")
   done <<EOF
@@ -799,8 +773,6 @@ if [ "$JOBS" -gt 1 ] && [ "$NTESTS" -gt 1 ]; then
   speedup="$(awk -v s="$SERIAL_SUM" -v w="$WALL" 'BEGIN{ if (w>0) printf "%.1f", s/w }')"
   [ -n "$speedup" ] && printf 'Speedup:    %9sx\n' "$speedup"
 fi
-[ -n "$SKIPPED" ] && echo "Skipped (host-integration; run via test/run_all.sh):$SKIPPED"
-
 # --- change-aware selection summary (spec 0017) ------------------------------
 if [ "$CHANGE_AWARE" -eq 1 ]; then
   echo

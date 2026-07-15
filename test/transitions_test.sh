@@ -3,7 +3,6 @@
 # create -> approve -> claim -> submit(authorized) -> accept/request-changes
 # -> requeue -> block lifecycle, forbidden transitions, and the runner-owned
 # submit-authorization gate (spec sections 11, 12).
-#   tools/specrelay/test/transitions_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
@@ -190,7 +189,7 @@ specrelay_test::assert_eq "request-changes transitions REVIEWER_RUNNING -> CHANG
   "CHANGES_REQUESTED" "$(specrelay::state::canonical "$rc2_state")"
 
 # --- cross-engine mutation safety (spec section 50) -------------------------
-legacy_task_dir="$proj/.ai-runs/tasks/9999-legacy-task"
+legacy_task_dir="$proj/.specrelay-runs/tasks/9999-legacy-task"
 mkdir -p "$legacy_task_dir"
 legacy_state="$(specrelay::state::path "$legacy_task_dir")"
 specrelay::state::init "$legacy_state" '{"task_id": "9999-legacy-task", "state": "READY_FOR_EXECUTOR"}' >/dev/null

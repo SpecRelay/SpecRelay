@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # git_guard.sh — dirty-working-tree baseline and task-owned-change tracking
-# (spec sections 30-33). This is the fix for the legacy workflow's known,
-# documented limitation (docs/current-workflow-contract.md, section 9): the
-# legacy guard cannot distinguish a task's own still-uncommitted round-1 diff
-# from a genuinely unrelated change, so the automated requeue retry path gets
-# stuck. See docs/engine-parity.md for the full design writeup.
+# (spec sections 30-33), so a task's own still-uncommitted round-1 diff can be
+# distinguished from a genuinely unrelated change and the automated requeue
+# retry path never gets stuck (docs/current-workflow-contract.md, section 9).
 #
 # Model:
 #   - BASELINE (.git-baseline.txt, captured once at task creation, BEFORE any
@@ -27,9 +25,8 @@
 #     allow_pre_existing_dirty=true — an explicit, evidence-recorded policy
 #     choice, never a silent default.
 #   - Two path prefixes are ALWAYS treated as "related" (excluded from every
-#     snapshot), mirroring the legacy guard's own allow-list
-#     (docs/current-workflow-contract.md, section 9):
-#       1. the configured task-runs root (e.g. .ai-runs/tasks/) — the
+#     snapshot) (docs/current-workflow-contract.md, section 9):
+#       1. the configured task-runs root (e.g. .specrelay-runs/tasks/) — the
 #          engine's own bookkeeping;
 #       2. this task's recorded spec source's containing directory (e.g.
 #          docs/sdd/<task-id>/) — an uncommitted spec file is the whole

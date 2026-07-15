@@ -1,5 +1,19 @@
 # Current Workflow Contract (as-built)
 
+> **Historical document.** This document is a reverse-engineered behavioral
+> spec of the former in-host `.ai/` AI workflow engine that SpecRelay was
+> originally incubated from (`tools/specrelay/` incubated inside a host
+> repository, `.ai/scripts/` compatibility shims, `.ai-runs/` task runtime).
+> That engine and layout are no longer a supported current product surface —
+> the `.ai/scripts/` entry points, `.ai/protocol.md`, `.ai/reviewer.md`, and
+> `.ai-runs/` paths named throughout this document do not exist in the
+> standalone SpecRelay repository. It is retained because it explains the
+> design rationale behind several current SpecRelay behaviors (e.g. the
+> dirty-working-tree guard's exclusion rules, the runner-owned submit
+> transition). For SpecRelay's own current task lifecycle, see
+> docs/task-lifecycle.md; for the current standalone architecture, see
+> README.md and docs/architecture.md.
+
 This document describes the **actual behavior** of the existing local AI
 workflow implemented under `.ai/` in this repository, as reverse-engineered
 from its real scripts (`.ai/scripts/`, `.ai/scripts/internal/`), its protocol

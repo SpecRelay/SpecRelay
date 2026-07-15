@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # decision_marker_test.sh — the mandatory DECISION marker contract (spec
 # 0019, "C. Mandatory Decision Marker" / marker.sh).
-#   tools/specrelay/test/decision_marker_test.sh
 
 # shellcheck source=test_helper.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test_helper.sh"
