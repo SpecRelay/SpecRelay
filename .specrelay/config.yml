@@ -21,6 +21,16 @@ roles:
     model: claude-opus-4-8
     agent: ai-reviewer
 
+  coordinator:
+    provider: claude          # default: claude
+    model: provider-default   # same three forms as executor/reviewer
+    agent: ai-coordinator     # default: ai-coordinator
+    enabled: true              # default: false
+    required: false            # default: false
+    max_decision_attempts: 2   # default: 2
+    timeout_seconds: 300       # default: 300
+    confidence_threshold: none # one of: low, medium, high, none (default: none)
+
 context:
   adapter: contextplus
   required: true
