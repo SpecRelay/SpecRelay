@@ -10,6 +10,12 @@ Proposed
 
 Rationale: this specification adds backward-compatible directory-based specification input, immutable multi-file evidence bundles, pre-executor analysis, Jam MCP integration, resolved specification generation, and new executor/reviewer input contracts.
 
+```yaml
+release:
+  impact: minor
+  rationale: adds backward-compatible directory-based specification input, immutable multi-file evidence bundles, pre-executor analysis, Jam MCP integration, resolved specification generation, and new executor/reviewer input contracts.
+```
+
 ---
 
 # 1. Purpose

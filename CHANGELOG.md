@@ -11,6 +11,10 @@ release date.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## 0.6.0
+
+- 0023-specification-bundle-analysis-jam-evidence-and-resolved-executor-input (minor): adds backward-compatible directory-based specification input, immutable multi-file evidence bundles, pre-executor analysis, Jam MCP integration, resolved specification generation, and new executor/reviewer input contracts.
+
 ## 0.5.0 — Operator summary, safe updates, and release versioning (spec 0022)
 
 The published `VERSION` had stayed at `0.4.0` while a substantial amount of
