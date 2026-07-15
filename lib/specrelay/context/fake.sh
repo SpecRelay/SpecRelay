@@ -68,7 +68,7 @@ specrelay::context::fake::capabilities() {
 }
 
 specrelay::context::fake::supported_roles() {
-  printf 'executor reviewer\n'
+  printf 'executor reviewer coordinator\n'
 }
 
 specrelay::context::fake::validate_config() {

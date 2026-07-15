@@ -112,6 +112,8 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/marker_recovery.sh"
 # shellcheck source=lib/specrelay/workflow.sh
 . "$LIB_DIR/workflow.sh"
+# shellcheck source=lib/specrelay/coordinator.sh
+. "$LIB_DIR/coordinator.sh"
 # shellcheck source=lib/specrelay/doctor.sh
 . "$LIB_DIR/doctor.sh"
 # shellcheck source=lib/specrelay/project_init.sh

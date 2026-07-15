@@ -337,7 +337,7 @@ specrelay::context::contextplus::capabilities() {
 }
 
 specrelay::context::contextplus::supported_roles() {
-  printf 'executor reviewer\n'
+  printf 'executor reviewer coordinator\n'
 }
 
 # specrelay::context::contextplus::validate_config <root> <role>

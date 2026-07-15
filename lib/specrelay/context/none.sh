@@ -30,7 +30,7 @@ specrelay::context::none::capabilities() {
 }
 
 specrelay::context::none::supported_roles() {
-  printf 'executor reviewer\n'
+  printf 'executor reviewer coordinator\n'
 }
 
 specrelay::context::none::validate_config() {

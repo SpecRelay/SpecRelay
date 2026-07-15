@@ -272,6 +272,25 @@ execution in the same invocation, so the normal successful path ends at
 failure/unavailability, or an explicit guard (e.g. `max_iterations`), and it
 always logs the reason (spec 0010).
 
+## AI Coordinator (optional, spec 0025)
+
+An optional, **disabled-by-default** advisory AI role can sit above the
+Executor and Reviewer: it recommends what should happen next (e.g. "repair
+one artifact" instead of "re-run the Executor"), but the deterministic engine
+alone decides whether that recommendation is allowed and performs it —
+
+```text
+AI roles interpret and recommend.
+The deterministic engine validates and transitions.
+```
+
+Enable it with `roles.coordinator.enabled: true` in `.specrelay/config.yml`;
+every project without it configured behaves exactly as before. See
+[docs/architecture.md](docs/architecture.md) ("Hybrid AI coordination
+model"), [docs/configuration.md](docs/configuration.md) (`roles.coordinator`),
+and [docs/task-lifecycle.md](docs/task-lifecycle.md) ("AI Coordinator
+invocation points").
+
 ## Safety model
 
 - The executor cannot self-approve; the review submission requires a separate,
@@ -286,6 +305,11 @@ always logs the reason (spec 0010).
 - External evidence (e.g. Jam recordings) is retrieved once, redacted before
   durable storage (authorization headers, cookies, session ids, and tokens are
   never preserved in the snapshot), and never silently re-fetched on resume.
+- The optional AI Coordinator is advisory only: it cannot edit `state.json`,
+  task artifacts, or source code, cannot mint authorization or call a
+  transition function directly, and every decision it returns is validated
+  deterministically against an engine-computed allowlist before anything
+  happens (spec 0025).
 
 See [docs/architecture.md](docs/architecture.md) and
 [SECURITY.md](SECURITY.md).

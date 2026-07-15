@@ -269,6 +269,76 @@ roles:
 > `claude-subagent` looked like a provider even though it is really the Claude
 > provider plus the `ai-reviewer` agent.
 
+### `roles.coordinator` (spec 0025, AI Coordinator)
+
+The **coordinator** is an optional, advisory AI role (see
+[docs/architecture.md](architecture.md), "Hybrid AI coordination model") that
+recommends what should happen next; the deterministic engine alone decides
+whether that recommendation is allowed and performs it. It is a distinct
+concept from `roles.executor`/`roles.reviewer`: it is **disabled by default**,
+and reuses `provider`/`model`/`agent` in the same shape.
+
+```yaml
+roles:
+  coordinator:
+    provider: claude          # default: claude
+    model: provider-default   # same three forms as executor/reviewer
+    agent: ai-coordinator     # default: ai-coordinator
+    enabled: true              # default: false
+    required: false            # default: false
+    max_decision_attempts: 2   # default: 2
+    timeout_seconds: 300       # default: 300
+    confidence_threshold: none # one of: low, medium, high, none (default: none)
+```
+
+- **`enabled`** — `false` by default. When absent or `false`, the coordinator
+  is never invoked and existing deterministic workflow behavior is
+  **completely unchanged** (spec section 32, backward compatibility).
+- **`required`** — whether a task's workflow depends on the coordinator being
+  available (advisory policy only; the engine's own transitions never depend
+  on the coordinator succeeding).
+- **`max_decision_attempts`** — bounded retries (default 2) for an invalid
+  coordinator response before the engine falls back to `REQUEST_HUMAN_DECISION`
+  (spec section 28, "Coordinator retry policy"). Must be a non-negative
+  integer.
+- **`timeout_seconds`** — advisory per-invocation timeout budget (default 300).
+- **`confidence_threshold`** — advisory only; a coordinator's self-reported
+  `confidence` (`low`/`medium`/`high`) never weakens deterministic validation
+  (spec section 13.1).
+- **`provider`/`model`/`agent`** resolve through the exact same accessors as
+  executor/reviewer (`roles.coordinator.model` accepts `provider-default`,
+  `{ alias: ... }`, or `{ id: ... }`); `model`/`agent` may also be overridden
+  per-role from the environment in the same way (see below).
+- **Coordinator context** (spec 0025, section 20) is configured and captured
+  **independently** of the executor/reviewer context, via the same `context:`
+  block:
+
+  ```yaml
+  context:
+    coordinator:
+      adapter: contextplus
+      required: true
+  ```
+
+  Coordinator context is read-only in purpose and never inherits Executor or
+  Reviewer conversational state — it receives only deterministic summaries
+  and immutable artifacts the engine chooses to hand it.
+- **Effective configuration capture:** the first time a task invokes the
+  coordinator, its resolved `provider`/`model`/`agent` are captured into
+  `state.json` (`roles_effective.coordinator`) and remain authoritative for
+  that task's whole lifetime — a later project-config change never
+  retroactively changes a running task's coordinator identity (same
+  capture-once contract as executor/reviewer, spec section 35).
+- **Inspect readiness with `specrelay doctor`** — reports Coordinator
+  disabled/configured/provider-availability/context-readiness **independently**
+  of Executor/Reviewer readiness (a coordinator misconfiguration never masks,
+  or is masked by, Executor/Reviewer checks).
+- **Inspect activity with `specrelay task show <ref>` / `specrelay task report
+  <ref>` / `specrelay task coordination <ref> [--json]`** — last invocation
+  point, last validated decision, invocation/invalid/human-decision-request
+  counts, and the decision-log path. A task that never invoked the
+  coordinator reports this honestly as "not recorded", never fabricated.
+
 ### Role-specific environment overrides
 
 Model and agent can be overridden per role from the environment, which takes

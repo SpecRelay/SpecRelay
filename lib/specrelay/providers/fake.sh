@@ -406,3 +406,109 @@ specrelay::provider::fake::reviewer_recover_marker() {
       ;;
   esac
 }
+
+# --- fake coordinator provider (spec 0025, section 42) ----------------------
+#
+# Deterministic coordinator fixture: no real AI provider call, ever. Each
+# named SCENARIO produces exactly the raw candidate output (valid JSON,
+# malformed JSON, or an out-of-policy decision) a test needs to exercise the
+# structured validator in coordinator.sh / coordinator_lib.py without any
+# live Claude call. `timeout` simulates a provider invocation that never
+# returns cleanly (non-zero exit, no output) so the caller's fallback policy
+# can be exercised.
+
+specrelay::provider::fake::_coordinator_decision_json() {
+  local task_id="$1" invocation_point="$2" decision="$3" reason_code="$4" target_role="$5" human_required="$6"
+  python3 -c '
+import json, sys
+d = {
+    "schema_version": 1,
+    "task_id": sys.argv[1],
+    "invocation_point": sys.argv[2],
+    "decision": sys.argv[3],
+    "reason_code": sys.argv[4],
+    "reason": "deterministic fake coordinator fixture for scenario testing.",
+    "target_role": sys.argv[5],
+    "target_files": [],
+    "requested_verification": [],
+    "constraints": {"allow_source_changes": False, "allow_test_execution": False, "allow_state_transition": False},
+    "human_decision_required": sys.argv[6] == "1",
+    "confidence": "high",
+}
+print(json.dumps(d))
+' "$task_id" "$invocation_point" "$decision" "$reason_code" "$target_role" "$human_required"
+}
+
+# specrelay::provider::fake::coordinator_run <task-dir> <prompt-file>
+#     <raw-output-file> <label> <model> <agent> <task-id> <invocation-point>
+#     <scenario>
+# Writes the scenario's raw candidate text to <raw-output-file> and returns
+# the fake provider's (never a real CLI's) exit code. `scenario` values
+# (spec section 42): valid_start_execution | valid_repair_artifacts |
+# valid_send_to_review | valid_request_human | invalid_json |
+# forbidden_action | wrong_task_id | path_traversal | timeout.
+specrelay::provider::fake::coordinator_run() {
+  local task_dir="$1" prompt_file="$2" raw_output_file="$3" label="${4:-coordinator:fake}" \
+    model="${5:-provider-default}" agent="${6:-none}" task_id="$7" invocation_point="$8" scenario="${9:-valid_request_human}"
+
+  {
+    echo "[fake-coordinator] prompt file: $prompt_file"
+    echo "[fake-coordinator] resolved: provider=fake model=$model agent=$agent scenario=$scenario"
+  } >> "$task_dir/25-coordinator-stderr.txt" 2>&1 || true
+
+  case "$scenario" in
+    valid_start_execution)
+      specrelay::provider::fake::_coordinator_decision_json "$task_id" "$invocation_point" \
+        "START_EXECUTION" "implementation_required" "executor" "0" > "$raw_output_file"
+      ;;
+    valid_repair_artifacts)
+      specrelay::provider::fake::_coordinator_decision_json "$task_id" "$invocation_point" \
+        "REPAIR_ARTIFACTS" "missing_required_section" "executor" "0" > "$raw_output_file"
+      ;;
+    valid_send_to_review)
+      specrelay::provider::fake::_coordinator_decision_json "$task_id" "$invocation_point" \
+        "SEND_TO_REVIEW" "verification_failed" "reviewer" "0" > "$raw_output_file"
+      ;;
+    valid_request_human)
+      specrelay::provider::fake::_coordinator_decision_json "$task_id" "$invocation_point" \
+        "REQUEST_HUMAN_DECISION" "ambiguous_requirement" "none" "1" > "$raw_output_file"
+      ;;
+    invalid_json)
+      printf 'this is not json at all {' > "$raw_output_file"
+      ;;
+    forbidden_action)
+      # A syntactically valid decision value that is NOT in the engine's
+      # allowed_next_actions for this invocation point (the caller's fixture
+      # sets up an invocation point where this decision is out of policy).
+      specrelay::provider::fake::_coordinator_decision_json "$task_id" "$invocation_point" \
+        "SEND_TO_REVIEW" "implementation_required" "reviewer" "0" > "$raw_output_file"
+      ;;
+    wrong_task_id)
+      specrelay::provider::fake::_coordinator_decision_json "wrong-task-id-does-not-exist" "$invocation_point" \
+        "REQUEST_HUMAN_DECISION" "ambiguous_requirement" "none" "1" > "$raw_output_file"
+      ;;
+    path_traversal)
+      python3 -c '
+import json, sys
+d = {
+    "schema_version": 1, "task_id": sys.argv[1], "invocation_point": sys.argv[2],
+    "decision": "REPAIR_ARTIFACTS", "reason_code": "missing_required_section",
+    "reason": "path traversal fixture.", "target_role": "executor",
+    "target_files": ["../../../etc/passwd"], "requested_verification": [],
+    "constraints": {"allow_source_changes": False, "allow_test_execution": False, "allow_state_transition": False},
+    "human_decision_required": False, "confidence": "high",
+}
+print(json.dumps(d))
+' "$task_id" "$invocation_point" > "$raw_output_file"
+      ;;
+    timeout)
+      : > "$raw_output_file"
+      return 124
+      ;;
+    *)
+      specrelay::out::err "$label: unknown fake coordinator scenario '$scenario'"
+      return 1
+      ;;
+  esac
+  return 0
+}

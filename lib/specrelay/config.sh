@@ -158,7 +158,7 @@ specrelay::config::role_context() {
     end
 
     known_role_keys = ["adapter", "required", "options"]
-    known_top_keys = known_role_keys + ["executor", "reviewer"]
+    known_top_keys = known_role_keys + ["executor", "reviewer", "coordinator"]
     unknown = ctx.keys - known_top_keys
     unless unknown.empty?
       bad "context configuration has unknown key(s) #{unknown.map(&:inspect).join(", ")}; recognized keys: adapter, required, options, executor, reviewer"
@@ -195,7 +195,7 @@ specrelay::config::role_context() {
 
     check_block.call(ctx, "global")
 
-    ["executor", "reviewer"].each do |r|
+    ["executor", "reviewer", "coordinator"].each do |r|
       next unless ctx.key?(r)
       sub = ctx[r]
       next if sub.nil?
@@ -745,6 +745,121 @@ specrelay::config::execution_efficiency_policy() {
 
     result.each { |k, v| puts "#{k}=#{v}" }
   ' "$path" <<< "$(specrelay::config::_execution_efficiency_defaults)"
+}
+
+# --- coordinator role policy (spec 0025) ------------------------------------
+#
+# The `roles.coordinator:` section configures the AI Coordinator role (spec
+# 0025, "Coordinator configuration"): provider/model/agent reuse the SAME
+# generic accessors as executor/reviewer (config::role_model_selection,
+# config::role_context already key on an arbitrary role string), but the
+# coordinator ALSO needs its own enabled/required/max-attempts/timeout/
+# confidence-threshold policy, which executor/reviewer do not have (they are
+# always invoked; the coordinator is optional and advisory). Missing
+# configuration resolves entirely to the built-in defaults — "coordinator
+# disabled" is the default behavior (spec section 32, "Backward
+# compatibility"), so every existing project keeps working unchanged.
+
+specrelay::config::_coordinator_defaults() {
+  cat <<'DEFAULTS'
+enabled=false
+required=false
+max_decision_attempts=2
+timeout_seconds=300
+confidence_threshold=none
+DEFAULTS
+}
+
+# specrelay::config::coordinator_policy <project-root>
+# Prints the EFFECTIVE, flat `key=value` coordinator policy (one line per
+# field) on success (exit 0). On a structurally invalid `roles.coordinator:`
+# section, prints a human-readable error DETAIL on stdout and returns 1
+# (mirrors verification_policy's ok/bad convention). Rejected: a non-mapping
+# section, unknown keys, non-boolean enabled/required, a negative or
+# non-integer max_decision_attempts/timeout_seconds, and an unrecognized
+# confidence_threshold.
+specrelay::config::coordinator_policy() {
+  local root="$1" path
+  path="$(specrelay::config::path "$root")"
+
+  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+    specrelay::config::_coordinator_defaults
+    return 0
+  fi
+
+  ruby -e '
+    require "yaml"
+    path = ARGV[0]
+
+    defaults = {}
+    STDIN.each_line do |line|
+      k, v = line.strip.split("=", 2)
+      defaults[k] = v if k && v
+    end
+
+    def bad(detail)
+      puts detail
+      exit 1
+    end
+
+    begin
+      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+    rescue StandardError
+      data = nil
+    end
+    data = {} unless data.is_a?(Hash)
+    roles = data["roles"]
+    roles = {} unless roles.is_a?(Hash)
+    coord = roles["coordinator"]
+
+    if coord.nil?
+      defaults.each { |k, v| puts "#{k}=#{v}" }
+      exit 0
+    end
+    unless coord.is_a?(Hash)
+      bad "roles.coordinator is not a mapping (got #{coord.class})"
+    end
+
+    known_top = ["provider", "model", "agent", "enabled", "required", "max_decision_attempts", "timeout_seconds", "confidence_threshold"]
+    unknown_top = coord.keys - known_top
+    unless unknown_top.empty?
+      bad "roles.coordinator has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: #{known_top.join(", ")}"
+    end
+
+    result = defaults.dup
+
+    ["enabled", "required"].each do |k|
+      next unless coord.key?(k)
+      v = coord[k]
+      unless v == true || v == false
+        bad "roles.coordinator.#{k} must be a boolean true or false (got #{v.inspect})"
+      end
+      result[k] = v ? "true" : "false"
+    end
+
+    ["max_decision_attempts", "timeout_seconds"].each do |k|
+      next unless coord.key?(k)
+      v = coord[k]
+      unless v.is_a?(Integer)
+        bad "roles.coordinator.#{k} must be a non-negative integer (got #{v.inspect})"
+      end
+      if v < 0
+        bad "roles.coordinator.#{k} must be a non-negative integer (got #{v})"
+      end
+      result[k] = v.to_s
+    end
+
+    if coord.key?("confidence_threshold")
+      v = coord["confidence_threshold"]
+      known = ["low", "medium", "high", "none"]
+      unless v.is_a?(String) && known.include?(v)
+        bad "roles.coordinator.confidence_threshold must be one of #{known.join(", ")} (got #{v.inspect})"
+      end
+      result["confidence_threshold"] = v
+    end
+
+    result.each { |k, v| puts "#{k}=#{v}" }
+  ' "$path" <<< "$(specrelay::config::_coordinator_defaults)"
 }
 
 specrelay::config::validate_role_model() {

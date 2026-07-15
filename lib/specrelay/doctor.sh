@@ -382,6 +382,61 @@ specrelay::doctor::_execution_efficiency() {
   fi
 }
 
+# specrelay::doctor::_coordinator <root>
+# Read-only (spec 0025, section 34, "Doctor behavior" — "must report
+# coordinator readiness separately" and "must distinguish Coordinator,
+# Executor, and Reviewer readiness"). Coordinator failure never affects
+# Executor/Reviewer's OWN doctor checks above, and vice versa. A structurally
+# invalid `roles.coordinator:` section is a mandatory failure, for the same
+# reason as every other policy-shape check in this file: every run with this
+# configuration would refuse before role invocation.
+specrelay::doctor::_coordinator() {
+  local root="$1" blob enabled
+  if ! blob="$(specrelay::config::coordinator_policy "$root" 2>/dev/null)"; then
+    specrelay::doctor::_fail "Coordinator: INVALID configuration — $blob (source: $(specrelay::config::path "$root"))"
+    return 0
+  fi
+  enabled="$(printf '%s\n' "$blob" | sed -n 's/^enabled=//p')"
+
+  if [ "$enabled" != "true" ]; then
+    specrelay::doctor::_info "Coordinator: disabled (roles.coordinator.enabled is not true; existing deterministic workflow behavior is unchanged)"
+    return 0
+  fi
+
+  specrelay::doctor::_ok "Coordinator: configured (roles.coordinator.enabled: true)"
+
+  local provider model agent required
+  provider="$(specrelay::coordinator::_live_provider "$root")"
+  model="$(specrelay::coordinator::_live_model "$root")"
+  agent="$(specrelay::coordinator::_live_agent "$root")"
+  required="$(printf '%s\n' "$blob" | sed -n 's/^required=//p')"
+  specrelay::doctor::_info "Coordinator role: provider=$provider model=$model agent=$agent required=$required"
+
+  case "$provider" in
+    fake)
+      specrelay::doctor::_ok "Coordinator provider: fake (deterministic, always available)"
+      ;;
+    claude)
+      if command -v "$(specrelay::provider::claude::_bin)" >/dev/null 2>&1; then
+        specrelay::doctor::_ok "Coordinator provider: claude ($(command -v "$(specrelay::provider::claude::_bin)"))"
+      else
+        specrelay::doctor::_provider_unavailable "Coordinator provider: claude — '$(specrelay::provider::claude::_bin)' not found on PATH"
+      fi
+      ;;
+    *)
+      specrelay::doctor::_fail "Coordinator provider: unsupported provider '$provider'"
+      ;;
+  esac
+
+  specrelay::doctor::_role_context "Coordinator" "$root" coordinator
+
+  if specrelay::coordinator::_available; then
+    specrelay::doctor::_ok "Coordinator decision-contract runtime: available (python3 + coordinator_lib.py present)"
+  else
+    specrelay::doctor::_fail "Coordinator decision-contract runtime: python3 or coordinator_lib.py missing"
+  fi
+}
+
 specrelay::doctor::run() {
   local self_dir="$1"
   DOCTOR_FAILED=0
@@ -603,6 +658,11 @@ specrelay::doctor::run() {
   specrelay::doctor::_verification_policy "$root"
   specrelay::doctor::_phase_budgets "$root"
   specrelay::doctor::_execution_efficiency "$root"
+
+  # --- AI Coordinator readiness (spec 0025, section 34) ---------------------
+  # Reported independently of Executor/Reviewer readiness above; a
+  # coordinator failure never masks (or is masked by) their checks.
+  specrelay::doctor::_coordinator "$root"
 
   # --- SpecRelay installation (tool) root -----------------------------------
   # Report WHERE SpecRelay itself is installed, kept explicitly distinct from

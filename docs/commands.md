@@ -17,6 +17,8 @@ This is the command reference for the standalone SpecRelay CLI: `bin/specrelay
 | `specrelay task authorize-submit <task-ref>` | Runner-owned `EXECUTOR_RUNNING` → `READY_FOR_REVIEW` | `0` submitted; non-zero refused |
 | `specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]` | SpecRelay-native interrupted-task recovery | `0` recovered; non-zero refused (live owner / wrong state / not owned / no reason) |
 | `specrelay task timeline <task-ref> [--json]` | Read-only execution-timeline report (spec 0019) | `0` on success; `1` unknown task |
+| `specrelay task coordinate <task-ref> --invocation-point <point> [--situation <json>]` | Runs one bounded AI Coordinator round (spec 0025); disabled by default | `0` decision validated/dispatched (or safe fallback); `10` coordinator disabled; non-zero unknown task |
+| `specrelay task coordination <task-ref> [--json]` | Read-only coordinator-activity report (spec 0025) | `0` on success (reports "not recorded" honestly if never invoked); `1` unknown task |
 | `specrelay models [<provider>]` | Read-only model-selection guidance for configured automated providers | `0` on success; `1` unknown provider |
 
 ## Direct CLI (`bin/specrelay` / installed `specrelay`)
@@ -161,7 +163,23 @@ specrelay task block <task-ref> "<reason>"
 specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]
 specrelay task authorize-submit <task-ref>
 specrelay task timeline <task-ref> [--json]
+specrelay task coordinate <task-ref> --invocation-point <point> [--situation <json>]
+specrelay task coordination <task-ref> [--json]
 ```
+
+`task coordinate` (spec 0025) runs one bounded round of the optional,
+disabled-by-default AI Coordinator: it computes the engine's
+`allowed_next_actions` for `<point>` (one of `before_executor`,
+`executor_completion_failed`, `executor_completed`, `reviewer_completed`,
+`changes_requested`, `recovery_requested`, `human_handoff_preparation`),
+invokes the configured coordinator provider (bounded retries), validates the
+structured decision deterministically, records it durably
+(`23-coordinator-decisions.jsonl`/`23-coordinator-state.json`), and dispatches
+only the safe, pre-existing transition it validates to (see
+[architecture.md](architecture.md)). Exits `10` (not an error) when the
+coordinator is disabled. `task coordination` is the read-only counterpart —
+it never invokes the coordinator, only reports what has already happened (the
+same summary folded into `task show`/`task report`).
 
 `task timeline` (spec 0019) is a **read-only** report: total wall time,
 per-phase durations and status, invocation/resume history, the verification

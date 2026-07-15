@@ -715,6 +715,39 @@ a failing check — the generic streaming fallback always works.
 
 Failing mandatory checks make `doctor` exit non-zero.
 
+## The coordinator adapter (spec 0025)
+
+The optional, disabled-by-default **coordinator** role has its own adapter
+dispatch, `specrelay::provider::coordinator_run` in `providers/provider.sh`,
+deliberately distinct from `executor_run`/`reviewer_run` because its
+invocation contract is stricter: **read-only, one bounded call per attempt,
+structured-output-only**.
+
+- **`fake`** — `specrelay::provider::fake::coordinator_run` writes one of nine
+  deterministic scenario fixtures to the raw-output file (never a real
+  provider call): `valid_start_execution`, `valid_repair_artifacts`,
+  `valid_send_to_review`, `valid_request_human`, `invalid_json`,
+  `forbidden_action`, `wrong_task_id`, `path_traversal`, `timeout`. This is
+  what `test/coordinator_test.sh` uses to exercise the full structured-
+  validation contract hermetically.
+- **`claude`** — `specrelay::provider::claude::coordinator_run` reuses
+  **exactly** the same restricted invocation shape as the reviewer's
+  marker-recovery adapter (`reviewer_recover_marker`): `claude --print`
+  **without** `--dangerously-skip-permissions`. Without that flag, the CLI has
+  no interactive channel to grant a tool-call permission, so any attempt at
+  Bash/Read/Edit/Write is refused by the platform itself — this is spec
+  0025 section 18's "read-only adapter" requirement enforced structurally,
+  not merely requested in prompt text. The raw final text is captured
+  verbatim; `coordinator_lib.py`'s structured validator (not this adapter)
+  decides whether it is a valid decision.
+
+The coordinator adapter never receives Executor or Reviewer conversational
+state, never returns an `ACCEPT`/`REQUEST_CHANGES` marker (that is the
+Reviewer's contract, unrelated to this one), and its raw output is always
+treated as an **unvalidated candidate** — `lib/specrelay/coordinator.sh`
+owns the entire decide → validate → record → dispatch pipeline described in
+[architecture.md](architecture.md) and [task-lifecycle.md](task-lifecycle.md).
+
 ## Adapter capability summary (section 30)
 
 | Adapter | Required executable | Detection method | Invocation contract | Output handling | Structured-event capability | Failure semantics |

@@ -87,6 +87,25 @@ recognizes, at minimum:
 Classification never guesses from vague command text — an unrecognized
 command is always `agent_tool_execution_unclassified`, never fabricated.
 
+### Coordinator-requested verification (spec 0025)
+
+The optional AI Coordinator's `RUN_TARGETED_VERIFICATION` decision may
+recommend verification **categories** — `test_focused`, `test_targeted`,
+`test_full`, `smoke`, `doctor`, `version` — the exact same closed vocabulary
+as the classification table above. The coordinator never specifies or runs
+an actual command: `requested_verification` is validated as a list of
+category names, and the deterministic engine alone selects and runs the real
+allowlisted command from configured policy (spec 0025, section 11.3). A
+coordinator recommendation naming an unrecognized category is rejected by
+`coordinator_lib.py`'s structured validator before it can influence anything.
+Coordinator invocation time (`coordinator_context_preflight`,
+`coordinator_input_preparation`, `coordinator_provider_execution`,
+`coordinator_decision_validation`, `coordinator_action_dispatch`) is recorded
+independently of Executor/Reviewer phases — see
+`specrelay task coordination <task-ref>` for the coordinator's own activity
+summary (invocation counts, invalid decisions, human-decision requests), kept
+separate from the execution timeline below.
+
 ## B. Reviewer Policy v2
 
 The Reviewer is **not a second Executor**. It identifies defects, validates

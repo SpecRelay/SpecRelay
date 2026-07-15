@@ -922,6 +922,7 @@ specrelay::cli::task_show() {
 
   specrelay::cli::_task_show_bundle_summary "$task_dir"
   specrelay::cli::_task_show_timeline_summary "$task_dir"
+  specrelay::coordinator::report_text "$task_dir"
 }
 
 # specrelay::cli::_task_show_bundle_summary <task-dir>
@@ -1069,6 +1070,7 @@ specrelay::cli::_task_full_report() {
       TIMELINE_JSON="$(specrelay::timeline::report "$root" "$task_dir" "$task_id" "$mode" --json 2>/dev/null)" \
       COMMANDS_JSON="$(specrelay::command_timing::report "$task_dir" "$task_id" "$mode" --json 2>/dev/null)" \
       EFFICIENCY_JSON="$(specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode" --json 2>/dev/null)" \
+      COORDINATOR_JSON="$(specrelay::coordinator::report_json "$task_dir" 2>/dev/null)" \
       TASK_ID="$task_id" python3 -c '
 import json, os
 
@@ -1086,6 +1088,7 @@ print(json.dumps({
     "timeline": load("TIMELINE_JSON"),
     "command_timing": load("COMMANDS_JSON"),
     "agent_efficiency": load("EFFICIENCY_JSON"),
+    "coordinator": load("COORDINATOR_JSON"),
 }, indent=2, sort_keys=True))
 '
       return 0
@@ -1105,6 +1108,10 @@ print("no" if d.get("recorded") is False else "yes")' 2>/dev/null)"
   if [ "$recorded" != "yes" ]; then
     if [ "$usage_cmd" = "report" ]; then
       echo "Task report: not recorded for task '$task_id' (legacy task, or no invocation has run yet)."
+      # Coordinator activity is independent of execution-timeline recording
+      # (spec 0025, section 33) — a task may have coordinator decisions
+      # without ever having run an Executor/Reviewer round yet.
+      specrelay::coordinator::report_text "$task_dir"
     else
       echo "Execution timeline: not recorded for task '$task_id' (legacy task, or no invocation has run yet)."
     fi
@@ -1137,6 +1144,10 @@ print("no" if d.get("recorded") is False else "yes")' 2>/dev/null)"
   # a write; a task with no recorded completion-gate/command-timing evidence
   # at all reports "not recorded" via 'task efficiency' instead of here.
   specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode"
+
+  # Coordinator activity summary (spec 0025, section 33). Honest "not
+  # recorded" for a task that never invoked the coordinator.
+  specrelay::coordinator::report_text "$task_dir"
 }
 
 # specrelay::cli::task_efficiency <task-ref> [--json]
@@ -1457,6 +1468,72 @@ specrelay::cli::task_recover() {
   return "$rc"
 }
 
+# specrelay::cli::task_coordination <task-ref> [--json]
+# Read-only (spec 0025, section 33): a dedicated coordinator-activity report,
+# distinct from (and identical in content to) the coordinator summary already
+# folded into 'task show'/'task report'. Never mutates task state. A task
+# that never invoked the coordinator reports "not recorded" honestly.
+specrelay::cli::task_coordination() {
+  local root ref="" as_json=0 task_id task_dir
+  root="$(specrelay::cli::require_project_root)" || return 1
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *)
+        if [ -n "$ref" ]; then specrelay::out::err "too many arguments"; return 2; fi
+        ref="$1"; shift ;;
+    esac
+  done
+  if [ -z "$ref" ]; then
+    specrelay::out::err "usage: specrelay task coordination <task-ref> [--json]"
+    return 2
+  fi
+
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+  task_dir="$(specrelay::task::dir "$root" "$task_id")"
+
+  if [ "$as_json" -eq 1 ]; then
+    specrelay::coordinator::report_json "$task_dir"
+    return 0
+  fi
+  specrelay::coordinator::report_text "$task_dir"
+}
+
+# specrelay::cli::task_coordinate <task-ref> --invocation-point <point>
+#     [--situation <json>] [--scenario <fake-scenario>]
+# Runs ONE bounded AI Coordinator round for a task (spec 0025). This is the
+# ONLY CLI entrypoint that actually invokes the coordinator; every mutation
+# it can cause still goes exclusively through
+# specrelay::coordinator::dispatch's pre-existing, independently-guarded
+# transition functions (never a direct state.json edit). Requires
+# roles.coordinator.enabled: true — a disabled coordinator is reported, not
+# an error (spec section 32).
+specrelay::cli::task_coordinate() {
+  local root ref="" invocation_point="" situation="{}" scenario="valid_request_human" task_id
+  root="$(specrelay::cli::require_project_root)" || return 1
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --invocation-point) invocation_point="${2:?--invocation-point requires a value}"; shift 2 ;;
+      --situation) situation="${2:?--situation requires a JSON value}"; shift 2 ;;
+      --scenario) scenario="${2:?--scenario requires a value}"; shift 2 ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *)
+        if [ -n "$ref" ]; then specrelay::out::err "too many arguments"; return 2; fi
+        ref="$1"; shift ;;
+    esac
+  done
+  if [ -z "$ref" ] || [ -z "$invocation_point" ]; then
+    specrelay::out::err "usage: specrelay task coordinate <task-ref> --invocation-point <point> [--situation <json>] [--scenario <fake-scenario>]"
+    return 2
+  fi
+
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+  specrelay::coordinator::invoke "$SPECRELAY_HOME" "$root" "$task_id" "$invocation_point" "$situation" "$scenario"
+}
+
 specrelay::cli::task_authorize_submit() {
   local root ref task_id token rc
   root="$(specrelay::cli::require_project_root)" || return 1
@@ -1489,8 +1566,10 @@ specrelay::cli::task_dispatch() {
     commands) specrelay::cli::task_commands "$@" ;;
     efficiency) specrelay::cli::task_efficiency "$@" ;;
     report) specrelay::cli::task_report "$@" ;;
+    coordinate) specrelay::cli::task_coordinate "$@" ;;
+    coordination) specrelay::cli::task_coordination "$@" ;;
     "")
-      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline|commands|efficiency|report>"
+      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline|commands|efficiency|report|coordinate|coordination>"
       return 2
       ;;
     *)

@@ -288,3 +288,29 @@ specrelay::provider::reviewer_recover_marker() {
       ;;
   esac
 }
+
+# specrelay::provider::coordinator_run <provider> <root> <task-dir>
+#     <prompt-file> <raw-output-file> <task-id> <invocation-point> <model>
+#     <agent> <fake-scenario>
+# The Coordinator's ONE bounded, read-only invocation per attempt (spec 0025,
+# section 18). <fake-scenario> is used only by the fake provider (spec
+# section 42); the claude adapter ignores it.
+specrelay::provider::coordinator_run() {
+  local provider="$1" root="$2" task_dir="$3" prompt_file="$4" raw_output_file="$5" \
+    task_id="$6" invocation_point="$7" model="${8:-provider-default}" agent="${9:-none}" scenario="${10:-valid_request_human}"
+  local label="coordinator:$provider"
+  case "$provider" in
+    fake)
+      specrelay::provider::fake::coordinator_run "$task_dir" "$prompt_file" "$raw_output_file" \
+        "$label" "$model" "$agent" "$task_id" "$invocation_point" "$scenario"
+      ;;
+    claude)
+      specrelay::provider::claude::coordinator_run "$root" "$task_dir" "$prompt_file" "$raw_output_file" \
+        "$label" "$model" "$agent"
+      ;;
+    *)
+      specrelay::out::err "unsupported coordinator provider: $provider"
+      return 1
+      ;;
+  esac
+}

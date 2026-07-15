@@ -528,3 +528,61 @@ ledger, duplicate-work report, slowest-phases list, and phase-budget warnings
 are printed at the end of every completed or explicit-stop invocation. See
 [verification-and-timeline.md](verification-and-timeline.md) for the full
 design and `specrelay task timeline <task-ref>` for read-only inspection.
+
+## 13. AI Coordinator invocation points (spec 0025)
+
+The optional, disabled-by-default coordinator role (see
+[architecture.md](architecture.md), "Hybrid AI coordination model", and
+[configuration.md](configuration.md), "`roles.coordinator`") runs only at
+bounded decision points — never continuously and never after every command:
+
+```text
+before_executor              — about to (re)launch the Executor
+executor_completion_failed   — the Executor's completion gate failed
+executor_completed           — the Executor finished; gate result is known
+reviewer_completed           — the Reviewer returned ACCEPT or REQUEST_CHANGES
+changes_requested            — the task is sitting at CHANGES_REQUESTED
+recovery_requested           — an interrupted task needs a next-step decision
+human_handoff_preparation    — automatic progress is stopping; prepare a
+                                human decision packet
+```
+
+At each invocation point, four things happen **in this order**, and the
+coordinator only ever participates in the middle two:
+
+1. **Deterministic state** — the engine reads the task's real, canonical
+   `state.json`, completion-gate results, verification ledger, and Reviewer
+   decision. Nothing here is inferred by AI.
+2. **Coordinator advisory decision** — the engine computes
+   `allowed_next_actions` for this exact invocation point (e.g.
+   `SEND_TO_REVIEW` is never offered when the completion gate failed) and
+   asks the coordinator to select exactly one. The coordinator receives a
+   single bounded input snapshot and returns one structured JSON decision —
+   nothing more.
+3. **Engine validation** — `coordinator_lib.py` validates the decision
+   strictly: schema, task/invocation-point match, decision vocabulary,
+   membership in `allowed_next_actions`, path safety, constraints, and
+   confidence. **A coordinator decision may be rejected here without
+   changing task state at all** — an invalid or out-of-policy decision has
+   zero effect, and the engine records the rejection durably
+   (`23-coordinator-decisions.jsonl`) and falls back to a safe default
+   (typically `REQUEST_HUMAN_DECISION`).
+4. **Role invocation / human handoff** — only a validated `BLOCK_TASK` or
+   `REQUEST_HUMAN_DECISION` decision is enacted immediately in this initial
+   specification, and only through the SAME pre-existing, independently
+   guarded transition functions every other caller uses. Every other
+   decision (`START_EXECUTION`, `REPAIR_ARTIFACTS`,
+   `RUN_TARGETED_VERIFICATION`, `SEND_TO_REVIEW`, `RETURN_TO_EXECUTOR`) is
+   durably recorded as a recommendation for a human or a future
+   specification to act on (spec 0025, section 8: full autonomous routing is
+   explicitly out of this initial scope).
+
+Coordinator context (when configured) is prepared and validated
+**independently** of Executor/Reviewer context — it never inherits their
+conversational state, only deterministic summaries and immutable artifacts
+the engine chooses to hand it.
+
+Inspect coordinator activity read-only with `specrelay task show <ref>`,
+`specrelay task report <ref>`, or `specrelay task coordination <ref>
+[--json]`; a task that never invoked the coordinator reports this honestly
+as "not recorded".

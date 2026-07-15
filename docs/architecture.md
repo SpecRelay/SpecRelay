@@ -149,7 +149,60 @@ There is no distinct reviewer-running state. An interrupted reviewer
 therefore needs no new state and no recovery command — it is simply re-run
 from `READY_FOR_REVIEW` via `specrelay resume`.
 
-## 8. History
+## 8. Hybrid AI coordination model (spec 0025)
+
+SpecRelay's engine is, and remains, a deterministic state machine. Spec 0025
+adds one advisory AI role — the **coordinator** — above the Executor and
+Reviewer, without changing that fact. The central rule, enforced
+structurally (not merely by prompt wording):
+
+```text
+AI roles interpret and recommend.
+The deterministic engine validates and transitions.
+```
+
+```text
+User
+  │
+  ▼
+Coordinator (advisory: interprets context, recommends ONE next action)
+  │  structured decision, validated deterministically
+  ▼
+Deterministic SpecRelay Engine (computes allowed actions, validates, transitions)
+  │
+  ▼
+Executor ──▶ Deterministic Validation ──▶ Reviewer ──▶ Coordinator ──▶ Human Decision
+```
+
+The coordinator is never the owner of the state machine. It cannot:
+
+- edit `state.json`, transition metadata, or any task artifact;
+- mint or consume authorization tokens, or manage locks;
+- call a transition function, `specrelay run`/`resume`, or any `task
+  <transition>` command directly;
+- run shell commands or fabricate verification evidence;
+- decide human acceptance, or reinterpret a Reviewer's ACCEPT/REQUEST_CHANGES.
+
+Concretely: the engine computes an `allowed_next_actions` allowlist for each
+bounded invocation point (`before_executor`, `executor_completion_failed`,
+`executor_completed`, `reviewer_completed`, `changes_requested`,
+`recovery_requested`, `human_handoff_preparation`); the coordinator selects
+exactly one value from that list and returns it as a single structured JSON
+object; `lib/specrelay/py/coordinator_lib.py` validates every field
+deterministically (schema, task/invocation-point match, path safety,
+constraints, vocabulary) before `lib/specrelay/coordinator.sh` dispatches it.
+Dispatch itself only ever calls **pre-existing, independently-guarded**
+transition functions (e.g. `specrelay::transitions::block`, which
+re-validates the current state on its own) — an invalid or out-of-policy
+coordinator response can never mutate task state. See docs/task-lifecycle.md
+("AI Coordinator invocation points") and docs/configuration.md
+("`roles.coordinator`") for the full contract.
+
+Coordinator support is additive and disabled by default
+(`roles.coordinator.enabled: false`); every project without it configured
+behaves exactly as before spec 0025.
+
+## 9. History
 
 SpecRelay was originally incubated inside a host repository before being
 extracted into this standalone repository. That former in-host layout

@@ -251,6 +251,41 @@ Historical tasks with **no** `engine_version`/`schema_version` are treated as
 unknown-origin / implicit v1 and are **not** blocked; no action is needed for
 them.
 
+## 7. Coordinator failure and human-decision packets (spec 0025)
+
+The optional, disabled-by-default AI Coordinator (see
+[architecture.md](architecture.md), [task-lifecycle.md](task-lifecycle.md))
+fails **safely** by design: a coordinator that returns invalid output, times
+out, or exhausts its bounded retries never mutates task state, never mints
+authorization, never overwrites evidence — it durably records the failure
+(`23-coordinator-decisions.jsonl`, `validation_outcome: "invalid"`) and falls
+back to the documented policy, almost always `REQUEST_HUMAN_DECISION`.
+
+When that happens, SpecRelay writes `<task-runtime-path>/24-human-decision-
+request.md` — inspect it read-only:
+
+```
+cat .specrelay-runs/tasks/<task-id>/24-human-decision-request.md
+```
+
+It states, in plain language: current task state, what happened, why
+automatic progress stopped, the coordinator's (or the fallback policy's)
+recommendation, the available human choices and each one's effect, and
+relevant evidence paths. It never exposes hidden chain-of-thought.
+
+**Never edit coordinator state artifacts by hand**
+(`23-coordinator-decisions.jsonl`, `23-coordinator-state.json`,
+`24-human-decision-request.md`) — they are durable evidence, not
+configuration. Instead, act on the packet's stated choices using the
+ordinary audited commands (`task accept`, `task request-changes`, `task
+block`, `task requeue`, ...) exactly as you would without a coordinator.
+Inspect coordinator activity read-only at any time with `specrelay task
+coordination <task-ref> [--json]` or `specrelay task show <task-ref>`; a task
+that never invoked the coordinator reports this honestly as "not recorded".
+If the coordinator is misbehaving or you simply do not want it, set
+`roles.coordinator.enabled: false` (or omit the section entirely) — existing
+deterministic workflow behavior is completely unaffected either way.
+
 ## Quick reference
 
 | Situation | Command |
@@ -262,6 +297,8 @@ them.
 | Mark a task that cannot complete | `specrelay task block <task-ref> "<reason>"` |
 | Resume refused: incompatible engine version | install matching engine, or `SPECRELAY_ALLOW_ENGINE_MISMATCH=1 specrelay resume <task-ref>` |
 | Resume refused: incompatible state schema | install matching engine, or `SPECRELAY_ALLOW_SCHEMA_MISMATCH=1 specrelay resume <task-ref>` |
+| Coordinator requested a human decision | `cat .specrelay-runs/tasks/<task-id>/24-human-decision-request.md`, then act via the ordinary task commands |
+| Inspect coordinator activity (read-only) | `specrelay task coordination <task-ref> [--json]` |
 
 Never edit `state.json` by hand and never `rm` a task directory or its lock to
 recover a task — use the audited commands above so every recovery is recorded.

@@ -361,3 +361,40 @@ specrelay::provider::claude::reviewer_recover_marker() {
   specrelay::out::err "marker-recovery attempt produced no valid decision marker"
   return 1
 }
+
+# specrelay::provider::claude::coordinator_run <root> <task-dir> <prompt-file>
+#     <raw-output-file> <label> <model> <agent>
+# The Coordinator's ONE read-only invocation (spec 0025, section 18: "If the
+# provider platform cannot enforce tool restrictions directly, the engine
+# must enforce them by invoking the coordinator through a read-only adapter
+# and accepting only the structured decision output"). Reuses EXACTLY the
+# same enforcement mechanism as reviewer_recover_marker above: never passes
+# `--dangerously-skip-permissions`, so `claude --print` has no interactive
+# channel to grant a tool-call permission — any attempt at Bash/Read/Edit/
+# Write/... is refused by the CLI itself, not merely discouraged by prompt
+# text. Writes the model's raw final text verbatim to <raw-output-file> (the
+# UNvalidated candidate decision); coordinator.sh's structured validator is
+# solely responsible for deciding whether that text is a valid decision.
+specrelay::provider::claude::coordinator_run() {
+  local root="$1" task_dir="$2" prompt_file="$3" raw_output_file="$4" \
+    label="${5:-coordinator:claude}" model="${6:-provider-default}" agent="${7:-none}"
+  local bin prompt rc model_args
+  bin="$(specrelay::provider::claude::_bin)"
+
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    specrelay::out::err "'$bin' was not found on PATH"
+    return 1
+  fi
+  if ! model_args="$(specrelay::provider::claude::_resolve_model_args "$label" "$bin" "$model")"; then
+    return 1
+  fi
+
+  prompt="$(cat "$prompt_file")"
+
+  # shellcheck disable=SC2086  # model_args is controlled, word-split on purpose
+  specrelay::provider::run_streamed "$label" \
+    "$raw_output_file" "$task_dir/25-coordinator-stderr.txt" "$root" -- \
+    "$bin" --print $model_args "$prompt"
+  rc=$?
+  return "$rc"
+}
