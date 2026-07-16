@@ -20,6 +20,8 @@ This is the command reference for the standalone SpecRelay CLI: `bin/specrelay
 | `specrelay task coordinate <task-ref> --invocation-point <point> [--situation <json>]` | Runs one bounded AI Coordinator round (spec 0025); disabled by default | `0` decision validated/dispatched (or safe fallback); `10` coordinator disabled; non-zero unknown task |
 | `specrelay task coordination <task-ref> [--json]` | Read-only coordinator-activity report (spec 0025) | `0` on success (reports "not recorded" honestly if never invoked); `1` unknown task |
 | `specrelay models [<provider>]` | Read-only model-selection guidance for configured automated providers | `0` on success; `1` unknown provider |
+| `specrelay config show [--effective] [--sources] [--json]` | Read-only local-developer-configuration-overlay status (spec 0027) | `0` valid; `1` invalid local overlay |
+| `specrelay config explain <dotted.path>` | Read-only effective-value provenance for one configuration path (spec 0027) | `0` on success; `1` invalid local overlay |
 
 ## Direct CLI (`bin/specrelay` / installed `specrelay`)
 
@@ -269,7 +271,25 @@ specrelay project inspect
 `root`: prints the discovered project root. `inspect`: read-only summary of
 this project's SpecRelay configuration (config presence, project name,
 configured spec/task-run roots, validation command, detected legacy
-workflow location).
+workflow location, and — spec 0027 — the local developer overlay's status
+and the effective precedence order).
+
+```
+specrelay config show [--effective] [--sources] [--json]
+specrelay config explain <dotted.path>
+```
+Read-only (spec 0027, "Local Developer Configuration Overlay"): inspects the
+shared `.specrelay/config.yml` merged with the optional, Git-ignored
+`.specrelay/config.local.yml` overlay. `show`: default output is a concise
+shared/local/precedence summary; `--sources` adds loaded source paths and
+SHA-256 digests; `--effective` adds the fully merged configuration with
+secret-shaped values (names ending in token/api_key/secret/password/cookie/
+authorization/credential, case-insensitive) redacted; `--json` emits the
+machine-readable equivalent. `explain <path>`: reports the final (redacted
+if secret-shaped) value for one dotted configuration path, which layer
+supplied it (defaults/shared/local/environment), and any lower-priority
+value it replaced. Neither command creates a task or modifies a
+configuration file.
 
 ```
 specrelay workflow inspect

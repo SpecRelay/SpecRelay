@@ -382,6 +382,177 @@ print(json.dumps({"execution_efficiency_effective": policy}))
   specrelay::state::set "$state_file" "$set_json" >/dev/null
 }
 
+# --- local developer configuration overlay effective capture (spec 0027) ---
+#
+# Spec 0027 extends the capture-once contract above (roles_effective,
+# verification_policy_effective, execution_efficiency_effective) with a
+# dedicated "configuration_effective" block recording WHICH configuration
+# sources fed the task (shared/local presence + digests), the precedence
+# order, which leaves the local overlay actually overrode (redacted where
+# secret-shaped), and whether a documented environment-variable override was
+# in effect — all WITHOUT duplicating the fuller role/context/verification
+# capture the functions above already own.
+
+# specrelay::workflow::record_effective_configuration <root> <task-id>
+# CAPTURE-ONCE, mirroring record_effective_roles above: persists
+# configuration_effective into state.json the first time a task reaches an
+# executor iteration. Never overwritten thereafter, so a later change to
+# .specrelay/config.yml or .specrelay/config.local.yml never silently alters
+# what an in-flight task believes its configuration provenance was.
+specrelay::workflow::record_effective_configuration() {
+  local root="$1" task_id="$2" state_file existing envelope
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 0
+
+  existing="$(specrelay::state::get "$state_file" configuration_effective 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+    return 0
+  fi
+
+  envelope="$(specrelay::config::effective_envelope "$root" 2>/dev/null)" || return 0
+  [ -n "$envelope" ] || return 0
+
+  # Documented role env overrides actually in effect right now (names only —
+  # never values, spec section 19: "task capture records that an environment
+  # override was used without storing secret values"). Must stay in sync with
+  # specrelay::workflow::_role_env / config_local.sh's cmd_explain table.
+  local env_used
+  env_used="$(python3 -c '
+import json
+names = ["SPECRELAY_EXECUTOR_MODEL", "SPECRELAY_EXECUTOR_AGENT", "SPECRELAY_REVIEWER_MODEL", "SPECRELAY_REVIEWER_AGENT"]
+import os
+print(json.dumps([n for n in names if os.environ.get(n)]))
+')"
+
+  local set_json
+  set_json="$(ENVELOPE="$envelope" ENV_USED="$env_used" python3 -c '
+import json, os
+
+envelope = json.loads(os.environ["ENVELOPE"])
+env_used = json.loads(os.environ["ENV_USED"])
+
+markers = ["TOKEN", "API_KEY", "APIKEY", "SECRET", "PASSWORD", "PASSWD", "COOKIE",
+           "AUTHORIZATION", "CREDENTIAL", "PRIVATE_KEY", "ACCESS_KEY", "CLIENT_SECRET"]
+
+def secret_shaped(path):
+    last = path.rsplit(".", 1)[-1].upper()
+    return any(m in last for m in markers)
+
+def redact(path, value):
+    return "[REDACTED]" if secret_shaped(path) else value
+
+overridden = []
+for p in envelope.get("provenance") or []:
+    if p.get("source_kind") != "local":
+        continue
+    entry = {
+        "path": p["path"],
+        "source_kind": p["source_kind"],
+        "source_path": p.get("source_path"),
+    }
+    if p.get("removed"):
+        entry["removed"] = True
+    else:
+        entry["value"] = redact(p["path"], p.get("value"))
+    overrode = []
+    for o in p.get("overrode") or []:
+        overrode.append({"source_kind": o.get("source_kind"), "value": redact(p["path"], o.get("value"))})
+    entry["overrode"] = overrode
+    overridden.append(entry)
+
+result = {
+    "configuration_effective": {
+        "schema_version": 1,
+        "sources": envelope.get("sources") or [],
+        "precedence": ["defaults", "shared", "local", "environment", "cli"],
+        "overridden_paths": overridden,
+        "env_overrides_used": env_used,
+    }
+}
+print(json.dumps(result))
+' 2>/dev/null)"
+  [ -n "$set_json" ] || return 0
+  specrelay::state::set "$state_file" "$set_json" >/dev/null
+}
+
+# specrelay::workflow::_configuration_source_digest <state-file> <kind>
+# Prints the CAPTURED sha256 digest for the "shared" or "local" source (empty
+# if not present/not recorded — an honest legacy report, never fabricated).
+specrelay::workflow::_configuration_source_digest() {
+  local state_file="$1" kind="$2" blob
+  blob="$(specrelay::state::get "$state_file" configuration_effective 2>/dev/null || true)"
+  [ -n "$blob" ] && [ "$blob" != "null" ] || return 1
+  printf '%s' "$blob" | KIND="$kind" python3 -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+for s in d.get("sources") or []:
+    if s.get("kind") == os.environ["KIND"]:
+        print(s.get("sha256") or "")
+        sys.exit(0)
+sys.exit(1)
+'
+}
+
+# specrelay::workflow::warn_if_configuration_drifted <root> <task-id>
+# Resume-time honesty check (spec section 15, "Resume Behavior"): compares
+# the CURRENT shared/local source digests against the digests captured at
+# task creation. A task NEVER silently re-resolves its configuration on
+# resume — every capture-once function above already guarantees that — so a
+# digest mismatch here is informational, not a hard block: it tells the
+# operator their edit to .specrelay/config.yml or .specrelay/config.local.yml
+# will NOT take effect for this task (create a new task for that). A task
+# with no recorded configuration_effective (created before spec 0027, or
+# before this capture point) reports that honestly rather than fabricating a
+# comparison.
+specrelay::workflow::warn_if_configuration_drifted() {
+  local root="$1" task_id="$2" state_file
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 0
+
+  local blob
+  blob="$(specrelay::state::get "$state_file" configuration_effective 2>/dev/null || true)"
+  if [ -z "$blob" ] || [ "$blob" = "null" ]; then
+    specrelay::out::log "[specrelay] configuration provenance: not recorded (task created before spec 0027, or before first executor iteration)"
+    return 0
+  fi
+
+  local captured_shared captured_local current_shared current_local
+  captured_shared="$(specrelay::workflow::_configuration_source_digest "$state_file" shared 2>/dev/null || true)"
+  captured_local="$(specrelay::workflow::_configuration_source_digest "$state_file" local 2>/dev/null || true)"
+
+  local envelope
+  envelope="$(specrelay::config::effective_envelope "$root" 2>/dev/null || true)"
+  [ -n "$envelope" ] || return 0
+  current_shared="$(printf '%s' "$envelope" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for s in d.get("sources") or []:
+    if s.get("kind") == "shared":
+        print(s.get("sha256") or "")
+' 2>/dev/null)"
+  current_local="$(printf '%s' "$envelope" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for s in d.get("sources") or []:
+    if s.get("kind") == "local":
+        print(s.get("sha256") or "")
+' 2>/dev/null)"
+
+  if [ "$captured_shared" != "$current_shared" ] || [ "$captured_local" != "$current_local" ]; then
+    specrelay::out::log "[specrelay] note: .specrelay/config.yml or .specrelay/config.local.yml changed since this task captured its effective configuration; continuing with the CAPTURED configuration (spec 0027) — create a new task to pick up the new configuration"
+  fi
+  return 0
+}
+
 # specrelay::workflow::effective_execution_efficiency_field <root> <task-id> <role> <field>
 # Durable-first resolution (spec 0021, "resume uses the captured policy"):
 # the task's captured execution_efficiency_effective value when present,
@@ -1288,6 +1459,7 @@ specrelay::workflow::executor_iteration() {
   specrelay::workflow::record_effective_roles "$root" "$task_id"
   specrelay::workflow::record_effective_verification_policy "$root" "$task_id"
   specrelay::workflow::record_effective_execution_efficiency_policy "$root" "$task_id"
+  specrelay::workflow::record_effective_configuration "$root" "$task_id"
 
   local round rc started ended duration
   round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
@@ -2002,6 +2174,13 @@ specrelay::workflow::resume() {
   if ! specrelay::lock::acquire "$root" "$task_id"; then
     return 1
   fi
+
+  # Resume-time configuration-drift honesty (spec 0027, section 15): never a
+  # hard block (every capture-once effective-configuration field above
+  # already guarantees a resumed task keeps using its captured values) — just
+  # an explicit, visible note when the shared or local configuration file
+  # changed since this task captured its effective configuration.
+  specrelay::workflow::warn_if_configuration_drifted "$root" "$task_id"
 
   local invocation_id initial_state
   invocation_id="$(specrelay::timeline::next_invocation_id "$task_dir")"

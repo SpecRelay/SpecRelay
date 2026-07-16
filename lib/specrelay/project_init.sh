@@ -58,6 +58,35 @@ specrelay::init::_ensure_reviewer_agent() {
   fi
 }
 
+# specrelay::init::_local_example_template_path <specrelay-home>
+# Prints the path to the bundled local-developer-overlay example (spec
+# 0027). This file is committed by consumer projects (it contains no
+# secrets); the REAL .specrelay/config.local.yml a developer copies it to is
+# Git-ignored instead (see _gitignore_add below).
+specrelay::init::_local_example_template_path() {
+  local home="$1"
+  printf '%s/templates/project/config.local.example.yml\n' "$home"
+}
+
+# specrelay::init::_ensure_local_example <project-root> <specrelay-home>
+# Idempotently ensures .specrelay/config.local.example.yml exists, copying it
+# from the bundled template. Never overwrites a copy a project has already
+# customized (mirrors _ensure_reviewer_agent's "kept" behavior above).
+specrelay::init::_ensure_local_example() {
+  local root="$1" home="$2" template dest
+  template="$(specrelay::init::_local_example_template_path "$home")"
+  dest="$root/.specrelay/config.local.example.yml"
+  if [ -f "$dest" ]; then
+    echo "  kept: .specrelay/config.local.example.yml (already present; not overwritten)"
+  elif [ -f "$template" ]; then
+    if cp "$template" "$dest"; then
+      echo "  created: .specrelay/config.local.example.yml (local developer overlay example; safe to commit)"
+    else
+      echo "  note: could not write .specrelay/config.local.example.yml; copy it manually from $template"
+    fi
+  fi
+}
+
 # specrelay::init::_resolve_root <target-dir>
 # Prints the project root to initialize: the git top-level if <target-dir> is
 # inside a git working tree, else <target-dir> itself (absolute). Refuses a
@@ -149,6 +178,11 @@ specrelay::init::run() {
     # ai-reviewer agent file if it is missing (idempotent; the common case where
     # a project switched to claude-subagent after its first init).
     specrelay::init::_ensure_reviewer_agent "$root" "$home"
+    # Idempotently top up the local-overlay example and Git ignore entry too
+    # (spec 0027) — the common case of re-running init on an already-
+    # initialized project that predates this capability.
+    specrelay::init::_ensure_local_example "$root" "$home"
+    specrelay::init::_gitignore_add "$root" ".specrelay/config.local.yml"
     echo "Config was not changed. Re-run with --force to overwrite the config from the template."
     return 0
   fi
@@ -180,19 +214,32 @@ specrelay::init::run() {
   local ignore_dir="${runs_root_rel%%/*}/"
   specrelay::init::_gitignore_add "$root" "$ignore_dir"
 
+  # Local developer configuration overlay (spec 0027, section 11.1): the
+  # optional .specrelay/config.local.yml overlay must be Git-ignored from the
+  # start, added idempotently and without disturbing unrelated .gitignore
+  # entries (the same _gitignore_add helper used above).
+  specrelay::init::_gitignore_add "$root" ".specrelay/config.local.yml"
+
   echo "Initialized SpecRelay in: $root"
   echo "  created: .specrelay/config.yml"
   echo "  created: ${spec_root#"$root"/}/ (spec root)"
   echo "  gitignore: $ignore_dir (runtime evidence)"
+  echo "  gitignore: .specrelay/config.local.yml (local developer overlay)"
   # For a Claude reviewer, install the ai-reviewer agent template (the only way
   # SpecRelay puts `.claude/agents/ai-reviewer.md` into a project). No-op for the
   # default `manual` reviewer.
   specrelay::init::_ensure_reviewer_agent "$root" "$home"
+  # Committed example overlay (spec 0027): safe to commit, points a developer
+  # at the real (Git-ignored) .specrelay/config.local.yml.
+  specrelay::init::_ensure_local_example "$root" "$home"
   echo
   echo "Next steps:"
   echo "  1. Edit .specrelay/config.yml (set your executor/reviewer providers)."
   echo "  2. Add a spec at ${spec_root#"$root"/}/0001-example/spec.md"
   echo "  3. Run: specrelay run ${spec_root#"$root"/}/0001-example/spec.md"
+  echo "  4. Optional: copy .specrelay/config.local.example.yml to"
+  echo "     .specrelay/config.local.yml for personal overrides (Git-ignored;"
+  echo "     see docs/configuration.md)."
   echo
   echo "To use the Claude reviewer sub-agent, set roles.reviewer.provider to"
   echo "'claude-subagent' (or 'claude') and ensure .claude/agents/ai-reviewer.md"

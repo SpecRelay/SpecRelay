@@ -1,0 +1,48 @@
+# .specrelay/config.local.example.yml — example local developer overrides.
+#
+# Copy this file to .specrelay/config.local.yml for your OWN personal
+# overrides. This example file is safe to commit (no secrets); the copy you
+# make, .specrelay/config.local.yml, is Git-ignored by `specrelay init` and
+# must never be committed — it may contain machine-local paths or secrets.
+#
+# Only put the keys you actually want to CHANGE here. There is no need to
+# copy the whole shared .specrelay/config.yml — every key you omit simply
+# keeps its shared value.
+#
+# Effective precedence (lowest to highest priority):
+#   built-in defaults < .specrelay/config.yml < .specrelay/config.local.yml
+#     < supported environment-variable overrides < explicit CLI flags
+#
+# Merge rules:
+#   * mappings deep-merge (only the keys you set here change; siblings from
+#     the shared config are preserved);
+#   * lists REPLACE the shared list wholesale — they are never concatenated;
+#   * an explicit YAML `null` removes the inherited value entirely (built-in
+#     defaults may still apply afterward, same as if the key were never set).
+#
+# Inspect exactly where an effective value came from with:
+#   specrelay config show [--effective] [--sources]
+#   specrelay config explain <dotted.path>
+#
+# See docs/configuration.md for the full reference.
+
+roles:
+  executor:
+    model: claude-sonnet-5
+
+# verification:
+#   services:
+#     frontend:
+#       checks:
+#         unit:
+#           command: npm test
+#           timeout_seconds: 900
+
+# A secret-like local-only value (never committed in the REAL
+# .specrelay/config.local.yml; SpecRelay redacts secret-shaped keys — names
+# ending in token/api_key/apikey/secret/password/cookie/authorization/
+# credential — from doctor, `config show`/`config explain`, task evidence,
+# and JSON output):
+# integrations:
+#   example:
+#     token: <your-local-only-token>

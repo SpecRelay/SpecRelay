@@ -44,6 +44,153 @@ release. SpecRelay's config loader does not currently reject a file for its
 mapping at the top level (see **Config validation behavior** below) — but the
 key is reserved so that future schema changes can be detected. Do not remove it.
 
+## Local developer configuration overlay (spec 0027)
+
+Every key documented below lives in the **shared, committed** project
+configuration (`.specrelay/config.yml`). A developer may ALSO create an
+optional, personal overlay at:
+
+```
+.specrelay/config.local.yml
+```
+
+This file is never required for other developers, is Git-ignored (`specrelay
+init` adds the ignore entry for you), and holds only the values you want to
+change locally — you never copy the whole shared config into it.
+
+```yaml
+# .specrelay/config.local.yml
+roles:
+  executor:
+    model: claude-sonnet-5
+verification:
+  services:
+    products:
+      checks:
+        unit:
+          timeout_seconds: 900
+```
+
+### Why it exists
+
+Editing the shared `.specrelay/config.yml` for a personal preference (a
+faster local model, a longer timeout for your machine, a local-only service
+command) creates Git noise and merge conflicts for every other developer.
+The local overlay lets you change what you need without touching the file
+everyone else shares.
+
+### Precedence
+
+```
+built-in defaults < .specrelay/config.yml < .specrelay/config.local.yml
+  < supported environment-variable overrides < explicit CLI flags
+```
+
+Higher layers override lower layers only where they actually provide a
+value. No code path uses a different order.
+
+### Deep-merge rules
+
+- **Mappings deep-merge.** Setting `roles.executor.model` in the local file
+  changes only that key; `roles.executor.provider` and `roles.executor.agent`
+  keep their shared values.
+- **Lists replace, never concatenate.** A list you set locally replaces the
+  shared list wholesale — SpecRelay never merges list entries, since implicit
+  concatenation could silently create duplicate commands or services.
+- **An explicit YAML `null` removes the inherited value.** `roles.executor.agent: null`
+  in the local file deletes the inherited `agent` key from the merged
+  configuration entirely; SpecRelay's normal built-in default then applies
+  wherever the accessor for that key defines one.
+- **A type conflict fails clearly.** Replacing a mapping with a scalar (or a
+  scalar with a mapping) at the same path is rejected with a path-specific
+  error, e.g.:
+
+  ```
+  Invalid local configuration:
+    source: .specrelay/config.local.yml
+    error: roles.executor must be a mapping, got string
+  ```
+
+The local overlay is validated against the exact SAME schema as the shared
+config after merging — there is no separate, reduced "local schema". Any key
+documented in this file may be overridden locally, including
+`roles.coordinator`, `context.*`, `verification.*`, `performance.phase_budgets.*`,
+and `execution_efficiency.*`.
+
+### Secret handling
+
+The local overlay may hold local-only sensitive values (a personal API token,
+a local-only service credential). SpecRelay never prints a secret-shaped
+value: any key path whose last segment looks like `token`, `api_key`/`apikey`,
+`secret`, `password`, `cookie`, `authorization`, `credential`, `private_key`,
+`access_key`, or `client_secret` (case-insensitive) is redacted to
+`[REDACTED]` in `specrelay doctor`, `specrelay config show`/`config explain`,
+task evidence, and JSON output — the local file itself is never copied
+wholesale into durable task evidence.
+
+### Inspecting the effective configuration
+
+```
+specrelay config show [--effective] [--sources] [--json]
+specrelay config explain <dotted.path>
+```
+
+`config show` reports whether the shared/local files are present and
+loaded/invalid, the precedence order, and (with `--effective`) the fully
+merged configuration with secrets redacted. `config explain` reports the
+final value for one dotted path, which layer supplied it, and any
+lower-priority value it replaced:
+
+```
+$ specrelay config explain roles.executor.model
+roles.executor.model = claude-sonnet-5
+source: .specrelay/config.local.yml
+replaced: provider-default from .specrelay/config.yml
+```
+
+Both commands are entirely read-only: they never create a task and never
+modify a configuration file.
+
+### Task capture and resume
+
+A task's effective configuration (shared/local presence, SHA-256 digests of
+each loaded file, the precedence order, and which leaves the local overlay
+actually overrode — secrets redacted) is captured into `state.json` the
+first time the task reaches an executor iteration, alongside the existing
+`roles_effective` / `context_effective` / `verification_policy_effective`
+capture (spec 0009/0015/0019). That capture is **authoritative for the rest
+of the task's life**: resuming a task never silently re-reads a
+since-changed `.specrelay/config.yml` or `.specrelay/config.local.yml` and
+switches its model, context adapter, or verification commands. If either
+file changed since capture, `specrelay resume` prints an explicit note that
+it is continuing with the captured configuration — create a new task to pick
+up the new configuration. A task created before spec 0027 (or before its
+first executor iteration) reports its configuration provenance honestly as
+"not recorded" rather than fabricating one.
+
+### Symlinks and discovery boundaries
+
+`.specrelay/config.local.yml` is discovered ONLY at the current project
+root — SpecRelay never searches parent directories, your home directory, or
+another repository for it. If the file is a symlink, SpecRelay resolves it
+and refuses to load it when the target lies outside the project root (a
+clear, explicit error, never a silent skip).
+
+### Example file
+
+`specrelay init` also creates a committed, secret-free example at
+`.specrelay/config.local.example.yml` — copy it to
+`.specrelay/config.local.yml` for your own overrides. See that file for a
+sparse-override starting point.
+
+### Out of scope
+
+This capability does not introduce a user-global configuration file (e.g.
+`~/.config/specrelay/config.yml`), sync settings between developers, encrypt
+the local file, or add a generic environment-variable mapping for every
+configuration key — only the small, already-documented role overrides below
+(`SPECRELAY_EXECUTOR_MODEL` etc.) participate in the environment layer.
+
 ## Key reference
 
 Every key below appears in the template that `specrelay init` writes. Each entry
@@ -342,7 +489,7 @@ roles:
 ### Role-specific environment overrides
 
 Model and agent can be overridden per role from the environment, which takes
-**precedence over `.specrelay/config.yml`**:
+**precedence over both `.specrelay/config.yml` and `.specrelay/config.local.yml`**:
 
 | Variable | Overrides |
 |---|---|
@@ -354,14 +501,18 @@ Model and agent can be overridden per role from the environment, which takes
 The full resolution precedence for a role's effective `model`/`agent` is:
 
 1. the role-specific env override above;
-2. the value in `.specrelay/config.yml`;
-3. normalized legacy provider behavior (e.g. reviewer `claude-subagent` →
+2. the value in `.specrelay/config.local.yml` (spec 0027), if set;
+3. the value in `.specrelay/config.yml`;
+4. normalized legacy provider behavior (e.g. reviewer `claude-subagent` →
    `agent: ai-reviewer`);
-4. the provider default (`provider-default` / `none`).
+5. the provider default (`provider-default` / `none`).
 
 An empty env override (set but blank) is treated as unset and falls through to
 the config. Provider-specific env overrides may be added as future work; they
-are intentionally not introduced here.
+are intentionally not introduced here. `specrelay config explain` recognizes
+exactly these four variables as the environment layer for their respective
+paths; it does not invent a generic environment-variable mapping for every
+configuration key (spec 0027, section 19).
 
 ### Executor and reviewer models are independent
 
@@ -818,3 +969,12 @@ By default `specrelay init` adds the top-level runtime-evidence directory
 treating generated per-run evidence as non-source. If you prefer durable,
 versioned task records, remove that entry so the runtime root is committed with
 the rest of your project.
+
+`specrelay init` also adds `.specrelay/config.local.yml` to your `.gitignore`
+(spec 0027) — unlike the runtime-evidence entry above, this one should NOT be
+removed: the local overlay is personal-only by design and may contain
+local-only sensitive values. `specrelay doctor` reports a warning (or a
+mandatory failure, if the file contains a secret-shaped key and is
+trackable) if a local overlay exists but is not Git-ignored. `specrelay
+init`/an explicit future repair command are the only things that change your
+`.gitignore` — `run`, `resume`, and `doctor` never modify it.

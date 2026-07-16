@@ -504,6 +504,79 @@ specrelay::doctor::_coordinator() {
   fi
 }
 
+# specrelay::doctor::_configuration_overlay <root>
+# Read-only (spec 0027, section 17, "Doctor behavior"). Distinguishes: no
+# local file (never an error); a valid local file; malformed local YAML; a
+# type conflict during merge; local file not Git-ignored; and a trackable
+# local file containing a secret-like key (mandatory failure — the one new
+# secret-exposure risk this specification introduces). Never executes a
+# configured command and never modifies .gitignore or the local file itself.
+specrelay::doctor::_configuration_overlay() {
+  local root="$1" local_path envelope ok error
+
+  local_path="$(specrelay::config::local_path "$root")"
+  envelope="$(specrelay::config::effective_envelope "$root" 2>/dev/null)"
+  ok="$(printf '%s' "$envelope" | ruby -rjson -e 'd = JSON.parse(STDIN.read); print(d["ok"] ? "true" : "false")' 2>/dev/null)"
+
+  if ! specrelay::config::local_exists "$root"; then
+    specrelay::doctor::_info "Local overlay: not present (.specrelay/config.local.yml)"
+    specrelay::doctor::_info "Local overlay Git ignore: not applicable (no local overlay present)"
+    specrelay::doctor::_info "Secret exposure risk: none detected"
+    specrelay::doctor::_ok "Merge: valid (shared configuration only)"
+    specrelay::doctor::_info "Effective configuration capture: ready"
+    return 0
+  fi
+
+  if [ "$ok" = "true" ]; then
+    specrelay::doctor::_ok "Local overlay: present and valid ($local_path)"
+    specrelay::doctor::_ok "Merge: valid"
+  else
+    error="$(printf '%s' "$envelope" | ruby -rjson -e 'd = JSON.parse(STDIN.read); print d["error"].to_s' 2>/dev/null)"
+    specrelay::doctor::_fail "Local overlay: INVALID — $error (source: $local_path)"
+    specrelay::doctor::_fail "Merge: invalid"
+  fi
+
+  # Git ignore safety (section 11.2): a warning when no secret-like field is
+  # detected, a mandatory failure when a secret-like field IS present and the
+  # file is trackable (not ignored).
+  local ignored=0
+  if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --show-toplevel >/dev/null 2>&1; then
+    if git -C "$root" check-ignore -q -- ".specrelay/config.local.yml" 2>/dev/null; then
+      ignored=1
+    fi
+  else
+    # Not a Git working tree at all: there is nothing to "track", so the
+    # unignored-and-trackable failure condition cannot apply.
+    ignored=1
+  fi
+
+  local has_secret=0
+  if [ "$ok" = "true" ]; then
+    has_secret="$(printf '%s' "$envelope" | ruby -rjson -e '
+      d = JSON.parse(STDIN.read)
+      markers = %w[TOKEN API_KEY APIKEY SECRET PASSWORD PASSWD COOKIE AUTHORIZATION CREDENTIAL PRIVATE_KEY ACCESS_KEY CLIENT_SECRET]
+      found = (d["provenance"] || []).any? do |p|
+        p["source_kind"] == "local" && markers.any? { |m| p["path"].to_s.upcase.include?(m) }
+      end
+      print(found ? "1" : "0")
+    ' 2>/dev/null)"
+    [ -n "$has_secret" ] || has_secret=0
+  fi
+
+  if [ "$ignored" -eq 1 ]; then
+    specrelay::doctor::_ok "Local overlay Git ignore: safe (ignored by Git)"
+    specrelay::doctor::_info "Secret exposure risk: none detected"
+  elif [ "$has_secret" -eq 1 ]; then
+    specrelay::doctor::_fail "Local overlay Git ignore: UNSAFE — $local_path is trackable and contains secret-like field(s); add .specrelay/config.local.yml to .gitignore"
+    specrelay::doctor::_fail "Secret exposure risk: unsafe — local overlay contains secret-like field(s) and is not Git-ignored"
+  else
+    specrelay::doctor::_warn "Local overlay Git ignore: not ignored by Git ($local_path); add .specrelay/config.local.yml to .gitignore (run 'specrelay init', or add the line yourself)"
+    specrelay::doctor::_info "Secret exposure risk: none detected"
+  fi
+
+  specrelay::doctor::_info "Effective configuration capture: ready"
+}
+
 specrelay::doctor::run() {
   local self_dir="$1"
   DOCTOR_FAILED=0
@@ -574,6 +647,9 @@ specrelay::doctor::run() {
     specrelay::doctor::_fail "SpecRelay config: .specrelay/config.yml not found"
     config_ok=0
   fi
+
+  # --- Local developer configuration overlay (spec 0027, section 17) --------
+  specrelay::doctor::_configuration_overlay "$root"
 
   # --- Spec root exists -----------------------------------------------------
   local spec_root

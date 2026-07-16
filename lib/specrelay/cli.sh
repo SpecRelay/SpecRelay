@@ -30,6 +30,20 @@ Discovery (read-only):
   project root           Print the discovered project root.
   project inspect        Print a read-only summary of this project's
                          SpecRelay configuration.
+  config show [--effective] [--sources] [--json]
+                         Read-only (spec 0027): local developer configuration
+                         overlay status. Default: concise shared/local/
+                         precedence summary. --sources: loaded source paths
+                         and digests. --effective: merged effective
+                         configuration with secret-shaped values redacted.
+                         --json: machine-readable equivalent. Never creates a
+                         task or modifies a configuration file.
+  config explain <dotted.path>
+                         Read-only (spec 0027): reports the final (redacted
+                         if secret-shaped) effective value for a dotted
+                         configuration path, which layer supplied it
+                         (defaults/shared/local/environment), and any
+                         lower-priority value it replaced.
   workflow inspect       Print a read-only summary of the former in-host AI
                          workflow (no longer supported), if still present on
                          disk, to assist migration.
@@ -263,6 +277,21 @@ specrelay::cli::project_inspect() {
     echo "Configured task-run root: (unknown — no config)"
     echo "Configured validation command: (unknown — no config)"
   fi
+
+  # Local developer configuration overlay (spec 0027, section 16.1). Reported
+  # regardless of whether the shared config exists, since a project can be
+  # inspected either way; never prints a secret value.
+  local local_status
+  if ! specrelay::config::local_exists "$root"; then
+    local_status="not present"
+  elif specrelay::config::effective_ok "$root"; then
+    local_status="loaded"
+  else
+    local_status="invalid"
+  fi
+  echo "Shared configuration: .specrelay/config.yml"
+  echo "Local overlay: .specrelay/config.local.yml ($local_status)"
+  echo "Effective precedence: defaults < shared < local < environment < CLI"
 
   local ai_root
   ai_root="$(specrelay::discovery::ai_root "$root")"
@@ -1717,6 +1746,28 @@ specrelay::cli::main() {
           ;;
         *)
           specrelay::cli::unimplemented "workflow $1"
+          ;;
+      esac
+      ;;
+    config)
+      local root
+      root="$(specrelay::cli::require_project_root)" || return 1
+      case "${1:-}" in
+        show)
+          shift
+          specrelay::config::cmd_show "$root" "$@"
+          ;;
+        explain)
+          shift
+          specrelay::config::cmd_explain "$root" "${1:-}"
+          ;;
+        "")
+          specrelay::out::err "usage: specrelay config <show|explain>"
+          return 2
+          ;;
+        *)
+          specrelay::out::err "unknown 'config' subcommand: $1"
+          return 2
           ;;
       esac
       ;;

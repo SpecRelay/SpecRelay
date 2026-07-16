@@ -31,6 +31,15 @@ In dependency order (roadmap §5):
 
 ## Recently completed architecture milestones
 
+- **Spec 0027 — Local developer configuration overlay**: an optional,
+  Git-ignored `.specrelay/config.local.yml` layers sparse, personal
+  overrides on top of the shared `.specrelay/config.yml` (deterministic
+  deep merge; lists replace wholesale; explicit `null` removes an
+  inherited key), inspectable via `specrelay config show`/`config explain`
+  and reported by `doctor`/`project inspect`. Sequenced immediately before
+  the current objective below because UI runtime and visual verification
+  will need developer-local browser paths, credentials, service startup
+  commands, test data, and timeouts to be overridable per developer.
 - **Spec 0026 — Configurable verification policy and multi-service
   execution**: the single `full_test_command` string is now one option
   alongside a real multi-service, multi-check policy — `changed`/`full`/

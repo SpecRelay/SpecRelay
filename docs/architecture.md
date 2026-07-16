@@ -77,6 +77,34 @@ lib/specrelay/                lib/specrelay/providers/        .specrelay/
   project-root discovery, migration-assistance discovery, and config
   loading.
 
+### Two-layer project configuration (spec 0027)
+
+Project Configuration is no longer a single file read at run time.
+`lib/specrelay/config_local.sh` is the ONE merge engine: it reads
+`.specrelay/config.yml` (shared, committed) and the optional, Git-ignored
+`.specrelay/config.local.yml` (personal, sparse overrides) exactly once per
+invocation, deep-merges them (mappings recurse; lists replace wholesale,
+never concatenate; an explicit YAML `null` in the local file deletes an
+inherited key; a mapping/scalar type conflict at the same path fails with a
+path-specific error), and retains per-leaf provenance — which layer
+supplied each value, and what (if anything) it overrode — rather than
+reconstructing that after the fact.
+
+Every existing `config.sh` accessor that must honor the overlay
+(`get`, `role_context`, `role_model_selection`, `verification_policy`,
+`phase_budgets`, `execution_efficiency_policy`, `coordinator_policy`, ...)
+reads through this SAME merged data
+(`specrelay::config::effective_data_yaml`) instead of reading
+`.specrelay/config.yml` directly — there is no separate, reduced "local
+schema" and no second code path that only some accessors honor. This keeps
+the full precedence order (`built-in defaults < .specrelay/config.yml <
+.specrelay/config.local.yml < environment-variable overrides < CLI flags`)
+uniform everywhere a configuration value is read, from `doctor` and
+`project inspect` to `run`/`resume` to the read-only `config show`/`config
+explain` commands. See [docs/configuration.md](configuration.md), "Local
+developer configuration overlay (spec 0027)," for the full merge contract,
+secret redaction, and task-capture/resume behavior.
+
 ## 4. Command flow
 
 ```text

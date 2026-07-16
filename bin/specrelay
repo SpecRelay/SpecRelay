@@ -139,4 +139,10 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 # shellcheck source=lib/specrelay/cli.sh
 . "$LIB_DIR/cli.sh"
 
+# Remove this invocation's per-process configuration-merge cache (spec 0027,
+# config_local.sh's specrelay::config::_cache_file) on exit — it exists only
+# to make repeated accessor calls WITHIN this one invocation reuse a single
+# shared+local merge instead of recomputing it from scratch every time.
+trap 'rm -f "${TMPDIR:-/tmp}"/specrelay-config-cache."$$".* 2>/dev/null' EXIT
+
 specrelay::cli::main "$SPECRELAY_HOME" "$@"

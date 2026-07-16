@@ -344,6 +344,27 @@ artifact-layout migration (Phase 6) because both need a mature, closed
 picture of what "verification evidence" looks like before they can safely
 act on or reorganize it.
 
+### Local developer configuration overlay (spec 0027)
+**implemented.** A developer may layer a sparse, Git-ignored
+`.specrelay/config.local.yml` on top of the shared, committed
+`.specrelay/config.yml` (deep merge; lists replace wholesale, never
+concatenate; an explicit YAML `null` removes an inherited key; a
+mapping/scalar type conflict at the same path fails with a path-specific
+error) — precedence `built-in defaults < .specrelay/config.yml <
+.specrelay/config.local.yml < environment-variable overrides < CLI flags`.
+Inspectable read-only via `specrelay config show`/`config explain` and
+reported by `doctor`/`project inspect`; a task's effective configuration
+(including which leaves the local overlay overrode) is captured once at its
+first executor iteration and never silently re-resolved on resume. This
+capability is not itself a step in the Phase 1–12 AI-autonomy progression
+above, but it is sequenced **before** Phase 4 (UI runtime and visual
+verification) because developer-local browser paths, credentials, service
+startup commands, test data, and timeouts are exactly the class of
+machine-specific values a shared, committed config file cannot hold safely —
+Phase 4 will need this overlay mechanism to already exist. See
+[configuration.md](../configuration.md), "Local developer configuration
+overlay (spec 0027)."
+
 ### Phase 4 — UI runtime and visual verification
 **committed next milestone.** Adds detection of UI-impacting change, real
 application startup, Playwright-driven flows, screenshot capture, and
@@ -581,6 +602,43 @@ Phase 12). Every capability is labeled with exactly one maturity term:
   resolution; `specrelay doctor`/`task show`/`task report`/`verification
   plan`/`verification run` all integrated. UI-runtime behavior (Phase 4,
   below) remains unimplemented — only `kind: ui` is reserved in the schema.
+
+### Local developer configuration overlay (spec 0027)
+- **Maturity: implemented.**
+- **Objective:** Let a developer override machine-specific or personal
+  configuration (a faster local model, a longer local timeout, a
+  local-only service command or credential) without editing the shared,
+  committed `.specrelay/config.yml` — removing the Git noise and merge
+  conflicts that would otherwise fall on every other developer.
+- **Architectural value:** Establishes the sparse-override,
+  deterministic-merge, and capture-once-at-task-creation pattern that C3/
+  Phase 4 needs before it can exist: developer-local browser paths,
+  credentials, service-startup commands, test data, and timeouts are
+  exactly the class of values a shared, committed config file cannot hold
+  safely. Not a numbered phase in the Phase 1–12 AI-autonomy progression
+  itself, but a required precondition sequenced immediately before it.
+- **Mechanism:** an optional, Git-ignored `.specrelay/config.local.yml`,
+  merged on top of the shared config by the one merge engine,
+  `lib/specrelay/config_local.sh` (mappings deep-merge; lists replace
+  wholesale; an explicit YAML `null` removes an inherited key; a
+  mapping/scalar type conflict fails with a path-specific error).
+  Precedence: `built-in defaults < .specrelay/config.yml <
+  .specrelay/config.local.yml < environment-variable overrides < CLI
+  flags`.
+- **Expected specification(s):** spec 0027 ("Local Developer
+  Configuration Overlay").
+- **Exit criteria:** `specrelay init` idempotently Git-ignores the local
+  file and installs a committed, secret-free example; `doctor`/`project
+  inspect` report its presence/validity; `config show`/`config explain`
+  inspect the merged result read-only; secret-shaped keys are redacted
+  everywhere (doctor, config commands, task evidence); a task's effective
+  configuration (including local-overlay provenance) is captured once at
+  its first executor iteration and never silently re-resolved on resume.
+- **Implementation status:** **Implemented** —
+  `lib/specrelay/config_local.sh`, the CLI `config show`/`config explain`
+  commands, `doctor`'s "Local developer configuration overlay" section,
+  and the task-level `configuration_effective` capture all exist; see
+  [docs/configuration.md](../configuration.md).
 
 ### C3 — UI runtime and visual verification (Phase 4)
 - **Maturity: committed next milestone.**
@@ -840,6 +898,7 @@ already reserves one (0001–0025). Future rows are explicit placeholders —
 | 0024 | Remove obsolete in-host legacy surfaces | Phase 1 (retire legacy engine; §9 names the C5 migration as future work) | Completed |
 | 0025 | AI Coordinator and decision contract | C1 (Phase 2) | **Implemented** — implemented, reviewed, committed, pushed; release timing is a separate operational decision (see [current-plan.md](current-plan.md)), not a pending architecture item |
 | — | Configurable test levels and multi-service verification | C2 (Phase 3) | Committed next milestone — no spec number reserved |
+| 0027 | Local developer configuration overlay | Precedes C3/Phase 4 (UI verification needs local browser/credential/timeout overrides) | Completed |
 | — | UI runtime and visual verification | C3 (Phase 4) | Committed next milestone — no spec number reserved |
 | — | Bounded artifact repair | C4 (Phase 5) | Planned — no spec number reserved |
 | — | Full numbered artifact-layout migration | C5 (Phase 6) | Planned — named as pending future work by specs 0023 §19 and 0024 §9; no spec number reserved |

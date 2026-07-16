@@ -213,6 +213,14 @@ Config holds only project policy — never secrets, credentials, or
 machine-specific absolute paths. Every key is documented in
 [docs/configuration.md](docs/configuration.md).
 
+A developer may also layer an optional, Git-ignored
+`.specrelay/config.local.yml` on top of the shared config for personal
+overrides (a faster local model, a longer timeout, a local-only service
+command) — `specrelay init` adds the `.gitignore` entry for you, and
+`specrelay config show`/`config explain` inspect the merged result. See
+[docs/configuration.md](docs/configuration.md), "Local developer
+configuration overlay (spec 0027)."
+
 The single `validation.full_test_command` string above remains fully
 supported (no migration required). A repository with multiple services,
 languages, or check types can instead configure a `verification:` engine —

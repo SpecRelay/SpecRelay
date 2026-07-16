@@ -507,10 +507,31 @@ thereafter — see `docs/configuration.md`):
 - `context_effective` — normalized executor/reviewer context adapter/required
 - `verification_policy_effective` — the effective bounded-verification policy
   (spec 0019; see `docs/verification-and-timeline.md`)
+- `configuration_effective` (spec 0027) — shared/local configuration
+  presence and SHA-256 digest of each loaded file, the precedence order,
+  which leaves the local overlay (`.specrelay/config.local.yml`) actually
+  overrode (secrets redacted), and which documented environment-variable
+  overrides (e.g. `SPECRELAY_EXECUTOR_MODEL`) were in effect (names only,
+  never values) — captured alongside, and never duplicating or replacing,
+  the three fields above
 
 `state.json` lives under the task's runtime directory
 (`.specrelay-runs/tasks/<task-id>/state.json` by default) and must never be
 edited by hand — every state change goes through an audited transition.
+
+### Resume and configuration drift (spec 0027)
+
+`specrelay resume` compares the shared/local configuration files' current
+SHA-256 digests against the digests captured in `configuration_effective` at
+task creation. This is an honesty check only, never a hard block: every
+capture-once field above already guarantees a resumed task keeps using its
+captured provider/model/agent/context/verification settings regardless of
+what the live configuration now says. If either file changed since capture,
+`resume` prints an explicit note that it is continuing with the captured
+configuration and that a new task is needed to pick up the change. A task
+with no recorded `configuration_effective` (created before spec 0027, or
+before its first executor iteration) reports its configuration provenance
+honestly as "not recorded" rather than fabricating a comparison.
 
 ## 12. Execution timeline and verification ledger (spec 0019)
 

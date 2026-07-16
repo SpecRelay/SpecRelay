@@ -275,6 +275,35 @@ override flag for this guard (unlike the engine/schema guards above):
 verification-policy drift is a project-configuration decision, not an
 engine-compatibility one.
 
+### 6b. Local/shared configuration drift note (spec 0027)
+
+If you edit `.specrelay/config.yml` or `.specrelay/config.local.yml` while a
+task is in flight, `resume` never refuses and never silently re-resolves the
+change — it always continues with the configuration the task already
+captured (`configuration_effective`, recorded the first time the task
+reached an executor iteration). This is deliberately looser than the
+verification-policy guard in §6a above: there is nothing to recover from,
+because the task's provider/model/agent/context/verification settings were
+already pinned at capture time and are unaffected either way.
+
+You can tell whether a change is being ignored because `resume` prints an
+explicit note when it detects it:
+
+```
+[specrelay] note: .specrelay/config.yml or .specrelay/config.local.yml
+changed since this task captured its effective configuration; continuing
+with the CAPTURED configuration (spec 0027) — create a new task to pick up
+the new configuration
+```
+
+If you want the new configuration to actually apply, there is no repair
+flag or state edit for this (unlike §6a) — start a new task. Inspect what a
+task actually captured, and how the merged configuration currently reads,
+with `specrelay task show <task-ref>` and `specrelay config show
+[--effective] [--sources]`. A task created before spec 0027 (or before its
+first executor iteration) reports this honestly as "configuration
+provenance: not recorded" rather than fabricating a comparison.
+
 ## 7. Coordinator failure and human-decision packets (spec 0025)
 
 The optional, disabled-by-default AI Coordinator (see

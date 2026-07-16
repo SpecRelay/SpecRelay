@@ -13,6 +13,17 @@
 # Every accessor below shells out to a small, self-contained `ruby -e` snippet
 # per call. The config path and dotted field path are passed as argv (never
 # interpolated into the Ruby source), so untrusted values cannot inject code.
+#
+# config_local.sh (spec 0027, "Local Developer Configuration Overlay") is
+# sourced here because every accessor below that must honor an optional
+# .specrelay/config.local.yml overlay reads its data through
+# specrelay::config::effective_data_yaml instead of File.read()-ing
+# .specrelay/config.yml directly. Sourcing it from here (rather than only
+# from bin/specrelay) means every existing test/script that already sources
+# only config.sh keeps working without also having to be updated.
+SPECRELAY_CONFIG_LOCAL_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config_local.sh"
+# shellcheck source=config_local.sh
+[ -f "$SPECRELAY_CONFIG_LOCAL_SH" ] && . "$SPECRELAY_CONFIG_LOCAL_SH"
 
 # specrelay::config::path <project-root>
 # Prints the expected config file path (whether or not it exists).
@@ -66,9 +77,35 @@ specrelay::config::validate() {
 # Prints the value at the dotted path (e.g. "specs.root") as a plain string.
 # Prints the optional default (or nothing) if the path is missing. Assumes
 # the config has already been validated by the caller.
+#
+# Reads through the MERGED shared+local configuration (spec 0027) when an
+# optional .specrelay/config.local.yml overlay is present and valid, so every
+# existing caller of this accessor automatically honors a developer's local
+# override without a separate reduced schema (spec section 9). This function
+# itself never fails on an invalid local overlay (falling back to the
+# shared-only value, mirroring its historical never-fails contract for a
+# malformed shared file) — callers that must REFUSE to proceed on an invalid
+# local overlay call specrelay::config::validate_effective first, exactly as
+# they already call specrelay::config::validate before relying on this
+# accessor for a malformed shared file.
 specrelay::config::get() {
-  local root="$1" field="$2" default="${3:-}" path
+  local root="$1" field="$2" default="${3:-}" path yaml_text
   path="$(specrelay::config::path "$root")"
+
+  if command -v specrelay::config::effective_data_yaml >/dev/null 2>&1 \
+    && yaml_text="$(specrelay::config::effective_data_yaml "$root" 2>/dev/null)"; then
+    ruby -e '
+      require "yaml"
+      field, default = ARGV[0], ARGV[1]
+      data = YAML.safe_load(STDIN.read, permitted_classes: [], aliases: false) rescue {}
+      data = {} unless data.is_a?(Hash)
+      value = field.split(".").reduce(data) do |acc, key|
+        acc.is_a?(Hash) ? acc[key] : nil
+      end
+      puts value.nil? ? default.to_s : value.to_s
+    ' "$field" "$default" <<< "$yaml_text"
+    return 0
+  fi
 
   if [ ! -f "$path" ]; then
     printf '%s\n' "$default"
@@ -120,17 +157,20 @@ specrelay::config::get() {
 # subsection. Adapter EXISTENCE is validated by the caller against the
 # adapter registry, not here.
 specrelay::config::role_context() {
-  local root="$1" role="$2" path
-  path="$(specrelay::config::path "$root")"
+  local root="$1" role="$2" yaml_text
 
-  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+  if ! command -v ruby >/dev/null 2>&1; then
     printf 'adapter=none\nrequired=false\n'
     return 0
+  fi
+  if ! yaml_text="$(specrelay::config::effective_data_yaml "$root")"; then
+    printf '%s\n' "$yaml_text"
+    return 1
   fi
 
   ruby -e '
     require "yaml"
-    path, role = ARGV[0], ARGV[1]
+    role = ARGV[0]
 
     def ok(adapter, required)
       puts "adapter=#{adapter}"
@@ -144,9 +184,9 @@ specrelay::config::role_context() {
     end
 
     begin
-      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+      data = YAML.safe_load(STDIN.read, permitted_classes: [], aliases: false)
     rescue StandardError
-      # Malformed YAML is reported by specrelay::config::validate, not here.
+      # Malformed YAML is reported by specrelay::config::validate_effective, not here.
       ok("none", "false")
     end
     ok("none", "false") unless data.is_a?(Hash)
@@ -221,7 +261,7 @@ specrelay::config::role_context() {
     required = false if required.nil?
 
     ok(adapter, required ? "true" : "false")
-  ' "$path" "$role"
+  ' "$role" <<< "$yaml_text"
 }
 
 # specrelay::config::role_context_options <project-root> <role>
@@ -235,10 +275,13 @@ specrelay::config::role_context() {
 # validated the context section's SHAPE (options is a mapping if present); this
 # accessor degrades to "{}" on any unexpected shape rather than erroring again.
 specrelay::config::role_context_options() {
-  local root="$1" role="$2" path
-  path="$(specrelay::config::path "$root")"
+  local root="$1" role="$2" yaml_text
 
-  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+  if ! command -v ruby >/dev/null 2>&1; then
+    printf '{}\n'
+    return 0
+  fi
+  if ! yaml_text="$(specrelay::config::effective_data_yaml "$root")"; then
     printf '{}\n'
     return 0
   fi
@@ -246,10 +289,10 @@ specrelay::config::role_context_options() {
   ruby -e '
     require "yaml"
     require "json"
-    path, role = ARGV[0], ARGV[1]
+    role = ARGV[0]
 
     begin
-      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+      data = YAML.safe_load(STDIN.read, permitted_classes: [], aliases: false)
     rescue StandardError
       puts "{}"
       exit 0
@@ -267,7 +310,7 @@ specrelay::config::role_context_options() {
     opts = {} unless opts.is_a?(Hash)
 
     puts opts.to_json
-  ' "$path" "$role"
+  ' "$role" <<< "$yaml_text"
 }
 
 # --- role model SELECTION parsing (spec 0014) --------------------------------
@@ -296,17 +339,20 @@ specrelay::config::role_context_options() {
 # Missing config / role / model key resolves to provider-default. Callers that
 # need the standard error framing use specrelay::config::validate_role_model.
 specrelay::config::role_model_selection() {
-  local root="$1" role="$2" path
-  path="$(specrelay::config::path "$root")"
+  local root="$1" role="$2" yaml_text
 
-  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+  if ! command -v ruby >/dev/null 2>&1; then
     printf 'provider-default\n'
     return 0
+  fi
+  if ! yaml_text="$(specrelay::config::effective_data_yaml "$root")"; then
+    printf '%s\n' "$yaml_text"
+    return 1
   fi
 
   ruby -e '
     require "yaml"
-    path, role = ARGV[0], ARGV[1]
+    role = ARGV[0]
 
     def ok(selection)
       puts selection
@@ -319,9 +365,9 @@ specrelay::config::role_model_selection() {
     end
 
     begin
-      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+      data = YAML.safe_load(STDIN.read, permitted_classes: [], aliases: false)
     rescue StandardError
-      # Malformed YAML is reported by specrelay::config::validate, not here.
+      # Malformed YAML is reported by specrelay::config::validate_effective, not here.
       ok "provider-default"
     end
     ok "provider-default" unless data.is_a?(Hash)
@@ -377,7 +423,7 @@ specrelay::config::role_model_selection() {
 
     # Any other type (list, number, boolean, ...) is invalid.
     bad "model for role #{role} must be a string (got #{model.class}: #{model.inspect}) or a structured alias/id mapping"
-  ' "$path" "$role"
+  ' "$role" <<< "$yaml_text"
 }
 
 # specrelay::config::validate_role_model <project-root> <role>
@@ -437,17 +483,19 @@ DEFAULTS
 # convention). Rejected: a non-mapping section/subsection, unknown keys,
 # negative limits, non-integer limits, and an unknown reviewer default_mode.
 specrelay::config::verification_policy() {
-  local root="$1" path
-  path="$(specrelay::config::path "$root")"
+  local root="$1" yaml_text
 
-  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+  if ! command -v ruby >/dev/null 2>&1; then
     specrelay::config::_verification_defaults
     return 0
   fi
+  if ! yaml_text="$(specrelay::config::effective_data_yaml "$root")"; then
+    printf '%s\n' "$yaml_text"
+    return 1
+  fi
 
-  ruby -e '
+  CONFIG_YAML="$yaml_text" ruby -e '
     require "yaml"
-    path = ARGV[0]
 
     defaults = {}
     STDIN.each_line do |line|
@@ -461,7 +509,7 @@ specrelay::config::verification_policy() {
     end
 
     begin
-      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+      data = YAML.safe_load(ENV["CONFIG_YAML"], permitted_classes: [], aliases: false)
     rescue StandardError
       data = nil
     end
@@ -531,7 +579,7 @@ specrelay::config::verification_policy() {
     end
 
     result.each { |k, v| puts "#{k}=#{v}" }
-  ' "$path" <<< "$(specrelay::config::_verification_defaults)"
+  ' <<< "$(specrelay::config::_verification_defaults)"
 }
 
 # --- verification-policy ENGINE configuration (spec 0026) --------------------
@@ -556,21 +604,23 @@ specrelay::config::verification_policy() {
 # rest of this file's ok/bad convention — a malformed config file is reported
 # the same way everywhere).
 specrelay::config::verification_engine_raw() {
-  local root="$1" path
-  path="$(specrelay::config::path "$root")"
+  local root="$1" yaml_text
 
-  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+  if ! command -v ruby >/dev/null 2>&1; then
     printf '{"legacy_full_test_command": null, "verification": null}\n'
     return 0
+  fi
+  if ! yaml_text="$(specrelay::config::effective_data_yaml "$root")"; then
+    printf '%s\n' "$yaml_text"
+    return 1
   fi
 
   ruby -e '
     require "yaml"
     require "json"
-    path = ARGV[0]
 
     begin
-      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+      data = YAML.safe_load(STDIN.read, permitted_classes: [], aliases: false)
     rescue Psych::SyntaxError, Psych::DisallowedClass => e
       puts "malformed config (#{e.class}): #{e.message}"
       exit 1
@@ -588,7 +638,7 @@ specrelay::config::verification_engine_raw() {
     verification = nil unless verification.is_a?(Hash) || verification.is_a?(Array) || verification.nil?
 
     puts({"legacy_full_test_command" => legacy, "verification" => verification}.to_json)
-  ' "$path"
+  ' <<< "$yaml_text"
 }
 
 # --- phase budget configuration (spec 0019) ----------------------------------
@@ -615,17 +665,19 @@ DEFAULTS
 # human-readable error DETAIL on stdout and returns 1. Rejected: a non-mapping
 # section, unknown keys, negative values, and non-integer values.
 specrelay::config::phase_budgets() {
-  local root="$1" path
-  path="$(specrelay::config::path "$root")"
+  local root="$1" yaml_text
 
-  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+  if ! command -v ruby >/dev/null 2>&1; then
     specrelay::config::_phase_budget_defaults
     return 0
   fi
+  if ! yaml_text="$(specrelay::config::effective_data_yaml "$root")"; then
+    printf '%s\n' "$yaml_text"
+    return 1
+  fi
 
-  ruby -e '
+  CONFIG_YAML="$yaml_text" ruby -e '
     require "yaml"
-    path = ARGV[0]
 
     defaults = {}
     STDIN.each_line do |line|
@@ -639,7 +691,7 @@ specrelay::config::phase_budgets() {
     end
 
     begin
-      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+      data = YAML.safe_load(ENV["CONFIG_YAML"], permitted_classes: [], aliases: false)
     rescue StandardError
       data = nil
     end
@@ -683,7 +735,7 @@ specrelay::config::phase_budgets() {
     end
 
     result.each { |k, v| puts "#{k}=#{v}" }
-  ' "$path" <<< "$(specrelay::config::_phase_budget_defaults)"
+  ' <<< "$(specrelay::config::_phase_budget_defaults)"
 }
 
 # --- execution efficiency and completion gate policy (spec 0021) -----------
@@ -718,17 +770,19 @@ DEFAULTS
 # negative or non-integer `exploration_warning_calls`/
 # `repeated_verification_limit`.
 specrelay::config::execution_efficiency_policy() {
-  local root="$1" path
-  path="$(specrelay::config::path "$root")"
+  local root="$1" yaml_text
 
-  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+  if ! command -v ruby >/dev/null 2>&1; then
     specrelay::config::_execution_efficiency_defaults
     return 0
   fi
+  if ! yaml_text="$(specrelay::config::effective_data_yaml "$root")"; then
+    printf '%s\n' "$yaml_text"
+    return 1
+  fi
 
-  ruby -e '
+  CONFIG_YAML="$yaml_text" ruby -e '
     require "yaml"
-    path = ARGV[0]
 
     defaults = {}
     STDIN.each_line do |line|
@@ -742,7 +796,7 @@ specrelay::config::execution_efficiency_policy() {
     end
 
     begin
-      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+      data = YAML.safe_load(ENV["CONFIG_YAML"], permitted_classes: [], aliases: false)
     rescue StandardError
       data = nil
     end
@@ -809,7 +863,7 @@ specrelay::config::execution_efficiency_policy() {
     end
 
     result.each { |k, v| puts "#{k}=#{v}" }
-  ' "$path" <<< "$(specrelay::config::_execution_efficiency_defaults)"
+  ' <<< "$(specrelay::config::_execution_efficiency_defaults)"
 }
 
 # --- coordinator role policy (spec 0025) ------------------------------------
@@ -844,17 +898,19 @@ DEFAULTS
 # non-integer max_decision_attempts/timeout_seconds, and an unrecognized
 # confidence_threshold.
 specrelay::config::coordinator_policy() {
-  local root="$1" path
-  path="$(specrelay::config::path "$root")"
+  local root="$1" yaml_text
 
-  if [ ! -f "$path" ] || ! command -v ruby >/dev/null 2>&1; then
+  if ! command -v ruby >/dev/null 2>&1; then
     specrelay::config::_coordinator_defaults
     return 0
   fi
+  if ! yaml_text="$(specrelay::config::effective_data_yaml "$root")"; then
+    printf '%s\n' "$yaml_text"
+    return 1
+  fi
 
-  ruby -e '
+  CONFIG_YAML="$yaml_text" ruby -e '
     require "yaml"
-    path = ARGV[0]
 
     defaults = {}
     STDIN.each_line do |line|
@@ -868,7 +924,7 @@ specrelay::config::coordinator_policy() {
     end
 
     begin
-      data = YAML.safe_load(File.read(path), permitted_classes: [], aliases: false)
+      data = YAML.safe_load(ENV["CONFIG_YAML"], permitted_classes: [], aliases: false)
     rescue StandardError
       data = nil
     end
@@ -924,7 +980,7 @@ specrelay::config::coordinator_policy() {
     end
 
     result.each { |k, v| puts "#{k}=#{v}" }
-  ' "$path" <<< "$(specrelay::config::_coordinator_defaults)"
+  ' <<< "$(specrelay::config::_coordinator_defaults)"
 }
 
 specrelay::config::validate_role_model() {

@@ -11,3 +11,7 @@ __pycache__/
 *.py[cod]
 
 .mcp_data/
+
+# Local developer configuration overlay (spec 0027) — personal-only
+# overrides for THIS repository's own .specrelay/config.yml; never commit.
+.specrelay/config.local.yml
