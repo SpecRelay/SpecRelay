@@ -5,41 +5,46 @@
 
 ## Current objective
 
-**UI runtime and visual verification** (Phase 4). Real app startup,
-Playwright flows, screenshot capture vs. supplied expected references,
-traces/video/console/network evidence, independent Reviewer verification.
-Explicit `BLOCKED` — never a silent skip — when the app, flow, credentials,
-or an expected reference is unavailable. One more check kind (`kind: ui`,
-already reserved in the schema) inside Phase 3's now-implemented policy.
+Not yet selected — see "Later objectives" below for the dependency-ordered
+candidates.
 
 ## Next objective
 
-Not yet selected — see "Later objectives" below for the dependency-ordered
-candidates.
+**Bounded artifact repair** — a real, engine-executed `REPAIR_ARTIFACTS`.
+*(Phase 5)*
 
 ## Later objectives
 
 In dependency order (roadmap §5):
 
-1. **Bounded artifact repair** — a real, engine-executed `REPAIR_ARTIFACTS`. *(Phase 5)*
-2. **Full artifact-layout migration** (`00-task/ … 06-telemetry/`) — last, once its real contents are known. *(Phase 6)*
-3. **Reduced-touchpoint autonomous routing** — once verification/UI checks are mature. *(Phase 7)*
-4. **Per-task isolated workspaces**, then **parallel task execution**. *(Phases 8–9)*
-5. **Cross-task dependency/conflict coordination**. *(Phase 10)*
-6. **Durable cross-task knowledge/memory** — exploratory, no design yet. *(Phase 11)*
-7. **Package-manager release + additional providers** (planned); **license** blocked on a human decision (`LICENSE.TODO`). *(Phase 12)*
+1. **Full artifact-layout migration** (`00-task/ … 06-telemetry/`) — last, once its real contents are known. *(Phase 6)*
+2. **Reduced-touchpoint autonomous routing** — once verification/UI checks are mature. *(Phase 7)*
+3. **Per-task isolated workspaces**, then **parallel task execution**. *(Phases 8–9)*
+4. **Cross-task dependency/conflict coordination**. *(Phase 10)*
+5. **Durable cross-task knowledge/memory** — exploratory, no design yet. *(Phase 11)*
+6. **Package-manager release + additional providers** (planned); **license** blocked on a human decision (`LICENSE.TODO`). *(Phase 12)*
 
 ## Recently completed architecture milestones
 
+- **Spec 0028 — UI runtime verification and compact review evidence**:
+  first-class UI-impact detection, deterministic Playwright (or fake,
+  no-browser-required) scenario execution, compact checkpoint-screenshot
+  evidence (crop/dedup/size policy, no retained source image), redacted
+  browser-console/network capture, optional expected-reference comparison,
+  and a `transitions.sh::accept` completion gate requiring a Reviewer
+  `## UI Verification Evidence Review` section before `READY_FOR_HUMAN_REVIEW`.
+  `kind: ui` (reserved in spec 0026's schema) is now a real check kind.
+  *Releasing it (`CHANGELOG`/`VERSION` bump) is a separate, later operational
+  decision — not an architecture milestone.*
 - **Spec 0027 — Local developer configuration overlay**: an optional,
   Git-ignored `.specrelay/config.local.yml` layers sparse, personal
   overrides on top of the shared `.specrelay/config.yml` (deterministic
   deep merge; lists replace wholesale; explicit `null` removes an
   inherited key), inspectable via `specrelay config show`/`config explain`
   and reported by `doctor`/`project inspect`. Sequenced immediately before
-  the current objective below because UI runtime and visual verification
-  will need developer-local browser paths, credentials, service startup
-  commands, test data, and timeouts to be overridable per developer.
+  spec 0028 (UI runtime verification) above because it needed
+  developer-local browser paths, credentials, service startup commands,
+  test data, and timeouts to be overridable per developer.
 - **Spec 0026 — Configurable verification policy and multi-service
   execution**: the single `full_test_command` string is now one option
   alongside a real multi-service, multi-check policy — `changed`/`full`/

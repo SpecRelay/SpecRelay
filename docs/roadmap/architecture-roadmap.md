@@ -640,8 +640,8 @@ Phase 12). Every capability is labeled with exactly one maturity term:
   and the task-level `configuration_effective` capture all exist; see
   [docs/configuration.md](../configuration.md).
 
-### C3 — UI runtime and visual verification (Phase 4)
-- **Maturity: committed next milestone.**
+### C3 — UI runtime and visual verification (Phase 4, spec 0028)
+- **Maturity: implemented.**
 - **Objective:** Give SpecRelay a first-class way to verify UI-impacting
   changes against real browser behavior and supplied visual references,
   instead of having no UI verification at all (the current state — spec
@@ -668,32 +668,43 @@ Phase 12). Every capability is labeled with exactly one maturity term:
     credentials, test data, environment, or expected reference is
     unavailable;
   - no code path that silently skips UI verification when it was required.
-- **Suggested future artifact area** (realized concretely once Phase 6's
-  migration lands — see §5, Phase 6):
+- **Realized artifact area** (contained under one task-runtime directory
+  until Phase 6's full artifact-folder migration lands — see §5, Phase 6):
   ```text
-  04-verification/ui/
-  ├── playwright-report/
-  ├── screenshots/
-  │   ├── actual/
-  │   ├── expected/
-  │   └── diff/
-  ├── traces/
-  ├── videos/
-  ├── console-errors.json
-  ├── network-errors.json
-  └── ui-verification-summary.md
+  29-ui-verification/
+  ├── plan.json / environment.json / runtime.log
+  ├── summary.json / summary.md
+  ├── console-errors.json / network-errors.json
+  ├── traces/                     # runtime-only, never published
+  └── scenarios/<NN-slug>/
+      ├── result.json / report.md
+      ├── screenshots/            # compact, deduplicated, size-limited
+      └── comparison/
   ```
-- **Dependencies:** C2 (UI verification is one configured check kind inside
-  the same multi-service policy, not a separate system).
-- **Expected specification(s):** none yet — a new spec, no number reserved.
+  Compact, Reviewer-validated evidence publishes separately to
+  `<spec-directory>/verification/ui/` (`specrelay ui publish`).
+- **Dependencies:** C2 (UI verification is one configured check kind —
+  `kind: ui` — inside the same multi-service policy, not a separate system).
+- **Expected specification(s):** 0028 (implemented).
 - **Exit criteria:** a UI-impacting task can be detected deterministically or
-  declared explicitly; a full actual/expected/diff/trace/video/console/network
-  evidence set is produced and stored; the Reviewer independently verifies it;
-  every documented unavailability case produces `BLOCKED`, never a silent
-  pass; a fake/deterministic UI-check fixture exists so this is testable
-  without a real browser or real credentials.
-- **Implementation status:** **Not started.** No test, doc, or template in
-  the repository references a browser or Playwright today.
+  declared explicitly; compact evidence (checkpoint screenshots, console/
+  network events, optional expected-reference comparison) is produced and
+  stored, with richer diagnostics (traces) kept runtime-only; the Reviewer
+  independently verifies it; every documented unavailability case produces
+  `BLOCKED`, never a silent pass; a fake/deterministic UI-check fixture
+  exists so this is testable without a real browser or real credentials —
+  **all met**.
+- **Implementation status:** **Implemented** —
+  `lib/specrelay/ui_verification.sh` + `lib/specrelay/py/
+  ui_verification_lib.py` (detection, scenario schema, selection, execution,
+  screenshot policy, redaction, comparison, publication),
+  `lib/specrelay/js/ui_playwright_runner.js` (real Playwright adapter),
+  `specrelay ui plan/run/report/publish/clean`, `doctor`'s "UI verification"
+  section, the `transitions.sh::accept` completion gate, and
+  `test/ui_verification_test.sh` (deterministic fake-provider coverage, no
+  real browser required) all exist; see
+  [docs/verification-and-timeline.md](../verification-and-timeline.md) ("UI
+  runtime verification").
 
 ### C4 — Bounded artifact repair (Phase 5)
 - **Maturity: planned.**
@@ -899,7 +910,7 @@ already reserves one (0001–0025). Future rows are explicit placeholders —
 | 0025 | AI Coordinator and decision contract | C1 (Phase 2) | **Implemented** — implemented, reviewed, committed, pushed; release timing is a separate operational decision (see [current-plan.md](current-plan.md)), not a pending architecture item |
 | — | Configurable test levels and multi-service verification | C2 (Phase 3) | Committed next milestone — no spec number reserved |
 | 0027 | Local developer configuration overlay | Precedes C3/Phase 4 (UI verification needs local browser/credential/timeout overrides) | Completed |
-| — | UI runtime and visual verification | C3 (Phase 4) | Committed next milestone — no spec number reserved |
+| 0028 | UI runtime verification and compact review evidence | C3 (Phase 4) | Completed |
 | — | Bounded artifact repair | C4 (Phase 5) | Planned — no spec number reserved |
 | — | Full numbered artifact-layout migration | C5 (Phase 6) | Planned — named as pending future work by specs 0023 §19 and 0024 §9; no spec number reserved |
 | — | Reduced-touchpoint autonomous routing | C6 (Phase 7) | Planned — no spec number reserved |

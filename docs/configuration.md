@@ -766,7 +766,7 @@ task rather than resuming the old one.
         checks:
           - name: unit
             kind: unit             # unit|lint|typecheck|build|integration|
-                                    # contract|smoke|security|custom (ui reserved)
+                                    # contract|smoke|security|custom|ui (spec 0028)
             command: bundle exec rspec
             cwd: services/backend  # repo-relative; no absolute path or '..'
             timeout_seconds: 1200
@@ -826,6 +826,113 @@ task rather than resuming the old one.
   `specrelay task show`/`task report` show the recorded overall status,
   required/optional pass-fail counts, and evidence path; a historical task
   with no recorded run honestly reports "Verification policy: not recorded."
+
+### `verification.ui.*` (spec 0028, UI runtime verification)
+
+- **Purpose:** first-class UI runtime verification for tasks that change
+  user-visible behaviour — a deterministic Playwright-driven (or fake,
+  no-browser-required) scenario engine, compact checkpoint-screenshot
+  evidence, browser-console/network capture with redaction, and optional
+  expected-reference comparison. Lives under the SAME top-level
+  `verification:` mapping as the sections above (a disjoint `ui` key —
+  never validated by the spec-0019/0026 parsers, only recognized so they do
+  not reject it as unknown).
+- **Shape (defaults shown):**
+  ```yaml
+  verification:
+    ui:
+      enabled: auto                     # true | false | auto
+      required_when_detected: true
+      provider: playwright              # playwright | fake
+      browsers: [chromium]              # chromium | firefox | webkit
+      detection:
+        paths: []                       # extra glob patterns, e.g. app/views/**
+      runtime:
+        start_command: bin/dev
+        working_directory: .
+        ready_url: http://127.0.0.1:3000/health
+        ready_timeout_seconds: 120
+        stop_command: null
+      scenarios:
+        manifest: .specrelay/ui-scenarios.yml
+      screenshots:
+        mode: checkpoints                # checkpoints | off
+        retain_source: false
+        crop: important-region           # important-region | full-viewport | full-page
+        max_width: 1600
+        max_height: 1200
+        max_file_bytes: 750000
+        format: png                      # png | jpeg
+      video:
+        mode: off                        # off | on-failure | explicit
+      trace:
+        mode: on-failure                 # off | on-failure | always
+      console:
+        fail_on: [error]                 # error | warning
+      network:
+        fail_on_status: ["500-599"]      # ranges or exact codes
+      expected_references:
+        policy: compare-when-present     # ignore | compare-when-present | required
+      publication:
+        enabled: true
+        destination: spec-directory
+        path: verification/ui
+  ```
+- **`enabled`:** `true` always requires UI verification; `false` disables it
+  UNLESS the task is explicitly marked UI-impacting AND
+  `required_when_detected: true`, which produces a configuration-conflict
+  error rather than a silent skip; `auto` (default) detects impact from
+  changed paths matching `detection.paths`, specification language (page,
+  form, button, link, view, layout, screenshot, Playwright, CSS, JavaScript,
+  template, visual), supplied expected references, or explicit task
+  metadata — every detection result is recorded WITH its reasons.
+- **Scenarios:** come from the configured manifest, the specification
+  bundle, or acceptance criteria resolved into reusable flows — never
+  unbounded browser exploration. Each scenario has an `id`, `title`,
+  non-empty `acceptance_criteria`, `steps` (closed action vocabulary:
+  `goto`/`click`/`fill`/`select`/`check`/`uncheck`/`hover`/`press`/
+  `wait_for`), `assertions` (`visible`/`absent`/`text`/`value`/`url`/
+  `count`), and optional `checkpoints` (a locator or bounding region — see
+  docs/verification-and-timeline.md, "UI runtime verification", for the
+  full example).
+- **Local override compatibility (spec 0027):** every key above participates
+  in the generic `.specrelay/config.local.yml` deep-merge; a developer can
+  override just `runtime.start_command`/`runtime.ready_url`/`browsers`
+  locally without repeating the rest of the committed configuration.
+- **Screenshots:** locator/element capture is preferred over a full-page
+  screenshot (disabled by default); an intermediate source image used only
+  to produce a crop is deleted, never published (`retain_source: false`);
+  exact-digest duplicates are never published twice; a screenshot that
+  cannot meet `max_width`/`max_height`/`max_file_bytes` without becoming
+  unreadable BLOCKS the scenario with an explicit reason rather than
+  guessing.
+- **Video/trace:** video is disabled by default and never published even
+  when enabled; trace is captured only per `trace.mode` (default
+  `on-failure`), stays in task runtime evidence, and is never published.
+- **Expected references:** `ignore` skips visual comparison entirely;
+  `compare-when-present` compares whenever a mapped reference exists and
+  otherwise states plainly that visual equivalence was not assessed;
+  `required` BLOCKS when a mapped reference is missing. This reference
+  implementation's comparison method is exact-digest equality
+  (`sha256-exact`) — recorded honestly as such, since no new image-diff
+  dependency is introduced.
+- **Publication:** `specrelay ui publish <task-ref> <spec-relpath>
+  [--dry-run]` writes only the compact, Reviewer-validated package to
+  `<spec-directory>/<publication.path>/` (default `verification/ui/`) —
+  never source screenshots, videos, traces, or raw runtime logs.
+  Publication REFUSES (even `--dry-run`) until the task's Reviewer evidence
+  file contains a `## UI Verification Evidence Review` section.
+- **Completion gate:** a UI-impacting task cannot reach
+  `READY_FOR_HUMAN_REVIEW` while UI verification is required but missing,
+  incomplete, FAILED, BLOCKED, or unreviewed — enforced in
+  `transitions.sh::accept`, the only path into that state (see
+  docs/task-lifecycle.md).
+- **Inspection:** `specrelay ui plan <task-ref>` (detection reasons,
+  selected scenarios, coverage, runtime-readiness projection — no browser
+  execution), `specrelay ui run <task-ref> [--resume]`, `specrelay ui report
+  <task-ref>`, and `specrelay doctor` (configuration readiness: provider/
+  browser availability, scenario manifest validity, expected-reference
+  policy, publication destination — never task-specific runtime readiness).
 
 ### `performance.phase_budgets.*` (spec 0019, phase budgets)
 

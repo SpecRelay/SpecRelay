@@ -242,6 +242,30 @@ specrelay::transitions::accept() {
     fi
   done
 
+  # UI-verification completion gate (spec 0028, section 31): a UI-impacting
+  # task must never reach READY_FOR_HUMAN_REVIEW when required UI evidence is
+  # missing, incomplete, or unreviewed. This is the ONLY path into
+  # READY_FOR_HUMAN_REVIEW (both the automated reviewer loop and a manual
+  # human decision go through this same function), so gating here — rather
+  # than in the Coordinator, which never enacts this transition anyway (see
+  # coordinator.sh's dispatch header) — is sufficient to make the gate
+  # unbypassable. A task with no UI verification plan recorded (not
+  # UI-impacting, or UI verification disabled) always passes this check.
+  local ui_gate ui_gate_ok
+  ui_gate="$(specrelay::ui_verification::gate_check "$root" "$task_id" 2>/dev/null)"
+  ui_gate_ok="$(printf '%s' "$ui_gate" | python3 -c 'import json,sys
+try:
+    print("1" if json.load(sys.stdin).get("ok") else "0")
+except Exception:
+    print("1")' 2>/dev/null)"
+  if [ "$ui_gate_ok" != "1" ]; then
+    local ui_reason
+    ui_reason="$(printf '%s' "$ui_gate" | python3 -c 'import json,sys
+print(json.load(sys.stdin).get("reason",""))' 2>/dev/null)"
+    specrelay::out::err "refusing to accept '$task_id': UI verification completion gate failed — ${ui_reason:-see 29-ui-verification/summary.json}"
+    return 1
+  fi
+
   local current_round
   current_round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null)"
   [ -n "$current_round" ] || current_round=1

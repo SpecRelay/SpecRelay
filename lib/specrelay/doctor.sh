@@ -405,6 +405,50 @@ for w in d.get("warnings", []):
   specrelay::doctor::_ok "Verification-policy engine: ready (configuration valid; no configured command executed by doctor)"
 }
 
+# specrelay::doctor::_ui_verification <root>
+# Read-only (spec 0028, section 35, "Doctor behavior"). Reports CONFIGURATION
+# readiness only — never task-specific runtime readiness (that is 'ui plan's
+# job for a real task) and never starts a browser or the application runtime.
+specrelay::doctor::_ui_verification() {
+  local root="$1" blob
+  blob="$(specrelay::ui_verification::doctor_summary "$root" 2>/dev/null)"
+  local valid
+  valid="$(printf '%s' "$blob" | python3 -c 'import json,sys
+try:
+    print("yes" if json.load(sys.stdin).get("config_valid") else "no")
+except Exception:
+    print("no")' 2>/dev/null)"
+  if [ "$valid" != "yes" ]; then
+    local detail
+    detail="$(printf '%s' "$blob" | python3 -c 'import json,sys
+print(json.load(sys.stdin).get("error",""))' 2>/dev/null)"
+    specrelay::doctor::_fail "UI verification: INVALID configuration — ${detail:-unknown error} (source: $(specrelay::config::path "$root"))"
+    return 0
+  fi
+
+  printf '%s' "$blob" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+enabled = d.get("enabled")
+if enabled is True:
+    print("UI verification: required (verification.ui.enabled: true)")
+elif enabled is False:
+    print("UI verification: disabled (verification.ui.enabled: false)")
+else:
+    print("UI verification: auto (task-specific detection applies at plan/run time)")
+print("Provider: %s (%s)" % (d["provider"], "available" if d["provider_available"] else "unavailable: %s" % d["provider_detail"]))
+print("Browsers: %s" % ", ".join(d["browsers"]))
+print("Runtime start command: %s" % ("configured" if d["runtime_start_command_configured"] else "missing"))
+print("Scenario manifest (%s): %s" % (d["scenario_manifest_path"], d["scenario_manifest_status"]))
+print("Expected-reference policy: %s" % d["expected_reference_policy"])
+print("Publication: %s (destination: %s)" % ("enabled" if d["publication_enabled"] else "disabled", d["publication_destination"]))
+' 2>/dev/null | while IFS= read -r line; do
+    specrelay::doctor::_info "$line"
+  done
+
+  specrelay::doctor::_ok "UI verification: ready (configuration valid; no browser started by doctor)"
+}
+
 # specrelay::doctor::_phase_budgets <root>
 # Read-only (spec 0019, "Phase Budgets"). A structurally invalid
 # `performance:` section is a mandatory failure for the same reason as the
@@ -805,6 +849,9 @@ specrelay::doctor::run() {
   # these are two independent verification specs sharing the same
   # `verification:` config mapping (see config.sh's known_top comment).
   specrelay::doctor::_verification_engine "$root"
+
+  # --- UI runtime verification (spec 0028, section 35) ----------------------
+  specrelay::doctor::_ui_verification "$root"
 
   specrelay::doctor::_phase_budgets "$root"
   specrelay::doctor::_execution_efficiency "$root"

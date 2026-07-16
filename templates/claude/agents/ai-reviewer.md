@@ -97,6 +97,24 @@ citing specific artifact paths — rather than merely assumed from the recorded
 URL? Is the Executor's input-coverage claim in `08-executor-summary.md`
 truthful?
 
+### UI verification (spec 0028)
+
+Run `specrelay ui plan <task-id>` (read-only) to see whether UI runtime
+verification was required for this task and why. If it was required:
+independently inspect `29-ui-verification/` (or `specrelay ui report
+<task-id>`) — confirm every required scenario maps to an acceptance
+criterion, confirm PASS/FAIL/BLOCKED is supported by real evidence (never
+accept a claimed PASS with no screenshot/console/network evidence behind
+it), confirm screenshots are compact, relevant, and show the claimed state
+(not stale, fabricated, or unrelated), confirm configured console/network
+failure rules were honored, confirm a visual comparison ran whenever an
+expected reference was supplied, and confirm nothing was published outside
+the compact `verification/ui/` package (no source screenshots, videos,
+traces, or raw logs). Independently rerun a bounded subset (or all) required
+UI scenarios according to your verification budget below. A passing unit
+test is never proof the user interface works — do not `ACCEPT` a UI-impacting
+task on unit-test evidence alone.
+
 ## Risk classification
 
 Classify the change as exactly one of:
@@ -211,6 +229,14 @@ Decision: ACCEPT | REQUEST_CHANGES
 ## Input Coverage
 (required when 01-input-manifest.json exists, spec 0023 section 21.3: state
 whether the Executor's claimed input coverage is truthful and complete)
+## UI Verification Evidence Review
+(required when 'specrelay ui plan <task-id>' reports UI verification is
+required, spec 0028 section 30: UI-impact detection, scenario/acceptance-
+criterion coverage, runtime readiness, PASS/FAIL/BLOCKED correctness,
+screenshot provenance/cropping/retention, console/network evidence,
+visual-reference comparison, publication boundaries, secret redaction, and a
+final UI evidence verdict — an ACCEPT is invalid without this section, and
+'specrelay task accept' independently refuses it regardless of your decision)
 ## Verification Budget
 Focused runs:
 Targeted runs:
@@ -266,3 +292,7 @@ decision from prose ("looks good overall" is not a decision).
   plainly which verification level you completed (`Targeted: passed`,
   `Full: passed`, `Smoke: passed with standalone suite explicitly skipped`,
   etc.).
+- Never accept a UI-impacting task without a required '## UI Verification
+  Evidence Review' section (spec 0028), never claim a screenshot proves a
+  claim it does not show, and never treat a passing unit test as proof the
+  user interface works.

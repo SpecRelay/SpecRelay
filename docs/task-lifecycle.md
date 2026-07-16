@@ -649,3 +649,53 @@ created before spec 0026 (or one whose project has no `verification:` engine
 configured) simply has none of these files; `specrelay task show`/`report`
 report this as "Verification policy: not recorded" rather than fabricating a
 result.
+
+## 15. UI runtime verification artifacts (spec 0028)
+
+Additive; a single contained runtime directory (`29-ui-verification/`) until
+the complete task-artifact-folder migration is implemented (spec 0028,
+section 24) — never renumbers or reuses any of the numbered artifacts above.
+
+```text
+29-ui-verification/
+  plan.json           # config, detection (required/detected/reasons),
+                       # selected/not-selected scenarios, fallback_used,
+                       # coverage_complete, missing_coverage,
+                       # runtime_readiness
+  environment.json    # commit, browser_versions, viewport, provider, browsers
+  runtime.log         # human-readable run log (secrets redacted)
+  summary.json        # overall_status (PASS|FAIL|BLOCKED|NOT_REQUIRED),
+                       # required, coverage_complete, missing_coverage,
+                       # pass/fail/blocked counts, visual_comparison_performed
+  summary.md           # human-readable equivalent
+  console-errors.json  # redacted, aggregated across all scenarios
+  network-errors.json  # redacted, aggregated across all scenarios
+  traces/              # runtime-only (spec 0028 section 20); never published
+  scenarios/
+    <NN-slug>/
+      result.json       # id, title, acceptance_criteria, result, reasons,
+                         # steps, assertions, screenshots, comparisons,
+                         # digest_context, reused/reuse_reason, trace
+      report.md         # the scenario Markdown contract (spec 0028 section 27)
+      screenshots/      # compact, deduplicated, size-limited PNGs only
+      comparison/        # expected-vs-actual comparison results, when performed
+```
+
+This directory is task-runtime evidence (like `verification/` above) and is
+never committed. Once the task's Reviewer evidence-review section exists,
+`specrelay ui publish <task-ref> <spec-relpath>` copies ONLY the compact
+subset (README.md, environment.md, summary.md, console/network JSON, and
+each selected scenario's report + non-duplicate screenshots — never source
+images, videos, traces, or raw logs) to `<spec-relpath>/verification/ui/`,
+which IS committed. A task created before spec 0028 (or whose project has UI
+verification disabled/not detected) simply has none of these files;
+`specrelay ui report <task-ref>` reports this as "UI verification: not
+recorded" rather than fabricating a result.
+
+`transitions.sh::accept` — the only path into `READY_FOR_HUMAN_REVIEW` —
+independently RECOMPUTES UI-impact detection (never trusting the mere
+absence of a prior `ui plan`/`ui run` invocation as proof verification was
+not required) and refuses the transition when UI verification is required
+but `summary.json` is missing, not `PASS`, has incomplete coverage, or the
+Reviewer's `09-consultant-review.md` lacks a `## UI Verification Evidence
+Review` section.

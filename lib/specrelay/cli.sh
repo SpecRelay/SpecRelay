@@ -70,6 +70,32 @@ Discovery (read-only):
                          task's own runtime directory). Exits non-zero when
                          the overall verification status is not PASSED/
                          NOT_REQUIRED.
+  ui plan <task-ref>     Read-only (spec 0028): shows whether UI runtime
+                         verification is required for this task (detection
+                         reasons), selected scenarios, acceptance-criterion
+                         coverage, runtime-readiness projection, and expected-
+                         reference mapping. Performs no browser execution.
+  ui run <task-ref> [--resume] [--json]
+                         Executes the deterministic UI verification plan
+                         (starts/connects to the runtime, runs Playwright or
+                         the deterministic fake provider, captures compact
+                         screenshot/console/network evidence) and writes
+                         runtime evidence under the task's own
+                         29-ui-verification/ directory. Exits non-zero unless
+                         every required scenario is PASS.
+  ui report <task-ref> [--json]
+                         Read-only: shows recorded scenario results and
+                         evidence paths from the last 'ui run'.
+  ui publish <task-ref> <spec-relpath> [--dry-run]
+                         Publishes only REVIEWED compact UI evidence under
+                         <spec-relpath>/verification/ui/. Refuses when the
+                         Reviewer's UI Verification Evidence Review section is
+                         missing or when required scenarios did not PASS.
+                         --dry-run shows the file list/destination/size
+                         without mutation.
+  ui clean [--dry-run]   Removes stale 29-ui-verification/ runtime directories
+                         for tasks no longer in-flight. Never touches
+                         published evidence under verification/ui/.
   models [<provider>]    Model-selection guidance for configured automated
                          providers: the supported configuration forms
                          (provider-default, semantic alias, exact model id),
@@ -872,6 +898,96 @@ specrelay::cli::cmd_verification_run() {
   local -a extra=()
   [ "$as_json" -eq 1 ] && extra+=(--json)
   specrelay::verification_runner::run "$root" "$scratch_dir" "adhoc" 1 "$phase" "$level" "$changed_json" '[]' ${extra[@]+"${extra[@]}"}
+}
+
+# --- UI runtime verification CLI (spec 0028, section 34) --------------------
+
+specrelay::cli::cmd_ui_plan() {
+  local root task_id as_json=0 ref=""
+  root="$(specrelay::cli::require_project_root)" || return 1
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *) [ -n "$ref" ] && { specrelay::out::err "too many arguments"; return 2; }; ref="$1"; shift ;;
+    esac
+  done
+  [ -n "$ref" ] || { specrelay::out::err "usage: specrelay ui plan <task-ref> [--json]"; return 2; }
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+  local -a extra=()
+  [ "$as_json" -eq 1 ] && extra+=(--json)
+  specrelay::ui_verification::plan "$root" "$task_id" ${extra[@]+"${extra[@]}"}
+}
+
+specrelay::cli::cmd_ui_run() {
+  local root task_id ref="" resume=0 as_json=0
+  root="$(specrelay::cli::require_project_root)" || return 1
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --resume) resume=1; shift ;;
+      --json) as_json=1; shift ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *) [ -n "$ref" ] && { specrelay::out::err "too many arguments"; return 2; }; ref="$1"; shift ;;
+    esac
+  done
+  [ -n "$ref" ] || { specrelay::out::err "usage: specrelay ui run <task-ref> [--resume] [--json]"; return 2; }
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+  local -a extra=()
+  [ "$resume" -eq 1 ] && extra+=(--resume)
+  [ "$as_json" -eq 1 ] && extra+=(--json)
+  specrelay::ui_verification::run "$root" "$task_id" ${extra[@]+"${extra[@]}"}
+}
+
+specrelay::cli::cmd_ui_report() {
+  local root task_id ref="" as_json=0
+  root="$(specrelay::cli::require_project_root)" || return 1
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) as_json=1; shift ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *) [ -n "$ref" ] && { specrelay::out::err "too many arguments"; return 2; }; ref="$1"; shift ;;
+    esac
+  done
+  [ -n "$ref" ] || { specrelay::out::err "usage: specrelay ui report <task-ref> [--json]"; return 2; }
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+  local -a extra=()
+  [ "$as_json" -eq 1 ] && extra+=(--json)
+  specrelay::ui_verification::report "$root" "$task_id" ${extra[@]+"${extra[@]}"}
+}
+
+specrelay::cli::cmd_ui_publish() {
+  local root task_id ref="" spec_rel="" dry_run=0
+  root="$(specrelay::cli::require_project_root)" || return 1
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry_run=1; shift ;;
+      -*) specrelay::out::err "unknown option: $1"; return 2 ;;
+      *)
+        if [ -z "$ref" ]; then ref="$1";
+        elif [ -z "$spec_rel" ]; then spec_rel="$1";
+        else specrelay::out::err "too many arguments"; return 2; fi
+        shift ;;
+    esac
+  done
+  [ -n "$ref" ] && [ -n "$spec_rel" ] || { specrelay::out::err "usage: specrelay ui publish <task-ref> <spec-relpath> [--dry-run]"; return 2; }
+  task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+  local -a extra=()
+  [ "$dry_run" -eq 1 ] && extra+=(--dry-run)
+  specrelay::ui_verification::publish "$root" "$task_id" "$spec_rel" ${extra[@]+"${extra[@]}"}
+}
+
+specrelay::cli::cmd_ui_clean() {
+  local root dry_run=0
+  root="$(specrelay::cli::require_project_root)" || return 1
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry_run=1; shift ;;
+      *) specrelay::out::err "unknown option: $1"; return 2 ;;
+    esac
+  done
+  local -a extra=()
+  [ "$dry_run" -eq 1 ] && extra+=(--dry-run)
+  specrelay::ui_verification::clean "$root" ${extra[@]+"${extra[@]}"}
 }
 
 specrelay::cli::cmd_resume() {
@@ -1810,6 +1926,23 @@ specrelay::cli::main() {
           ;;
         *)
           specrelay::out::err "unknown 'verification' subcommand: $1"
+          return 2
+          ;;
+      esac
+      ;;
+    ui)
+      case "${1:-}" in
+        plan) shift; specrelay::cli::cmd_ui_plan "$@" ;;
+        run) shift; specrelay::cli::cmd_ui_run "$@" ;;
+        report) shift; specrelay::cli::cmd_ui_report "$@" ;;
+        publish) shift; specrelay::cli::cmd_ui_publish "$@" ;;
+        clean) shift; specrelay::cli::cmd_ui_clean "$@" ;;
+        "")
+          specrelay::out::err "usage: specrelay ui <plan|run|report|publish|clean>"
+          return 2
+          ;;
+        *)
+          specrelay::out::err "unknown 'ui' subcommand: $1"
           return 2
           ;;
       esac

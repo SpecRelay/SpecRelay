@@ -88,6 +88,8 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/verification_policy.sh"
 # shellcheck source=lib/specrelay/verification_runner.sh
 . "$LIB_DIR/verification_runner.sh"
+# shellcheck source=lib/specrelay/ui_verification.sh
+. "$LIB_DIR/ui_verification.sh"
 # shellcheck source=lib/specrelay/agent_efficiency.sh
 . "$LIB_DIR/agent_efficiency.sh"
 # shellcheck source=lib/specrelay/transitions.sh

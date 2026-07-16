@@ -49,9 +49,12 @@ PLACEMENT_VALUES = ("none", "changed", "targeted", "full", "flexible")
 KNOWN_KINDS = (
     "unit", "lint", "typecheck", "build", "integration", "contract",
     "smoke", "security", "custom",
-    # "ui" is reserved in the schema for a later specification (spec 0026,
-    # section 14) — accepted as a configuration value, but this
-    # specification implements no UI-runtime behavior for it.
+    # "ui" is a deterministic UI-runtime-verification check (spec 0028,
+    # section 32): its `command:` is executed exactly like any other check
+    # here (this engine has no UI-specific execution branch — the command is
+    # typically `specrelay ui run --plan effective`), and the UI-specific
+    # detection/scenario/evidence engine lives entirely in
+    # py/ui_verification_lib.py.
     "ui",
 )
 

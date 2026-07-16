@@ -22,6 +22,11 @@ This is the command reference for the standalone SpecRelay CLI: `bin/specrelay
 | `specrelay models [<provider>]` | Read-only model-selection guidance for configured automated providers | `0` on success; `1` unknown provider |
 | `specrelay config show [--effective] [--sources] [--json]` | Read-only local-developer-configuration-overlay status (spec 0027) | `0` valid; `1` invalid local overlay |
 | `specrelay config explain <dotted.path>` | Read-only effective-value provenance for one configuration path (spec 0027) | `0` on success; `1` invalid local overlay |
+| `specrelay ui plan <task-ref>` | Read-only UI-impact detection, scenario selection, coverage (spec 0028) | `0` on success; `1` invalid config |
+| `specrelay ui run <task-ref> [--resume] [--json]` | Executes UI verification scenarios (spec 0028) | `0` all required scenarios PASS; non-zero otherwise |
+| `specrelay ui report <task-ref> [--json]` | Read-only recorded UI scenario results | `0` on success |
+| `specrelay ui publish <task-ref> <spec-relpath> [--dry-run]` | Publishes reviewed compact UI evidence (spec 0028) | `0` published/shown; `1` refused |
+| `specrelay ui clean [--dry-run]` | Removes stale UI runtime evidence for inactive tasks | `0` on success |
 
 ## Direct CLI (`bin/specrelay` / installed `specrelay`)
 
@@ -103,7 +108,12 @@ if any mandatory check fails — Jam's absence alone never fails it unless a
 project sets `jam.required: true`. See [jam-capability.md](jam-capability.md).
 `doctor` also reports the verification-policy engine's configuration mode
 (new/legacy/absent/invalid), service/check counts, defaults, placement, and
-a wasteful-full-suite-placement warning (spec 0026) — see below.
+a wasteful-full-suite-placement warning (spec 0026) — see below. It also
+reports UI verification readiness separately (spec 0028): enabled/disabled/
+auto, provider/browser availability, runtime start-command configuration,
+scenario-manifest validity, expected-reference policy, and publication
+destination — configuration readiness only, never task-specific runtime
+readiness (that is `ui plan`'s job).
 
 ```
 specrelay verification plan [--level changed|full|flexible]
@@ -127,6 +137,45 @@ dependency-aware parallelism, writing durable per-check evidence under
 scratch directory — the Executor/Reviewer's own in-task run writes into the
 task directory instead, via the same engine). Exits non-zero unless the
 overall status is `PASSED`/`NOT_REQUIRED`.
+
+```
+specrelay ui plan <task-ref>
+```
+Read-only (spec 0028): shows whether UI runtime verification is required for
+this task (detection reasons), selected scenarios, acceptance-criterion
+coverage, a runtime-readiness projection, and expected-reference mapping.
+Performs no browser execution and writes only `29-ui-verification/plan.json`.
+
+```
+specrelay ui run <task-ref> [--resume] [--json]
+```
+Executes the deterministic UI verification plan: runtime readiness, then
+Playwright (or the deterministic fake provider) for each selected scenario,
+capturing compact checkpoint-screenshot, console, and network evidence under
+`29-ui-verification/`. `--resume` reuses a prior scenario's evidence only
+when it was `PASS` and its config/commit/browser/viewport digest still
+matches. Exits non-zero unless every required scenario is `PASS`.
+
+```
+specrelay ui report <task-ref> [--json]
+```
+Read-only: shows recorded scenario results and evidence paths from the last
+`ui run` (or "UI verification: not recorded" if none has run).
+
+```
+specrelay ui publish <task-ref> <spec-relpath> [--dry-run]
+```
+Publishes only REVIEWED compact UI evidence to `<spec-relpath>/verification/
+ui/`. Refuses (even `--dry-run`) when the task's Reviewer evidence file is
+missing a `## UI Verification Evidence Review` section or when required
+scenarios did not `PASS`. `--dry-run` shows the file list, destination, and
+estimated size without any mutation.
+
+```
+specrelay ui clean [--dry-run]
+```
+Removes stale `29-ui-verification/` runtime directories for tasks no longer
+in-flight. Never removes published evidence under `verification/ui/`.
 
 ```
 specrelay models [<provider>]

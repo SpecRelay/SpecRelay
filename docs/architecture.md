@@ -270,15 +270,88 @@ evidence (`26-verification-plan.json`, `27-verification-summary.json`,
 A project's existing single-command `validation.full_test_command` continues
 to work unmodified, translated internally to an equivalent one-service,
 one-check configuration (`project.full-test`); a project may not configure
-both at once (an ambiguity error, not a silently-resolved default). UI
-runtime/browser/screenshot verification is deliberately left to a later
-specification — this one only reserves `kind: ui` in the schema.
+both at once (an ambiguity error, not a silently-resolved default). The
+`kind: ui` check this specification reserved in the schema is implemented by
+spec 0028 (below): its `command:` runs exactly like any other check here —
+the UI-specific detection/scenario/evidence engine lives entirely in
+`lib/specrelay/py/ui_verification_lib.py`.
 
 See docs/verification-and-timeline.md ("Verification-policy engine") and
 docs/configuration.md ("`verification.*`, spec 0026") for the full
 configuration contract, and docs/task-lifecycle.md for the artifact layout.
 
-## 10. History
+## 10. UI runtime verification (spec 0028)
+
+A passing unit test is never proof the user interface works. For a task
+that changes user-visible behaviour, `verification.ui` adds a first-class,
+deterministic UI-verification capability alongside the engine above:
+
+```text
+verification.ui.enabled: true | false | auto
+              │
+              ▼
+UI-impact detection (changed paths, spec-language keywords,
+supplied expected references, explicit metadata) — recorded WITH reasons
+              │
+              ▼
+Scenario selection (manifest / bundle / acceptance criteria) + coverage check
+              │
+              ▼
+Runtime readiness (start command or external, ready URL, provider/browser)
+              │
+              ▼
+Playwright (or the deterministic fake provider) executes each scenario
+              │
+              ▼
+Screenshot crop/dedup/size policy + console/network capture+redaction
++ optional expected-reference comparison
+              │
+              ▼
+PASS | FAIL | BLOCKED per scenario, never silently skipped
+              │
+              ▼
+Reviewer evidence validation → compact publication (verification/ui/)
+```
+
+`lib/specrelay/ui_verification.sh` (bash wrapper) and
+`lib/specrelay/py/ui_verification_lib.py` (the deterministic engine, mirroring
+`verification_policy_lib.py`'s division of labor: Ruby parses the
+`verification.ui` config section and the scenario manifest YAML; Python owns
+schema validation, detection, selection, execution, screenshot policy,
+redaction, comparison, artifact writing, and publication) own: UI-impact
+detection with recorded reasons, scenario-manifest schema validation,
+scenario selection and acceptance-criterion coverage, runtime-readiness
+checks, PASS/FAIL/BLOCKED classification, compact checkpoint-screenshot
+evidence (locator/region capture preferred, exact-digest dedup, size/
+dimension limits with a bounded optimization attempt, no retained source
+image by default), browser-console/network capture with secret redaction,
+expected-reference comparison (sha256-exact, since this reference
+implementation adds no new image-diff dependency), and the compact
+publication package.
+
+Runtime diagnostics live at `<task-dir>/29-ui-verification/` (never
+committed); compact, Reviewer-validated evidence publishes to
+`<spec-directory>/verification/ui/` only after `specrelay ui publish`
+confirms a Reviewer '## UI Verification Evidence Review' section exists
+(publication refuses otherwise, even with `--dry-run`). The completion gate
+lives in `transitions.sh::accept` — the ONLY path into
+`READY_FOR_HUMAN_REVIEW` — so neither an automated Reviewer nor the AI
+Coordinator (spec 0025) can bypass it; the Coordinator's `dispatch()` never
+enacts `SEND_TO_REVIEW` in the first place (see coordinator.sh).
+
+Playwright is the initial real provider (`lib/specrelay/js/
+ui_playwright_runner.js`, invoked over stdin/stdout JSON, never given
+repository tool access beyond browser automation); `provider: fake` is a
+deterministic, no-browser-required substitute this project's OWN test suite
+always uses (SpecRelay itself has no web UI to point a real browser at — a
+consuming project supplies its own Playwright installation and application
+runtime).
+
+See docs/verification-and-timeline.md ("UI runtime verification") and
+docs/configuration.md ("`verification.ui.*`, spec 0028") for the full
+configuration contract, and docs/task-lifecycle.md for the artifact layout.
+
+## 11. History
 
 SpecRelay was originally incubated inside a host repository before being
 extracted into this standalone repository. That former in-host layout

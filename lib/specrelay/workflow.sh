@@ -1172,6 +1172,20 @@ specrelay::workflow::build_reviewer_prompt() {
       echo "  section (spec 0023, section 21.3) stating whether the Executor's claimed"
       echo "  input coverage is truthful and complete."
     fi
+    if [ "$(specrelay::ui_verification::required "$root" "$task_id" 2>/dev/null)" = "true" ]; then
+      echo "- UI verification is required for this task (spec 0028, 'Reviewer"
+      echo "  responsibilities'). $task_rel/09-consultant-review.md MUST include a"
+      echo "  '## UI Verification Evidence Review' section covering UI-impact"
+      echo "  detection, scenario/acceptance-criterion coverage, runtime readiness,"
+      echo "  PASS/FAIL/BLOCKED correctness, screenshot provenance/cropping/"
+      echo "  retention, console/network evidence, visual-reference comparison,"
+      echo "  publication boundaries, secret redaction, and a final UI evidence"
+      echo "  verdict. Independently inspect $task_rel/29-ui-verification/ (run"
+      echo "  'specrelay ui report $task_id' / 'specrelay ui plan $task_id') — an"
+      echo "  ACCEPT without this section is invalid for this task, and"
+      echo "  'specrelay task accept' independently refuses it regardless of your"
+      echo "  decision."
+    fi
     echo "- End with exactly one explicit marker: 'DECISION: ACCEPT' or"
     echo "  'DECISION: REQUEST_CHANGES'."
     echo "- Once sufficient evidence exists, decide and stop."
@@ -1332,6 +1346,16 @@ specrelay::workflow::commit_staged_input() {
     echo "  '## Input Coverage' section noting which inputs you actually used,"
     echo "  which were supplementary, and which you could not inspect)."
     echo
+    if [ "$(specrelay::ui_verification::required "$root" "$task_id" 2>/dev/null)" = "true" ]; then
+      echo "UI verification (spec 0028): this task's specification language appears"
+      echo "UI-impacting. Run 'specrelay ui plan $task_id' to see detection reasons,"
+      echo "selected scenarios, and runtime requirements, then 'specrelay ui run"
+      echo "$task_id' to execute them once your change is in place. A passing unit"
+      echo "test is never proof the user interface works — this task cannot reach"
+      echo "READY_FOR_HUMAN_REVIEW without real UI verification evidence and an"
+      echo "independent Reviewer evidence-review section."
+      echo
+    fi
     echo "Write these files in $task_rel/ (the task's runtime evidence folder,"
     echo "NOT the spec's own directory):"
     echo "  - $task_rel/03-executor-log.md"

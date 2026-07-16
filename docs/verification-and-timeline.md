@@ -415,9 +415,137 @@ execution, and durable per-check evidence. See `docs/configuration.md`
   `specrelay verification run [--level ...] [--phase ...]` executes the
   selected checks and exits non-zero unless the overall status is
   `PASSED`/`NOT_REQUIRED`.
-- **UI verification.** `kind: ui` is reserved in the check schema for a
-  later specification; this engine implements no UI-runtime, browser, or
-  screenshot behavior.
+- **UI verification.** `kind: ui` (spec 0028, section H below) is a check
+  like any other here — its `command:` (typically `specrelay ui run --plan
+  effective`) runs through the SAME generic execution path; the UI-specific
+  detection/scenario/evidence engine is a separate capability.
+
+## H. UI runtime verification (spec 0028)
+
+A passing unit test is never proof the user interface works. `verification.ui`
+(see `docs/configuration.md`, "`verification.ui.*`") adds a deterministic UI
+runtime-verification capability: detect UI impact, select scenarios, run them
+against a real (Playwright) or deterministic fake browser, capture compact
+evidence, and gate completion on real, reviewed results.
+
+- **Detection.** `enabled: true|false|auto`. `auto` (default) detects impact
+  from changed paths matching `detection.paths`, specification language
+  (page, form, button, link, view, layout, screenshot, Playwright, CSS,
+  JavaScript, template, visual keywords), supplied expected visual
+  references, or explicit task metadata — the result and its reasons are
+  always recorded (`specrelay ui plan <task-ref>`). `enabled: false` on a
+  task explicitly marked UI-impacting with `required_when_detected: true`
+  is a configuration CONFLICT, never a silent skip.
+- **Scenarios.** A scenario has an `id`, `title`, non-empty
+  `acceptance_criteria`, `steps` (closed vocabulary: `goto`, `click`, `fill`,
+  `select`, `check`, `uncheck`, `hover`, `press`, `wait_for`), `assertions`
+  (`visible`, `absent`, `text`, `value`, `url`, `count`), and optional
+  `checkpoints` (a locator or bounding region), e.g.:
+  ```yaml
+  - id: 01-only-berechnung-offered
+    title: Only Berechnung is offered for new Haushaltsrechnung rules
+    acceptance_criteria: [Berechnung is the only rule type offered]
+    steps:
+      - {action: goto, url: /companies/19892/financing/condition/versions/56742/sets/household_calculation}
+      - {action: click, target: Neues Element}
+    assertions:
+      - {type: visible, target: Berechnung}
+      - {type: absent, target: Tabelle}
+    checkpoints:
+      - {id: type-picker, region: {locator: "[data-testid='condition-type-picker']"}}
+  ```
+  Selection matches scenarios to the task's acceptance criteria (or a
+  configured service); with no discriminating signal at all, selection
+  explicitly falls back to the full configured set (never silently nothing)
+  and records that it did. Missing coverage of a material UI acceptance
+  criterion is recorded and fails the completion gate.
+- **Runtime readiness.** Before any browser executes, the engine checks: a
+  configured `start_command` (or the runtime declared external), the
+  working directory exists, a `ready_url` is configured, the provider/
+  browser is available, and credentials/test data are available. Any
+  failure is `BLOCKED` — never `PASSED` and never a silent skip.
+- **Result model.** Exactly one of `PASS`, `FAIL`, `BLOCKED` per scenario.
+  `FAIL`: the runtime was available but an assertion, a configured fatal
+  console/network event, or a visual-reference mismatch occurred. `BLOCKED`:
+  a prerequisite could not be satisfied (runtime, credentials, test data,
+  browser, a required expected reference, an invalid scenario, or a
+  screenshot that could not be stored safely). A blocked scenario is never
+  reported as passed.
+- **Screenshots.** Only material checkpoints are captured (never every
+  click); the preferred capture is a locator/region screenshot, falling
+  back to a cropped or full viewport only when the region cannot be
+  isolated — full-page screenshots are disabled by default. An intermediate
+  source image used only to produce a crop is verified readable/non-empty
+  then deleted (`retain_source: false` by default) — never published.
+  Exact-digest duplicate screenshots are recorded once and referenced, never
+  republished. A screenshot that cannot meet the configured
+  width/height/byte limits without becoming unreadable BLOCKS the scenario
+  with an explicit reason. Screenshots always come from the browser session
+  under test this run — a scenario has no field that names an arbitrary
+  pre-existing file as evidence, so neither a scenario author nor an AI role
+  can inject fabricated evidence.
+- **Console/network.** Every scenario captures `console-errors.json` /
+  `network-errors.json`, redacting authorization headers, cookies, tokens,
+  session identifiers, and API keys before they are ever written to disk.
+  Configured `console.fail_on` / `network.fail_on_status` decide PASS/FAIL;
+  other events are recorded without failing the scenario.
+- **Expected-reference comparison.** `expected_references.policy`: `ignore`
+  (no visual comparison), `compare-when-present` (compares whenever a
+  mapped reference exists; the report states plainly when none was
+  supplied — "Visual equivalence not assessed: no expected reference
+  supplied."), or `required` (BLOCKS when a mapped reference is missing).
+  This reference implementation's comparison method is exact-digest
+  equality (`sha256-exact`, recorded together with browser/viewport/
+  environment) — never a claimed comparison that did not happen.
+- **Video/trace.** Video is `off` by default and never published even when
+  enabled. Trace defaults to `on-failure`, stays in task-runtime evidence
+  only (`29-ui-verification/traces/`), and is never published — Reviewer
+  diagnostic use only.
+- **Unapproved navigation.** A `goto` step with an absolute URL outside the
+  configured runtime's own origin is rejected (`BLOCKED`) rather than
+  executed — scenarios may only navigate within the application under test
+  (relative paths) or that same origin.
+- **Runtime artifacts.** `<task-dir>/29-ui-verification/{plan.json,
+  environment.json, runtime.log, summary.json, summary.md,
+  console-errors.json, network-errors.json, traces/, scenarios/<NN-slug>/
+  {result.json, report.md, screenshots/, comparison/}}` — diagnostic,
+  never committed.
+- **Compact publication.** `specrelay ui publish <task-ref> <spec-relpath>
+  [--dry-run]` writes ONLY `README.md`, `environment.md`, `summary.md`,
+  `console-errors.json`, `network-errors.json`, and each selected scenario's
+  Markdown report + non-duplicate screenshots to `<spec-relpath>/
+  verification/ui/`. It never publishes source/full-page screenshots,
+  videos, traces, raw runtime logs, or authentication state, and it REFUSES
+  (even `--dry-run`, which is otherwise fully read-only) until the task's
+  `09-consultant-review.md` contains a `## UI Verification Evidence Review`
+  section.
+- **Completion gate.** A UI-impacting task cannot reach
+  `READY_FOR_HUMAN_REVIEW` while UI verification is required but not run,
+  selected scenarios do not cover material acceptance criteria, a required
+  scenario is `FAIL`/`BLOCKED`, or the Reviewer evidence-review section is
+  missing. This is enforced in `transitions.sh::accept` — the only path
+  into `READY_FOR_HUMAN_REVIEW` for both an automated Reviewer and a manual
+  `task accept` — so it cannot be bypassed by the AI Coordinator (spec
+  0025), which never enacts that transition itself.
+- **Resume.** A resumed run reuses a scenario's prior evidence only when it
+  was `PASS` AND its recorded configuration/commit/browser/viewport digest
+  matches the current run exactly; anything else reruns, and the decision
+  is recorded on the scenario's own `result.json`.
+- **Fake provider.** This project's own test suite always uses `provider:
+  fake` — a deterministic, no-browser-required substitute that simulates
+  the full matrix (PASS, failed assertion, blocked credentials/test data/
+  runtime, console error, network 500, screenshot checkpoint/crop/
+  oversized/duplicate, expected-reference match/mismatch, ...) via each
+  scenario's own `fixture` field. `provider: playwright`
+  (`lib/specrelay/js/ui_playwright_runner.js`) is the real adapter a
+  consuming project's own Playwright installation and application runtime
+  exercise.
+- **CLI.** `specrelay ui plan <task-ref>` (read-only projection),
+  `specrelay ui run <task-ref> [--resume] [--json]`, `specrelay ui report
+  <task-ref> [--json]` (read-only), `specrelay ui publish <task-ref>
+  <spec-relpath> [--dry-run]`, `specrelay ui clean [--dry-run]`. `specrelay
+  doctor` reports UI verification CONFIGURATION readiness (never
+  task-specific runtime readiness) separately from every other check.
 
 ## Task inspection
 

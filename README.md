@@ -227,7 +227,16 @@ languages, or check types can instead configure a `verification:` engine —
 multiple services, multiple checks per service, `changed`/`full`/`flexible`
 levels, dependencies, bounded parallel execution, and per-check evidence —
 see [docs/verification-and-timeline.md](docs/verification-and-timeline.md)
-("Verification-policy engine") and
+("Verification-policy engine") and [docs/configuration.md](docs/configuration.md).
+
+For tasks that change user-visible behaviour, `verification.ui` configures
+first-class **UI runtime verification** (spec 0028): deterministic
+Playwright-driven scenarios (or the fake provider used by this project's own
+tests), compact checkpoint screenshots, browser-console/network capture, and
+optional expected-reference comparison, with explicit PASS/FAIL/BLOCKED
+results and a completion gate the Reviewer and `task accept` both enforce.
+See [docs/verification-and-timeline.md](docs/verification-and-timeline.md)
+("UI runtime verification") and
 [docs/configuration.md](docs/configuration.md).
 
 ## Providers

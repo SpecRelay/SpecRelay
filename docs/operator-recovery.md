@@ -304,6 +304,31 @@ with `specrelay task show <task-ref>` and `specrelay config show
 first executor iteration) reports this honestly as "configuration
 provenance: not recorded" rather than fabricating a comparison.
 
+### 6c. UI runtime verification recovery note (spec 0028)
+
+`specrelay task accept` (and the automated Reviewer's ACCEPT path — both go
+through the same `transitions.sh::accept`) independently RECOMPUTES whether
+UI verification is required, and refuses with an explicit reason when it is
+required but incomplete:
+
+```
+specrelay: refusing to accept '<task-id>': UI verification completion gate
+failed — UI verification is required for this task (specification language
+matched UI keyword(s): button, page) but was never run (missing
+29-ui-verification/summary.json)
+```
+
+To recover: run `specrelay ui plan <task-ref>` to see the detection reasons
+and selected scenarios, then `specrelay ui run <task-ref>` until every
+required scenario is `PASS`, and ensure the Reviewer's
+`09-consultant-review.md` contains a `## UI Verification Evidence Review`
+section. There is no override flag — a task explicitly marked UI-impacting
+can only satisfy this by producing real evidence, never by configuration.
+A resumed `ui run --resume` reuses a scenario's prior evidence only when it
+was `PASS` and its recorded config/commit/browser/viewport digest still
+matches exactly; anything else reruns automatically. A task with no UI
+impact (or UI verification disabled) is entirely unaffected by this gate.
+
 ## 7. Coordinator failure and human-decision packets (spec 0025)
 
 The optional, disabled-by-default AI Coordinator (see

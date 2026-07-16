@@ -88,6 +88,20 @@ rules:
       - test/doctor_hooks_test.sh
       - test/coordinator_test.sh
 
+  - id: ui-verification
+    paths:
+      - lib/specrelay/ui_verification.sh
+      - lib/specrelay/py/ui_verification_lib.py
+      - lib/specrelay/js/ui_playwright_runner.js
+      - lib/specrelay/config.sh
+      - lib/specrelay/doctor.sh
+      - lib/specrelay/transitions.sh
+      - lib/specrelay/coordinator.sh
+      - lib/specrelay/workflow.sh
+      - lib/specrelay/cli.sh
+    tests:
+      - test/ui_verification_test.sh
+
   - id: verification-and-timeline
     paths:
       - lib/specrelay/verification.sh

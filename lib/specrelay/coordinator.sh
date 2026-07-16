@@ -403,6 +403,17 @@ specrelay::coordinator::_build_input_snapshot() {
   resolved_spec_path=""
   [ -f "$task_dir/02-resolved-specification.md" ] && resolved_spec_path="02-resolved-specification.md"
 
+  # UI-verification facts (spec 0028, section 33): computed here — the SAME
+  # deterministic gate_check transitions.sh::accept uses — rather than
+  # trusted from the caller-supplied situation, so the Coordinator always
+  # sees the engine's own PASS/FAIL/BLOCKED/coverage facts and can never be
+  # fed a stale or optimistic claim. This is READ-ONLY: nothing here can
+  # downgrade a FAIL/BLOCKED result, alter evidence, or bypass the gate —
+  # the gate itself is enforced independently in transitions.sh::accept,
+  # which the Coordinator's dispatch never calls (see dispatch()'s header).
+  local ui_gate_json
+  ui_gate_json="$(specrelay::ui_verification::gate_check "$root" "$task_id" 2>/dev/null || printf '{"ok": true, "reason": "unavailable"}\n')"
+
   local snapshot
   snapshot="$(
     TASK_ID="$task_id" STATE="$current" INV_POINT="$invocation_point" ITERATION="$iteration" \
@@ -410,10 +421,11 @@ specrelay::coordinator::_build_input_snapshot() {
     COORD_PROVIDER="$(specrelay::coordinator::effective_provider "$root" "$task_id")" \
     COORD_MODEL="$(specrelay::coordinator::effective_model "$root" "$task_id")" \
     COORD_AGENT="$(specrelay::coordinator::effective_agent "$root" "$task_id")" \
-    ALLOWED="$allowed_json" SITUATION="$situation_json" python3 -c '
+    ALLOWED="$allowed_json" SITUATION="$situation_json" UI_GATE="$ui_gate_json" python3 -c '
 import json, os
 allowed = json.loads(os.environ["ALLOWED"])
 situation = json.loads(os.environ["SITUATION"]) if os.environ["SITUATION"] else {}
+ui_gate = json.loads(os.environ["UI_GATE"])
 doc = {
     "task_id": os.environ["TASK_ID"],
     "current_state": os.environ["STATE"],
@@ -430,6 +442,10 @@ doc = {
     "immutable_input_manifest_path": os.environ["MANIFEST"] or None,
     "allowed_next_actions": allowed.get("allowed_next_actions", []),
     "forbidden_next_actions": allowed.get("forbidden_next_actions", []),
+    "ui_verification": {
+        "gate_passed": ui_gate.get("ok"),
+        "reason": ui_gate.get("reason"),
+    },
     "situation": situation,
 }
 print(json.dumps(doc, indent=2, sort_keys=True))

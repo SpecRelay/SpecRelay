@@ -532,10 +532,16 @@ specrelay::config::verification_policy() {
     # keys ONLY to avoid rejecting them as unknown — their actual validation
     # happens in specrelay::config::verification_engine_raw / py/
     # verification_policy_lib.py, never here.
-    known_top = ["executor", "reviewer", "version", "defaults", "placement", "services", "risk_rules"]
+    # "ui" belongs to the spec-0028 UI-runtime-verification schema (a further
+    # disjoint key set nested under the same top-level `verification:`
+    # mapping — same rationale as "version"/"defaults"/"placement"/
+    # "services"/"risk_rules" above). Recognized here only to avoid rejecting
+    # it as unknown; its actual validation happens in
+    # py/ui_verification_lib.py, never here.
+    known_top = ["executor", "reviewer", "version", "defaults", "placement", "services", "risk_rules", "ui"]
     unknown_top = verification.keys - known_top
     unless unknown_top.empty?
-      bad "verification configuration has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: executor, reviewer, version, defaults, placement, services, risk_rules"
+      bad "verification configuration has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: executor, reviewer, version, defaults, placement, services, risk_rules, ui"
     end
 
     int_keys = {
