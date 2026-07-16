@@ -233,6 +233,17 @@ default shown here.
   example a repository migrating from a pre-existing `.ai-runs/tasks` workflow —
   can set this explicitly (e.g. `runs_root: .ai-runs/tasks`).
 
+### `tasks.archive_root`
+
+- **Purpose:** directory (relative to the project root) where `specrelay task
+  archive` moves completed (terminal-state) tasks. It is deliberately a sibling
+  of `tasks.runs_root`, **outside** it, so archived tasks are never re-discovered
+  by `task list`/`status`.
+- **Type:** string (relative path).
+- **Default:** `.specrelay-runs/archive`.
+- **Note:** archiving is a plain, reversible move (nothing is deleted); to
+  restore an archived task, move its directory back under `tasks.runs_root`.
+
 ### `tasks.max_iterations`
 
 - **Purpose:** cap on how many executor rework rounds `specrelay run` attempts

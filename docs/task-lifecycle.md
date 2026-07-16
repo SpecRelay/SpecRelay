@@ -388,6 +388,15 @@ uncommitted (and, for new files, untracked) changes the executor produced; the
 evidence-capture `--intent-to-add` / `reset` dance is reverted so nothing is
 left staged.
 
+Once a completed task no longer needs to appear in `task list`/`status`, move it
+out of the active runs root with `specrelay task archive` (see
+[commands.md](commands.md), "Archiving completed tasks"). Archiving is a plain,
+reversible move of the whole task directory into `tasks.archive_root` (default
+`.specrelay-runs/archive`); it never deletes anything, refuses any non-terminal
+or live-owned task, and stamps `archived_at` / `archived_from_state` on the
+moved `state.json`. It is orthogonal to the per-round archiving in §8 (which
+lives *inside* a task under `iterations/round-<N>/`).
+
 ## 8. Evidence capture and per-round archiving
 
 **Per-round evidence.** After each executor run,

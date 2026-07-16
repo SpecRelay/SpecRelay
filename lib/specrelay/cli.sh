@@ -201,6 +201,17 @@ Workflow engine:
                              Manual-recovery entry point for the runner-owned
                              EXECUTOR_RUNNING -> READY_FOR_REVIEW submit
                              transition.
+  task archive <task-ref> [--include-blocked] [--dry-run]
+  task archive --all [--include-blocked] [--dry-run]
+                             Move completed tasks out of the active runs root
+                             into the archive root (default
+                             .specrelay-runs/archive), preserving every
+                             artifact — a reversible move, nothing is deleted.
+                             READY_FOR_HUMAN_REVIEW is archived by default;
+                             BLOCKED only with --include-blocked. Refuses a
+                             task a live process still owns or that is not
+                             owned by SpecRelay; --all leaves active tasks in
+                             place; --dry-run mutates nothing.
   task timeline <task-ref> [--json]
                              Read-only execution-timeline report: total wall
                              time, per-phase durations, invocation/resume
@@ -1697,6 +1708,78 @@ specrelay::cli::task_recover() {
   return "$rc"
 }
 
+# specrelay::cli::task_archive [<task-ref>] [--all] [--include-blocked] [--dry-run]
+# Move completed (terminal-state) tasks out of the active runs root into the
+# archive root, preserving every artifact. Two modes:
+#   * a single <task-ref> — archive exactly that task;
+#   * --all (alias --completed) — archive every completed task, leaving active
+#     tasks in place; one task's refusal never aborts the rest.
+# READY_FOR_HUMAN_REVIEW is archived by default; BLOCKED only with
+# --include-blocked. --dry-run reports what would happen and mutates nothing.
+specrelay::cli::task_archive() {
+  local root ref="" all=0 include_blocked=0 dry_run=0
+  root="$(specrelay::cli::require_project_root)" || return 1
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --all|--completed) all=1; shift ;;
+      --include-blocked) include_blocked=1; shift ;;
+      --dry-run) dry_run=1; shift ;;
+      -*)
+        specrelay::out::err "unknown option: $1"; return 2 ;;
+      *)
+        if [ -n "$ref" ]; then
+          specrelay::out::err "too many arguments"; return 2
+        fi
+        ref="$1"; shift ;;
+    esac
+  done
+
+  if [ -n "$ref" ] && [ "$all" = "1" ]; then
+    specrelay::out::err "specify EITHER a task ref OR --all, not both"
+    return 2
+  fi
+  if [ -z "$ref" ] && [ "$all" != "1" ]; then
+    specrelay::out::err "usage: specrelay task archive <task-ref> [--include-blocked] [--dry-run]"
+    specrelay::out::err "   or: specrelay task archive --all [--include-blocked] [--dry-run]"
+    return 2
+  fi
+
+  # Single-task mode.
+  if [ -n "$ref" ]; then
+    local task_id
+    task_id="$(specrelay::task::resolve_ref "$root" "$ref")" || return 1
+    specrelay::archive::task "$root" "$task_id" "$include_blocked" "$dry_run"
+    return $?
+  fi
+
+  # Bulk mode: archive every completed task; active tasks are left in place, and
+  # a single task's refusal (e.g. a live owner) never aborts the rest.
+  local id state archived=0 skipped=0 rc=0
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    state="$(specrelay::state::canonical "$(specrelay::state::path "$(specrelay::task::dir "$root" "$id")")")"
+    if ! specrelay::archive::is_archivable_state "$state" "$include_blocked"; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+    if specrelay::archive::task "$root" "$id" "$include_blocked" "$dry_run"; then
+      archived=$((archived + 1))
+    else
+      rc=1
+    fi
+  done < <(specrelay::task::list_ids "$root")
+
+  local verb="Archived"
+  [ "$dry_run" = "1" ] && verb="Would archive"
+  if [ "$archived" = "0" ]; then
+    echo "No completed tasks to archive ($skipped active task(s) left in place)."
+  else
+    echo "$verb $archived task(s); $skipped active task(s) left in place."
+  fi
+  return "$rc"
+}
+
 # specrelay::cli::task_coordination <task-ref> [--json]
 # Read-only (spec 0025, section 33): a dedicated coordinator-activity report,
 # distinct from (and identical in content to) the coordinator summary already
@@ -1790,6 +1873,7 @@ specrelay::cli::task_dispatch() {
     request-changes) specrelay::cli::task_request_changes "$@" ;;
     block) specrelay::cli::task_block "$@" ;;
     recover) specrelay::cli::task_recover "$@" ;;
+    archive) specrelay::cli::task_archive "$@" ;;
     authorize-submit) specrelay::cli::task_authorize_submit "$@" ;;
     timeline) specrelay::cli::task_timeline "$@" ;;
     commands) specrelay::cli::task_commands "$@" ;;
@@ -1798,7 +1882,7 @@ specrelay::cli::task_dispatch() {
     coordinate) specrelay::cli::task_coordinate "$@" ;;
     coordination) specrelay::cli::task_coordination "$@" ;;
     "")
-      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|authorize-submit|timeline|commands|efficiency|report|coordinate|coordination>"
+      specrelay::out::err "usage: specrelay task <create|show|status|list|approve|requeue|accept|request-changes|block|recover|archive|authorize-submit|timeline|commands|efficiency|report|coordinate|coordination>"
       return 2
       ;;
     *)

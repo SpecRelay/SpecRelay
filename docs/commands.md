@@ -16,6 +16,8 @@ This is the command reference for the standalone SpecRelay CLI: `bin/specrelay
 | `specrelay task block <task-ref> "<reason>"` | `EXECUTOR_RUNNING` → `BLOCKED` | `0` transitioned; non-zero refused |
 | `specrelay task authorize-submit <task-ref>` | Runner-owned `EXECUTOR_RUNNING` → `READY_FOR_REVIEW` | `0` submitted; non-zero refused |
 | `specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]` | SpecRelay-native interrupted-task recovery | `0` recovered; non-zero refused (live owner / wrong state / not owned / no reason) |
+| `specrelay task archive <task-ref> [--include-blocked] [--dry-run]` | Move one completed task out of the active runs root into the archive root (reversible; nothing deleted) | `0` archived (or would, `--dry-run`); non-zero refused (non-terminal / live owner / not owned / collision) |
+| `specrelay task archive --all [--include-blocked] [--dry-run]` | Move every completed task into the archive root; active tasks left in place | `0` on success; non-zero if any single task was refused |
 | `specrelay task timeline <task-ref> [--json]` | Read-only execution-timeline report (spec 0019) | `0` on success; `1` unknown task |
 | `specrelay task coordinate <task-ref> --invocation-point <point> [--situation <json>]` | Runs one bounded AI Coordinator round (spec 0025); disabled by default | `0` decision validated/dispatched (or safe fallback); `10` coordinator disabled; non-zero unknown task |
 | `specrelay task coordination <task-ref> [--json]` | Read-only coordinator-activity report (spec 0025) | `0` on success (reports "not recorded" honestly if never invoked); `1` unknown task |
@@ -238,6 +240,8 @@ specrelay task accept <task-ref>
 specrelay task request-changes <task-ref> "<reason>"
 specrelay task block <task-ref> "<reason>"
 specrelay task recover <task-ref> --reason "<reason>" [--to READY_FOR_EXECUTOR]
+specrelay task archive <task-ref> [--include-blocked] [--dry-run]
+specrelay task archive --all [--include-blocked] [--dry-run]
 specrelay task authorize-submit <task-ref>
 specrelay task timeline <task-ref> [--json]
 specrelay task coordinate <task-ref> --invocation-point <point> [--situation <json>]
@@ -439,6 +443,26 @@ source-local `specrelay version` reports it. `tag` creates the `vX.Y.Z`
 annotated tag from a clean, committed tree; it refuses a dirty tree or an
 existing tag and never pushes. See [release-process.md](release-process.md)
 for the release-impact metadata contract and the pre-1.0 versioning policy.
+
+## Archiving completed tasks
+
+`specrelay task archive` moves completed tasks out of the active runs root
+(`tasks.runs_root`) into the archive root (`tasks.archive_root`, default
+`.specrelay-runs/archive`) so `task list`/`status` stop showing them. It is a
+plain, **reversible move**: the task's directory — `state.json` plus every
+numbered artifact and its `iterations/` history — is relocated verbatim and
+stamped with `archived_at` / `archived_from_state`; nothing is deleted. To
+restore one, move its directory back under `tasks.runs_root`.
+
+- **Completed** means a terminal state: `READY_FOR_HUMAN_REVIEW` (archived by
+  default) or `BLOCKED` (archived only with `--include-blocked`, so terminal
+  failures are never hidden by accident).
+- Archiving **refuses** a task a live process still owns (it never hides an
+  in-flight run), a task in any non-terminal state, a task not owned by the
+  SpecRelay engine, and never overwrites an existing archived copy.
+- `--all` (alias `--completed`) archives every completed task and leaves active
+  tasks in place; one task's refusal never aborts the rest.
+- `--dry-run` reports exactly what would be archived and mutates nothing.
 
 ## Engine ownership behavior
 
