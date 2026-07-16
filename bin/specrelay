@@ -94,6 +94,8 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/agent_efficiency.sh"
 # shellcheck source=lib/specrelay/transitions.sh
 . "$LIB_DIR/transitions.sh"
+# shellcheck source=lib/specrelay/archive.sh
+. "$LIB_DIR/archive.sh"
 # shellcheck source=lib/specrelay/providers/provider.sh
 . "$LIB_DIR/providers/provider.sh"
 # shellcheck source=lib/specrelay/providers/fake.sh
