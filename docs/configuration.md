@@ -1096,3 +1096,36 @@ mandatory failure, if the file contains a secret-shaped key and is
 trackable) if a local overlay exists but is not Git-ignored. `specrelay
 init`/an explicit future repair command are the only things that change your
 `.gitignore` — `run`, `resume`, and `doctor` never modify it.
+
+## Engine-owned executor finalization (spec 0029)
+
+```yaml
+executor_finalization:
+  mode: enabled                 # enabled | degraded-legacy (see docs/operator-recovery.md)
+  verification_placement: executor   # which spec 0026 placement finalization enacts
+  finalizer:
+    provider: ""                # "" inherits roles.executor.provider
+    model: provider-default
+    agent: none
+    timeout_seconds: 300
+  supervision:
+    heartbeat_interval_seconds: 15
+    child_terminate_grace_seconds: 10
+  recovery:
+    require_operator_confirmation_for_unproven_diff: true
+
+verification:
+  reviewer_independence: reuse_when_fresh   # reuse_when_fresh | always_rerun
+```
+
+All defaults are safe and backward-compatible: an existing project with no
+`executor_finalization:` section gets the full spec-0029 behavior with these
+defaults. `verification.reviewer_independence` lives in the SAME
+`verification:` mapping spec 0026's multi-service engine and spec 0028's UI
+schema already share; it is recognized (never rejected as an unknown key)
+by both the bounded-policy parser (`config.sh`) and the multi-service
+engine's own validator (`py/verification_policy_lib.py`), exactly like the
+pre-existing `ui` key. Both blocks are captured once, into
+`state.json.executor_finalization_effective`, the first time a task reaches
+an executor iteration — a later config edit never silently changes an
+in-flight task's finalization mode.

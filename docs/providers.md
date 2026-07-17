@@ -774,3 +774,32 @@ New providers can be added without changing the lifecycle code. Implement the
 
 Optionally extend `specrelay doctor` to report the new provider's availability
 so operators get the same read-only readiness signal.
+
+## `executor_finalize_summary` (spec 0029, section 17)
+
+A new, additive provider entrypoint dispatched by
+`specrelay::provider::executor_finalize_summary <provider> <sandbox-dir>
+<output-file> <model> <agent>`, implemented by the `fake` and `claude` arms.
+Its cwd is an isolated sandbox directory the engine populated with
+READ-ONLY evidence copies — never the repository — so it has no repository
+access and receives no repository path. The `claude` arm runs WITHOUT
+`--dangerously-skip-permissions` (there is nothing repo-shaped worth
+granting tool access to). It must write a candidate summary to
+`<output-file>`, inside the sandbox, and return; only the deterministic
+engine (`finalization.sh`) ever copies a validated candidate into the real
+`08-executor-summary.md`.
+
+## Portable process-group supervision (spec 0029, section 22)
+
+`lib/specrelay/py/proc_supervisor.py` supervises the provider (and, via the
+existing `verification_runner.sh`/`ui_verification.sh` synchronous execution,
+required verification children) as process-group leaders using `os.setsid`/
+`os.killpg` directly — no external GNU `setsid` binary (absent on macOS) is
+assumed. `specrelay::provider::_supervised_exec` wraps the `claude` adapter's
+real CLI invocation; the `fake` adapter (which invokes bash functions, not
+an OS executable) is unaffected. When process-group primitives are
+unavailable, the engine falls back to the pre-existing foreground
+synchronous `wait` and reports supervision as `degraded-foreground`
+(survivors `not_verifiable`, never fabricated as "clean") — required
+verification still runs synchronously either way. Windows is not a
+supported platform for this contract; `doctor` reports it as unsupported.

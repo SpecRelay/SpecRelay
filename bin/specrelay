@@ -118,6 +118,8 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/contexts.sh"
 # shellcheck source=lib/specrelay/marker_recovery.sh
 . "$LIB_DIR/marker_recovery.sh"
+# shellcheck source=lib/specrelay/finalization.sh
+. "$LIB_DIR/finalization.sh"
 # shellcheck source=lib/specrelay/workflow.sh
 . "$LIB_DIR/workflow.sh"
 # shellcheck source=lib/specrelay/coordinator.sh

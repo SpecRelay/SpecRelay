@@ -218,6 +218,73 @@ specrelay::provider::run_agent_events() {
   return "$rc"
 }
 
+# --- portable process-group supervision (spec 0029, section 22) ------------
+
+# Honors a pre-set override (test-only: lets a test simulate the section 22.1
+# foreground-fallback path deterministically, e.g. AE, without touching real
+# platform capability) exactly like verification_runner.sh's analogous
+# SPECRELAY_VERIFICATION_POLICY_LIB_PY seam.
+SPECRELAY_PROC_SUPERVISOR_PY="${SPECRELAY_PROC_SUPERVISOR_PY:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../py/proc_supervisor.py}"
+
+# specrelay::provider::supervision_available
+# True when process-group supervision (os.setsid/os.killpg via proc_supervisor.py)
+# can run on this host. False triggers the honest degraded-foreground fallback
+# (spec 0029, section 22.1) — required verification still runs synchronously
+# either way; only provider-spawned-orphan detection degrades.
+specrelay::provider::supervision_available() {
+  command -v python3 >/dev/null 2>&1 && [ -f "$SPECRELAY_PROC_SUPERVISOR_PY" ] \
+    && [ "$(python3 "$SPECRELAY_PROC_SUPERVISOR_PY" available 2>/dev/null)" = "yes" ]
+}
+
+# specrelay::provider::_supervised_exec <pgid-file> -- cmd [args...]
+# Runs cmd as a NEW process-group leader (its pgid becomes its own pid),
+# recording that pgid to <pgid-file> so a caller can later detect/terminate
+# any children it left behind (spec 0029, section 19.1.2). Falls back to a
+# direct exec (no new group, no pgid file) when supervision is unavailable —
+# an honest capability report, never a silent "clean" fabrication (section
+# 22.1). Preserves the wrapped command's real exit code either way, and its
+# stdio is inherited unchanged, so it composes transparently with
+# run_streamed/run_agent_events's FIFO redirection above.
+specrelay::provider::_supervised_exec() {
+  local pgid_file="$1"; shift
+  [ "${1:-}" = "--" ] && shift
+  if specrelay::provider::supervision_available; then
+    exec python3 "$SPECRELAY_PROC_SUPERVISOR_PY" run-in-group --pgid-file "$pgid_file" -- "$@"
+  fi
+  exec "$@"
+}
+
+# specrelay::provider::reap_survivors <pgid-file> <grace-seconds>
+# Post-provider-return survivor check (spec 0029, section 19.1.2): inspects
+# the recorded process group for children still alive AFTER the provider
+# invocation itself has already been `wait`ed (the group LEADER is gone by
+# construction), terminates them (TERM -> grace -> KILL), and reports the
+# count. Prints "<count> <supervision-mode>" where supervision-mode is
+# "process-group" (real detection) or "not_verifiable" (supervision was
+# unavailable for this call — section 22.1's honest fallback; NEVER reported
+# as zero/clean when it could not actually be checked).
+specrelay::provider::reap_survivors() {
+  local pgid_file="$1" grace="${2:-10}" pgid count=0
+  if [ ! -f "$pgid_file" ] || ! specrelay::provider::supervision_available; then
+    printf '0 not_verifiable\n'
+    return 0
+  fi
+  pgid="$(cat "$pgid_file" 2>/dev/null | tr -d '[:space:]')"
+  rm -f "$pgid_file"
+  [ -n "$pgid" ] || { printf '0 not_verifiable\n'; return 0; }
+
+  local -a survivors=()
+  while IFS= read -r p; do
+    [ -n "$p" ] && survivors+=("$p")
+  done < <(python3 "$SPECRELAY_PROC_SUPERVISOR_PY" list-group "$pgid" 2>/dev/null)
+
+  if [ "${#survivors[@]}" -gt 0 ]; then
+    python3 "$SPECRELAY_PROC_SUPERVISOR_PY" terminate-group "$pgid" "$grace" >/dev/null 2>&1
+    count="${#survivors[@]}"
+  fi
+  printf '%s process-group\n' "$count"
+}
+
 # The optional trailing <model>/<agent> args (spec 0009) carry the effective,
 # already-normalized model id (or the "provider-default" sentinel) and the
 # provider-specific agent selector (or "none"). Adapters that accept them
@@ -310,6 +377,33 @@ specrelay::provider::coordinator_run() {
       ;;
     *)
       specrelay::out::err "unsupported coordinator provider: $provider"
+      return 1
+      ;;
+  esac
+}
+
+# specrelay::provider::executor_finalize_summary <provider> <sandbox-dir>
+#     <output-file> <model> <agent>
+# The sandboxed executor-summary finalizer entrypoint (spec 0029, section
+# 17.1): its cwd is <sandbox-dir> (an isolated temp directory the engine
+# populated with READ-ONLY evidence copies — never the repository), so it
+# cannot see repo source and receives no repo paths. Must write a candidate
+# summary to <output-file> (inside the sandbox) and return. The `claude` arm
+# runs WITHOUT --dangerously-skip-permissions (it has nothing repo-shaped to
+# touch anyway). Only the deterministic engine (finalization.sh) ever copies
+# the validated candidate into the real 08-executor-summary.md.
+specrelay::provider::executor_finalize_summary() {
+  local provider="$1" sandbox_dir="$2" output_file="$3" model="${4:-provider-default}" agent="${5:-none}"
+  local label="executor-finalizer:$provider"
+  case "$provider" in
+    fake)
+      specrelay::provider::fake::executor_finalize_summary "$sandbox_dir" "$output_file" "$label" "$model" "$agent"
+      ;;
+    claude)
+      specrelay::provider::claude::executor_finalize_summary "$sandbox_dir" "$output_file" "$label" "$model" "$agent"
+      ;;
+    *)
+      specrelay::out::err "unsupported executor-finalizer provider: $provider"
       return 1
       ;;
   esac

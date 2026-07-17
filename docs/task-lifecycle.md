@@ -708,3 +708,119 @@ not required) and refuses the transition when UI verification is required
 but `summary.json` is missing, not `PASS`, has incomplete coverage, or the
 Reviewer's `09-consultant-review.md` lacks a `## UI Verification Evidence
 Review` section.
+
+## Engine-owned executor finalization (spec 0029)
+
+Spec 0029 moves command supervision, required-verification execution, and
+required-evidence generation from the AI Executor into the deterministic
+engine, closing the "provider exited successfully but the round was never
+actually finished" failure class. The executor round is now an explicit,
+durable phase pipeline running INSIDE `EXECUTOR_RUNNING` (no new canonical
+`state.json` value is introduced):
+
+```
+executor_provider_execution -> executor_evidence_capture ->
+executor_verification -> executor_summary_finalization ->
+executor_completion_validation -> submission_to_review
+```
+
+Each phase's result is recorded in the new durable finalization record
+`30-executor-finalization.json` (schema_version/pipeline_version 1) —
+the authoritative source of truth for the finalization pipeline. It records
+the provider's terminal result (exit code + a digest of the exact prompt it
+ran, captured atomically before any finalization phase runs), each phase's
+result, the overall `finalization_outcome` (`PROVIDER_FAILED`,
+`PROVIDER_EXITED_WITH_PENDING_WORK`, `VERIFICATION_FAILED`,
+`VERIFICATION_BLOCKED`, `FINALIZATION_FAILED`, `COMPLETION_CONTRACT_FAILED`,
+`FINALIZATION_RECORD_CONFLICT`, or `READY_FOR_REVIEW`), background-survivor
+counts, and artifact provenance (`engine-generated` / `executor-written` /
+`finalizer`). A task created before spec 0029 simply lacks this file;
+`specrelay task show`/`report` report "not recorded" rather than fabricating
+one.
+
+### New artifacts (numbers 30-32)
+
+- `30-executor-finalization.json` — the durable finalization record above.
+- `31-executor-finalizer/` (+ stdout/stderr captures) — sandbox invocation
+  evidence for the executor-summary finalizer (see below).
+- `32-round-change-ledger.jsonl` — an append-only, audited record of the
+  paths PROVEN changed by each round, written during `executor_evidence_capture`
+  regardless of whether later phases pass. `git_guard.sh`'s owned snapshot
+  (`.git-owned-snapshot.txt`) is now AUTHORITATIVELY derived from this ledger
+  (`git_guard::derive_owned_from_ledger`) rather than only captured after a
+  fully successful round — this is what lets a gate-failed or interrupted
+  round's legitimate diff recover safely later. `git_guard::snapshot_owned`
+  keeps its pre-0029 whole-tree semantics as a compatibility wrapper for
+  existing callers.
+- `.git-pre-provider-snapshot.json` (dot-prefixed, unnumbered, alongside
+  `.git-baseline.txt`/`.git-owned-snapshot.txt`) — captured immediately
+  before every provider launch: HEAD commit, an index digest, and a
+  per-path content digest for every currently-dirty/untracked path. If a
+  round crashes BEFORE evidence capture ever ran, recovery diffs the current
+  tree against this snapshot (`git_guard::reconstruct_round_change_from_snapshot`)
+  to reconstruct proven ownership without guessing; HEAD moving or the index
+  changing unexpectedly makes recovery refuse and require an explicit human
+  decision, rather than silently adopting an ambiguous diff.
+
+### Engine-generated `03-executor-log.md` / `07-tests.txt`
+
+When the Executor did not write `03-executor-log.md` (or left it empty),
+the engine generates one from durable, already-observed sources only —
+provider exit status, `05-changed-files.txt`, `21-command-timing-events.jsonl`
+— under a mandatory `## Engine-Observed Facts` heading, followed by a
+verbatim-quoted `## Reported by the AI (unverified)` zone and an explicit
+`## Unavailable` list. These zones are never blurred: the engine never
+invents an action or a verification result. A non-empty Executor-written log
+is preserved as-is (the Engine-Observed Facts zone is only appended if
+absent).
+
+`07-tests.txt` is generated from the REAL `27-verification-summary.json`
+(spec 0026) and `29-ui-verification/summary.json` (spec 0028) when engine-
+owned verification actually ran; it never claims "full suite passed" unless
+the engine observed that itself, and it never performs a base-commit
+checkout to classify a failure as pre-existing (spec 0029, section 16.3) —
+that needs an isolated workspace this phase does not have.
+
+### The sandboxed executor-summary finalizer
+
+`08-executor-summary.md` is validated for non-emptiness AND structure (the
+six sections listed in "Completion gate requirements" below). When it is
+missing or invalid, the engine runs a sandboxed finalizer — an isolated
+temp directory OUTSIDE the repository, populated with READ-ONLY evidence
+copies, no repository cwd, no repository paths handed to it. Only the
+engine copies the finalizer's validated candidate into the real
+`08-executor-summary.md`; a post-call diff check independently verifies
+that no repository or task path changed during the call and rejects the
+finalizer's output outright (naming the offending paths) if it did.
+
+### Completion gate requirements (additive)
+
+`08-executor-summary.md` must now also contain: `## Finalization Pipeline`,
+`## Supervised Verification`, `## Evidence Provenance`,
+`## Interrupted-Round Recovery`, `## Backward Compatibility` (plus the
+pre-existing `## Input Coverage` for spec-0023 bundle tasks).
+
+### Natural resume (no separate recovery command)
+
+`specrelay resume` (and `specrelay run`'s own drive loop) now handles an
+`EXECUTOR_RUNNING` task whose owning process is gone automatically: the
+execution-owner lease (see `docs/operator-recovery.md`) determines whether
+the prior owner is safely gone; if so, the SAME `EXECUTOR_RUNNING ->
+READY_FOR_EXECUTOR` recovery `transitions.sh::recover` already performed for
+`specrelay task recover` runs in-loop, ownership of the round's proven diff
+is adopted from the ledger (or reconstructed from the pre-provider snapshot),
+and the round continues as a **finalization-only resume** (the provider is
+NOT rerun) when a durable terminal provider result already matches the
+current prompt — see "Finalization-only resume" below. `specrelay task
+recover` remains available for deliberate manual use; it is no longer
+required for ordinary interruption recovery.
+
+### Finalization-only resume vs. implementation rerun
+
+The provider is rerun ONLY when: no durable terminal result exists for the
+current prompt digest (it was killed before recording one), the prompt
+changed (a `CHANGES_REQUESTED` requeue promoted a new
+`11-next-executor-prompt.md`), or the recorded result was itself a failure.
+Otherwise resume is finalization-only: the recorded terminal result is
+reused and the pipeline re-enters at the first phase whose durable inputs
+are missing or stale.

@@ -298,6 +298,15 @@ execution in the same invocation, so the normal successful path ends at
 failure/unavailability, or an explicit guard (e.g. `max_iterations`), and it
 always logs the reason (spec 0010).
 
+Inside `EXECUTOR_RUNNING`, command supervision, required-verification
+execution, and required-evidence generation (`03-executor-log.md`,
+`07-tests.txt`, `08-executor-summary.md`) are engine-owned, not left to the
+AI Executor process (spec 0029) — a provider exit code is never, by itself,
+treated as round completion, missing/invalid artifacts are repaired from
+observed evidence rather than left incomplete, and `specrelay resume` alone
+safely continues an interrupted round with no separate recovery command.
+See [docs/task-lifecycle.md](docs/task-lifecycle.md).
+
 ## AI Coordinator (optional, spec 0025)
 
 An optional, **disabled-by-default** advisory AI role can sit above the

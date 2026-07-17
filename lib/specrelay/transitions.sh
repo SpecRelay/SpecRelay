@@ -349,6 +349,18 @@ specrelay::transitions::requeue() {
   [ -n "$current_round" ] || current_round=1
   specrelay::transitions::_archive_round "$task_dir" "$current_round"
 
+  # Preserve/adopt the just-reviewed round's PROVEN owned paths so the next
+  # executor claim's working-tree guard accepts this iteration's accumulated
+  # diff (spec 0029, section 23.2). A round that recorded its ownership during
+  # executor_evidence_capture already has these ledger entries (this is then a
+  # no-op); a round finalized out-of-band or produced by a pre-ledger engine is
+  # adopted from its durable 05-changed-files.txt evidence. Only proven round
+  # paths are adopted — never the raw dirty tree — so an unrelated external
+  # change still blocks the guard (section 23.3). No manual guard-file editing
+  # is ever required of the operator (section 23.5).
+  specrelay::git_guard::adopt_round_change_from_evidence "$root" "$task_dir" "requeue-round-$current_round" >/dev/null 2>&1 || true
+  specrelay::git_guard::derive_owned_from_ledger "$root" "$task_dir"
+
   stamp="$(specrelay::transitions::_now | tr -d ':-')"
   backup="$task_dir/02-executor-prompt.before-requeue-$stamp.md"
   n=1

@@ -33,3 +33,29 @@ orchestrator, not only by this prompt text.
   alongside it.
 - Do not claim context-capability usage in `03-executor-log.md` unless it
   actually occurred.
+
+## Engine-owned finalization and verification (mandatory)
+
+Command supervision, required verification execution, and required-evidence
+finalization are owned by the deterministic SpecRelay engine, not by you
+(spec 0029). Concretely:
+
+- Do not launch required full verification in the background. Final required
+  verification (spec 0026 multi-service engine, spec 0028 UI runtime
+  verification) runs AFTER your process returns, as an engine-owned,
+  synchronously-waited step — never inside your own process.
+- Do not rely on a future notification after your process exits. A
+  non-interactive provider process cannot safely wait for one — the engine
+  never treats "I will wait for a background task" as either a block or a
+  pass; only real process/durable state is authoritative.
+- You MAY run focused/targeted checks during implementation (spec 0019
+  budgets still apply) — these do not replace the engine-owned final
+  verification.
+- Write `08-executor-summary.md` before you return; write `03-executor-log.md`
+  and a truthful `07-tests.txt` note when you can. The engine generates or
+  repairs any of the three that are missing or invalid when you return, from
+  observed durable evidence only — it never fabricates a result you did not
+  produce.
+- Never claim tests passed without engine evidence to back it: a false claim
+  in `07-tests.txt` or your final summary does not change what the engine
+  actually observed.

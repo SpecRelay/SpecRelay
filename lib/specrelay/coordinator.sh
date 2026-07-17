@@ -414,6 +414,14 @@ specrelay::coordinator::_build_input_snapshot() {
   local ui_gate_json
   ui_gate_json="$(specrelay::ui_verification::gate_check "$root" "$task_id" 2>/dev/null || printf '{"ok": true, "reason": "unavailable"}\n')"
 
+  # Engine-owned executor-finalization facts (spec 0029, section 30): phase
+  # results, finalization_outcome, verification/UI status, background
+  # survivor count, and mode — so the Coordinator's computed allowed-next-
+  # actions can forbid an enacted SEND_TO_REVIEW while finalization is
+  # incomplete, without ever letting the Coordinator edit artifacts itself.
+  local finalization_json
+  finalization_json="$(specrelay::finalization::show_json "$task_dir" 2>/dev/null || printf '{"recorded": false}\n')"
+
   local snapshot
   snapshot="$(
     TASK_ID="$task_id" STATE="$current" INV_POINT="$invocation_point" ITERATION="$iteration" \
@@ -421,11 +429,16 @@ specrelay::coordinator::_build_input_snapshot() {
     COORD_PROVIDER="$(specrelay::coordinator::effective_provider "$root" "$task_id")" \
     COORD_MODEL="$(specrelay::coordinator::effective_model "$root" "$task_id")" \
     COORD_AGENT="$(specrelay::coordinator::effective_agent "$root" "$task_id")" \
-    ALLOWED="$allowed_json" SITUATION="$situation_json" UI_GATE="$ui_gate_json" python3 -c '
+    ALLOWED="$allowed_json" SITUATION="$situation_json" UI_GATE="$ui_gate_json" \
+    FINALIZATION="$finalization_json" python3 -c '
 import json, os
 allowed = json.loads(os.environ["ALLOWED"])
 situation = json.loads(os.environ["SITUATION"]) if os.environ["SITUATION"] else {}
 ui_gate = json.loads(os.environ["UI_GATE"])
+try:
+    finalization = json.loads(os.environ["FINALIZATION"])
+except Exception:
+    finalization = {"recorded": False}
 doc = {
     "task_id": os.environ["TASK_ID"],
     "current_state": os.environ["STATE"],
@@ -446,6 +459,7 @@ doc = {
         "gate_passed": ui_gate.get("ok"),
         "reason": ui_gate.get("reason"),
     },
+    "executor_finalization": finalization,
     "situation": situation,
 }
 print(json.dumps(doc, indent=2, sort_keys=True))

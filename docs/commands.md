@@ -262,6 +262,17 @@ coordinator is disabled. `task coordination` is the read-only counterpart —
 it never invokes the coordinator, only reports what has already happened (the
 same summary folded into `task show`/`task report`).
 
+`task show`/`task report` (spec 0029) also print a dedicated finalization
+card, driven entirely by `30-executor-finalization.json` so it can never
+contradict the completion gate — it separates "provider execution: complete
+(exit 0)" from "verification: passed/failed" from "completion gate:
+passed/failed: <reason>" from "finalization outcome: READY_FOR_REVIEW" —
+plus the current mode (`enabled` or a DEGRADED banner for
+`degraded-legacy`) and, on a failure, a "safe next command" line (always
+just `specrelay resume <task>`). A task predating spec 0029 reports
+"not recorded" rather than fabricating a card. `task report --json` folds
+the same raw record into a `"finalization"` field.
+
 `task timeline` (spec 0019) is a **read-only** report: total wall time,
 per-phase durations and status, invocation/resume history, the verification
 ledger (which test/smoke/doctor/version operations ran, by role, with

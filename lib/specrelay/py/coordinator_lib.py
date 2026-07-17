@@ -54,6 +54,10 @@ REASON_CODES = [
     "unsafe_to_continue",
     "human_policy_decision",
     "no_safe_action",
+    # spec 0029, section 30: required engine-owned finalization (multi-
+    # service/UI verification, evidence artifacts, completion validation) has
+    # not reached a terminal passing result for this round.
+    "finalization_incomplete",
 ]
 
 CONFIDENCES = ["low", "medium", "high"]

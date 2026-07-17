@@ -1155,6 +1155,10 @@ specrelay::cli::task_show() {
   specrelay::cli::_task_show_timeline_summary "$task_dir"
   specrelay::verification_policy::report "$task_dir"
   specrelay::coordinator::report_text "$task_dir"
+
+  echo
+  echo "--- Executor finalization (spec 0029) ---"
+  specrelay::finalization::render_card "$task_dir"
 }
 
 # specrelay::cli::_task_show_bundle_summary <task-dir>
@@ -1304,6 +1308,7 @@ specrelay::cli::_task_full_report() {
       EFFICIENCY_JSON="$(specrelay::agent_efficiency::report "$task_dir" "$task_id" "$mode" --json 2>/dev/null)" \
       COORDINATOR_JSON="$(specrelay::coordinator::report_json "$task_dir" 2>/dev/null)" \
       VERIFICATION_JSON="$(specrelay::verification_policy::report_json "$task_dir" 2>/dev/null)" \
+      FINALIZATION_JSON="$(specrelay::finalization::show_json "$task_dir" 2>/dev/null)" \
       TASK_ID="$task_id" python3 -c '
 import json, os
 
@@ -1323,6 +1328,7 @@ print(json.dumps({
     "agent_efficiency": load("EFFICIENCY_JSON"),
     "coordinator": load("COORDINATOR_JSON"),
     "verification": load("VERIFICATION_JSON"),
+    "finalization": load("FINALIZATION_JSON"),
 }, indent=2, sort_keys=True))
 '
       return 0

@@ -10,15 +10,20 @@ candidates.
 
 ## Next objective
 
-**Bounded artifact repair** — a real, engine-executed `REPAIR_ARTIFACTS`.
-*(Phase 5)*
+Not yet selected. **Bounded artifact repair** (Phase 5) is now DONE — spec
+0029 is its real, engine-executed realisation, extended with supervised
+verification and safe interrupted-round recovery. UI verification and
+multi-service verification could not be trusted operationally while the
+executor could exit before their evidence was finalized; spec 0029 was
+therefore sequenced as an urgent reliability-hardening milestone before
+Phase 7 (below).
 
 ## Later objectives
 
 In dependency order (roadmap §5):
 
 1. **Full artifact-layout migration** (`00-task/ … 06-telemetry/`) — last, once its real contents are known. *(Phase 6)*
-2. **Reduced-touchpoint autonomous routing** — once verification/UI checks are mature. *(Phase 7)*
+2. **Reduced-touchpoint autonomous routing** — once verification/UI checks are mature (now that spec 0029 makes the verification substrate operationally trustworthy). *(Phase 7)*
 3. **Per-task isolated workspaces**, then **parallel task execution**. *(Phases 8–9)*
 4. **Cross-task dependency/conflict coordination**. *(Phase 10)*
 5. **Durable cross-task knowledge/memory** — exploratory, no design yet. *(Phase 11)*
@@ -26,6 +31,20 @@ In dependency order (roadmap §5):
 
 ## Recently completed architecture milestones
 
+- **Spec 0029 — Engine-owned executor finalization and supervised
+  verification**: an explicit, durable executor phase pipeline
+  (`30-executor-finalization.json`); a finalization-only-resume vs.
+  implementation-rerun rule keyed on a durable provider-terminal-result
+  digest; engine-generated `03-executor-log.md`/`07-tests.txt` with explicit
+  observed-facts/AI-claim/unavailable provenance zones; engine-owned,
+  supervised, synchronously-waited required verification (spec 0026 +
+  0028) with authoritative-placement reuse; a sandboxed, engine-only-adopted
+  executor-summary finalizer; a portable process-group supervisor
+  (`py/proc_supervisor.py`, no external `setsid` dependency); an
+  execution-owner lease with heartbeat/PID-reuse defenses (`lock.sh`); a
+  round-change ledger + pre-provider snapshot making an interrupted round's
+  own diff safely recoverable via `specrelay resume` alone (`git_guard.sh`);
+  and an explicit, guarded `degraded-legacy` rollback mode.
 - **Spec 0028 — UI runtime verification and compact review evidence**:
   first-class UI-impact detection, deterministic Playwright (or fake,
   no-browser-required) scenario execution, compact checkpoint-screenshot

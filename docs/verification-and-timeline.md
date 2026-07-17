@@ -587,3 +587,40 @@ the sensitive command text.
   for the real Claude provider relies on omitting
   `--dangerously-skip-permissions`, which blocks *permission-gated* tool
   calls; it is not a sandboxed process boundary.
+
+## Engine-owned verification execution and placement reuse (spec 0029)
+
+Required verification (this section's spec-0026 multi-service engine, and
+spec 0028's UI runtime verification) now runs INSIDE the deterministic
+engine's `executor_verification` finalization phase — after the provider
+returns, as a supervised, synchronously-waited step — rather than depending
+on the AI Executor to launch and wait for it. `verification_runner::run`'s
+existing "returns 0 only for PASSED/NOT_REQUIRED" contract is unchanged; the
+finalization pipeline (`lib/specrelay/finalization.sh`) is simply its new
+automatic caller at the `executor` placement.
+
+Each required check has a single AUTHORITATIVE placement (its configured
+`verification.placement.{executor,reviewer,final_gate}`); a later placement
+reuses a fresh matching result — `reused: true` in
+`30-executor-finalization.json.phases.executor_verification` — rather than
+re-executing, when the effective-config digest, the diff digest
+(`sha256(06-git-diff.patch)`), and the level all still match. `07-tests.txt`
+is generated from this same real evidence (see `docs/task-lifecycle.md`,
+"Engine-owned executor finalization"). `verification.reviewer_independence`
+(`reuse_when_fresh`, the default, or `always_rerun`) controls whether the
+Reviewer's own independent verification reuses a fresh executor-placement
+result or always re-executes.
+
+## No-background-wait completion rule (spec 0029, section 19)
+
+A provider is never accepted as complete while a required verification job
+it started (or the engine started) is still active — impossible by
+construction, since the engine `wait`s for every supervised child
+synchronously. A provider-spawned surviving child (detected via the
+portable process-group supervisor, `lib/specrelay/py/proc_supervisor.py`) is
+terminated by process group and fails the round with
+`PROVIDER_EXITED_WITH_PENDING_WORK`. Text heuristics
+(`agent_efficiency::detect_unresolved_wait`) remain advisory-only: a final
+"I will wait for a background task" claim with nothing actually pending is
+recorded as `background.text_wait_warning` but does NOT block — process
+ownership and durable verification state are authoritative, never prose.

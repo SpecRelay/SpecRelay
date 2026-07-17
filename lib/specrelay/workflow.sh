@@ -382,6 +382,54 @@ print(json.dumps({"execution_efficiency_effective": policy}))
   specrelay::state::set "$state_file" "$set_json" >/dev/null
 }
 
+# --- engine-owned executor finalization effective capture (spec 0029) -----
+
+# specrelay::workflow::record_effective_finalization_policy <root> <task-id>
+# CAPTURE-ONCE (mirroring record_effective_verification_policy above): persists
+# executor_finalization_effective (mode, verification_placement) into
+# state.json the first time a task reaches an executor iteration. Never
+# overwritten thereafter, so a later `executor_finalization.mode` edit never
+# silently changes an in-flight task's finalization mode mid-round.
+specrelay::workflow::record_effective_finalization_policy() {
+  local root="$1" task_id="$2" state_file existing mode placement set_json
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  [ -f "$state_file" ] || return 0
+
+  existing="$(specrelay::state::get "$state_file" executor_finalization_effective 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+    return 0
+  fi
+
+  mode="$(specrelay::finalization::mode "$root" 2>/dev/null || echo enabled)"
+  placement="$(specrelay::finalization::verification_placement "$root" 2>/dev/null || echo executor)"
+  set_json="$(MODE="$mode" PLACEMENT="$placement" python3 -c '
+import json, os
+print(json.dumps({"executor_finalization_effective": {
+    "mode": os.environ["MODE"],
+    "verification_placement": os.environ["PLACEMENT"],
+}}))
+')"
+  specrelay::state::set "$state_file" "$set_json" >/dev/null
+}
+
+# specrelay::workflow::effective_finalization_mode <root> <task-id>
+specrelay::workflow::effective_finalization_mode() {
+  local root="$1" task_id="$2" state_file blob v
+  state_file="$(specrelay::state::path "$(specrelay::task::dir "$root" "$task_id")")"
+  if [ -f "$state_file" ]; then
+    blob="$(specrelay::state::get "$state_file" executor_finalization_effective 2>/dev/null || true)"
+    if [ -n "$blob" ] && [ "$blob" != "null" ]; then
+      v="$(printf '%s' "$blob" | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("mode") or "")
+except Exception:
+    pass' 2>/dev/null)"
+      [ -n "$v" ] && { printf '%s\n' "$v"; return 0; }
+    fi
+  fi
+  specrelay::finalization::mode "$root" 2>/dev/null || printf 'enabled\n'
+}
+
 # --- local developer configuration overlay effective capture (spec 0027) ---
 #
 # Spec 0027 extends the capture-once contract above (roles_effective,
@@ -1433,8 +1481,37 @@ specrelay::workflow::executor_iteration() {
   fi
 
   specrelay::out::log "[executor] task '$task_id': checking working-tree guard"
-  if ! specrelay::git_guard::check "$root" "$task_dir"; then
-    return 1
+  # Rebuild the owned snapshot from the authoritative ledger before checking
+  # (spec 0029, section 23.2: the ledger is authoritative for the owned
+  # snapshot). Guarded on the ledger existing so a genuine first-iteration
+  # claim with no ledger keeps the pre-existing-dirt policy check in
+  # git_guard::check intact (deriving would otherwise create an empty owned
+  # file and skip it).
+  local _ledger_file
+  _ledger_file="$(specrelay::git_guard::_ledger_file "$task_dir")"
+  [ -f "$_ledger_file" ] && specrelay::git_guard::derive_owned_from_ledger "$root" "$task_dir"
+  local guard_out
+  if ! guard_out="$(specrelay::git_guard::check "$root" "$task_dir" 2>&1)"; then
+    # Self-heal: a completed prior round whose ownership was never recorded in
+    # the ledger during executor_evidence_capture (interrupted + out-of-band
+    # finalize, or a pre-ledger engine) is adopted from its durable proven-path
+    # evidence (05-changed-files.txt), then re-checked — with NO manual
+    # guard-file editing (spec 0029, section 23.2/23.5). Adoption uses only the
+    # round's proven paths, so a genuinely unrelated external change is still
+    # named and still blocks (section 23.3).
+    if specrelay::git_guard::adopt_round_change_from_evidence "$root" "$task_dir" "claim-$$" >/dev/null 2>&1 \
+      && specrelay::git_guard::derive_owned_from_ledger "$root" "$task_dir"; then
+      local guard_out2
+      if guard_out2="$(specrelay::git_guard::check "$root" "$task_dir" 2>&1)"; then
+        specrelay::out::log "[executor] task '$task_id': adopted the prior round's proven owned paths from durable evidence (spec 0029, section 23.2/23.5)"
+      else
+        printf '%s\n' "$guard_out2" >&2
+        return 1
+      fi
+    else
+      printf '%s\n' "$guard_out" >&2
+      return 1
+    fi
   fi
 
   local provider model agent
@@ -1470,6 +1547,21 @@ specrelay::workflow::executor_iteration() {
   specrelay::timeline::finish "$task_dir" executor_context_preflight passed
   executor_context_handoff="${SPECRELAY_CONTEXT_HANDOFF:-none}"
 
+  # Engine-owned finalization mode (spec 0029, section 25/26). Captured once
+  # like every other effective-config block; a degraded-legacy request for a
+  # task with required verification/UI is refused BEFORE the provider is ever
+  # launched (section 26 — never a silent bypass).
+  specrelay::workflow::record_effective_finalization_policy "$root" "$task_id"
+  local finalization_mode
+  finalization_mode="$(specrelay::workflow::effective_finalization_mode "$root" "$task_id")"
+  local degraded_msg
+  if degraded_msg="$(specrelay::finalization::degraded_refusal "$root" "$task_id" "$finalization_mode")" ; then
+    :
+  else
+    specrelay::out::err "[executor] $degraded_msg"
+    return 1
+  fi
+
   specrelay::out::log "[executor] task '$task_id': claiming"
   specrelay::timeline::start "$task_dir" executor_claim executor
   if ! specrelay::transitions::claim "$root" "$task_id"; then
@@ -1489,6 +1581,8 @@ specrelay::workflow::executor_iteration() {
   round="$(specrelay::state::get "$state_file" "iteration" 2>/dev/null || true)"
   [ -n "$round" ] || round=1
 
+  specrelay::finalization::init "$task_dir" "$task_id" "$round" "$finalization_mode"
+
   # Level 3 (spec 0013): the executor role-execution header. Provider output
   # (Level 4) continues exactly as today, immediately below this card.
   specrelay::out::card blue "Executor · Round $round" \
@@ -1496,96 +1590,142 @@ specrelay::workflow::executor_iteration() {
     "$(printf '%-10s%s' Model "$model")" \
     "$(printf '%-10s%s' Agent "$agent")"
 
-  specrelay::out::log "[executor] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent)"
-  started="$(date +%s 2>/dev/null || echo '')"
-  specrelay::timeline::start "$task_dir" executor_provider_execution executor
   local invocation_id
   invocation_id="$(specrelay::timeline::current_invocation_id "$task_dir")"
-  if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md" "$model" "$agent" "$executor_context_handoff" "$invocation_id"; then
+
+  # Finalization-only resume vs. implementation rerun (spec 0029, section 11):
+  # a provider invocation with a durably-recorded terminal result (exit 0,
+  # matching prompt digest) for THIS iteration is never rerun merely because a
+  # later finalization phase was interrupted.
+  local resume_decision
+  resume_decision="$(specrelay::finalization::resume_decision "$task_dir" "$round" "$task_dir/02-executor-prompt.md")"
+
+  started="$(date +%s 2>/dev/null || echo '')"
+  if [ "$resume_decision" = "finalization-only" ]; then
+    specrelay::out::log "[executor] task '$task_id': finalization-only resume — a durably-recorded provider result already exists for this prompt; the provider will NOT be rerun (spec 0029, section 11)"
     rc=0
-  else
-    rc=$?
-  fi
-  ended="$(date +%s 2>/dev/null || echo '')"
-  if [ "$rc" -eq 0 ]; then
+    specrelay::timeline::start "$task_dir" executor_provider_execution executor
     specrelay::timeline::finish "$task_dir" executor_provider_execution passed
   else
-    specrelay::timeline::finish "$task_dir" executor_provider_execution failed
+    specrelay::out::log "[executor] task '$task_id': running provider '$provider' (round $round, model=$model agent=$agent)"
+    specrelay::git_guard::capture_pre_provider_snapshot "$root" "$task_dir"
+    local heartbeat_pid
+    heartbeat_pid="$(specrelay::lock::heartbeat_helper_start "$root" "$task_id")"
+    specrelay::timeline::start "$task_dir" executor_provider_execution executor
+    if specrelay::provider::executor_run "$provider" "$root" "$task_dir" "$round" "$task_dir/02-executor-prompt.md" "$model" "$agent" "$executor_context_handoff" "$invocation_id"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    specrelay::lock::heartbeat_helper_stop "$heartbeat_pid" >/dev/null
+    if [ "$rc" -eq 0 ]; then
+      specrelay::timeline::finish "$task_dir" executor_provider_execution passed
+    else
+      specrelay::timeline::finish "$task_dir" executor_provider_execution failed
+    fi
+    specrelay::finalization::record_provider_execution "$task_dir" "$round" "$invocation_id" "$task_dir/02-executor-prompt.md" "$rc" false
+
+    # Best-effort verification-ledger extraction from the captured semantic
+    # event transcript (spec 0019, "Verification Operation Classification").
+    specrelay::verification::extract_from_events "$task_dir" executor "$task_dir/19-executor-events.jsonl"
+
+    # Provider-spawned surviving children (spec 0029, section 19.1.2): the
+    # provider ran as a process-group leader (section 22); any child it left
+    # alive after its own exit is detected here and terminated by group.
+    if [ "$rc" -eq 0 ]; then
+      local grace survivor_line survivor_count survivor_mode
+      grace="$(specrelay::finalization::child_grace "$root")"
+      survivor_line="$(specrelay::provider::reap_survivors "$task_dir/.provider-pgid" "$grace")"
+      survivor_count="$(printf '%s\n' "$survivor_line" | awk '{print $1}')"
+      survivor_mode="$(printf '%s\n' "$survivor_line" | awk '{print $2}')"
+      specrelay::finalization::set_background "$task_dir" 0 "${survivor_count:-0}" false "${survivor_mode:-not_verifiable}"
+      if [ "${survivor_count:-0}" -gt 0 ] 2>/dev/null; then
+        specrelay::finalization::set_phase "$task_dir" executor_provider_execution failed PROVIDER_EXITED_WITH_PENDING_WORK '{}'
+        specrelay::finalization::set_outcome "$task_dir" PROVIDER_EXITED_WITH_PENDING_WORK
+        specrelay::out::card red "Executor Result" "INCOMPLETE" "PROVIDER_EXITED_WITH_PENDING_WORK"
+        specrelay::out::err "[executor] task '$task_id': provider exited but left $survivor_count required-job child process(es) alive; terminated by group; not submitted for review"
+        specrelay::agent_efficiency::record_completion_gate "$task_dir" executor failed "PROVIDER_EXITED_WITH_PENDING_WORK"
+        return 1
+      fi
+    fi
   fi
-  # Best-effort verification-ledger extraction from the captured semantic
-  # event transcript (spec 0019, "Verification Operation Classification"):
-  # structurally real (parsed tool_use commands), never fabricated from
-  # prose. A no-op when no such transcript exists (e.g. the fake provider,
-  # or a run that used the generic streaming fallback).
-  specrelay::verification::extract_from_events "$task_dir" executor "$task_dir/19-executor-events.jsonl"
 
-  specrelay::out::log "[executor] task '$task_id': capturing evidence"
-  specrelay::timeline::start "$task_dir" executor_evidence_capture executor
-  specrelay::evidence::capture "$root" "$task_dir"
-  specrelay::timeline::finish "$task_dir" executor_evidence_capture passed
-
+  ended="$(date +%s 2>/dev/null || echo '')"
   if [ -n "$started" ] && [ -n "$ended" ]; then
     duration="$(specrelay::out::format_duration "$((ended - started))")"
   else
     duration="unknown"
   fi
 
+  # Phase: executor_evidence_capture (spec 0029, sections 12, 23.2) — runs
+  # regardless of provider rc, exactly as the pre-0029 evidence capture did,
+  # so a failed round's diff is still recorded evidence.
+  specrelay::out::log "[executor] task '$task_id': capturing evidence"
+  specrelay::timeline::start "$task_dir" executor_evidence_capture executor
+  specrelay::finalization::run_evidence_capture "$root" "$task_dir" "$invocation_id" "$rc"
+  specrelay::timeline::finish "$task_dir" executor_evidence_capture passed
+
   if [ "$rc" -ne 0 ]; then
+    specrelay::finalization::set_outcome "$task_dir" PROVIDER_FAILED
     specrelay::out::card red "Executor Result" "FAILED (exit $rc)" "Duration $duration"
     specrelay::out::err "[executor] task '$task_id': provider exited non-zero ($rc); not submitted for review"
     return 1
   fi
 
-  # Executor completion gate (spec 0021, "Required Executor Artifacts" /
-  # "Unresolved Waiting Detection"): a provider exit code of zero is NOT
-  # sufficient evidence of successful role completion by itself. This check
-  # runs, and any resulting card is printed, BEFORE the SUCCESS card — never
-  # after — so a completion-gate failure can never be preceded by a false
-  # "Executor Result: SUCCESS" card (the exact incorrect behavior spec 0021
-  # exists to prevent).
-  local gate_reason=""
-  local f
-  for f in 03-executor-log.md 07-tests.txt 08-executor-summary.md; do
-    if [ ! -s "$task_dir/$f" ]; then
-      gate_reason="required Executor artifact '$f' is missing or empty"
-      break
-    fi
-  done
-
-  if [ -z "$gate_reason" ]; then
-    local unresolved_wait_policy
-    unresolved_wait_policy="$(specrelay::workflow::effective_execution_efficiency_field "$root" "$task_id" executor unresolved_wait_is_failure)"
-    if [ "$unresolved_wait_policy" = "true" ] && \
-       [ "$(specrelay::agent_efficiency::detect_unresolved_wait "$task_dir/12-executor-stdout.txt")" = "detected" ]; then
-      gate_reason="provider exited without completing its declared background work"
-    fi
+  # Phase: executor_verification (spec 0029, sections 13-16) — engine-owned,
+  # supervised, synchronously-waited required verification (spec 0026 engine
+  # + spec 0028 UI runner) at its authoritative placement.
+  specrelay::timeline::start "$task_dir" executor_verification executor
+  local verification_outcome
+  verification_outcome="$(specrelay::finalization::run_verification "$root" "$task_id" "$task_dir" "$round")"
+  if [ -n "$verification_outcome" ]; then
+    specrelay::timeline::finish "$task_dir" executor_verification failed
+    specrelay::finalization::set_outcome "$task_dir" "$verification_outcome"
+    specrelay::out::card red "Executor Result" "INCOMPLETE" "$verification_outcome"
+    specrelay::out::err "[executor] task '$task_id': required verification did not pass ($verification_outcome); not submitted for review"
+    specrelay::agent_efficiency::record_completion_gate "$task_dir" executor failed "$verification_outcome"
+    return 1
   fi
+  specrelay::timeline::finish "$task_dir" executor_verification passed
 
-  # Executor completion gate, input-coverage clause (spec 0023, section
-  # 21.2: "input coverage is missing" must fail completion). Only applies to
-  # tasks that actually have a bundle manifest (spec 0023 is additive —
-  # legacy tasks predating it never have one, and are unaffected).
-  if [ -z "$gate_reason" ] && [ -f "$task_dir/01-input-manifest.json" ]; then
-    if ! grep -Eqi '^#+[[:space:]]*Input Coverage' "$task_dir/08-executor-summary.md" 2>/dev/null; then
-      gate_reason="08-executor-summary.md does not record an Input Coverage section (spec 0023, section 21.2)"
-    fi
+  # Phase: executor_summary_finalization (spec 0029, section 17) — the
+  # sandboxed finalizer runs ONLY when 08-executor-summary.md is missing or
+  # structurally invalid; the engine adopts a validated candidate.
+  specrelay::timeline::start "$task_dir" executor_summary_finalization executor
+  local finalize_err
+  finalize_err="$(specrelay::finalization::finalize_summary "$root" "$task_id" "$task_dir")"
+  if [ -n "$finalize_err" ]; then
+    specrelay::timeline::finish "$task_dir" executor_summary_finalization failed
+    specrelay::finalization::set_outcome "$task_dir" FINALIZATION_FAILED
+    specrelay::out::card red "Executor Result" "INCOMPLETE" "FINALIZATION_FAILED"
+    specrelay::out::err "[executor] task '$task_id': $finalize_err; not submitted for review"
+    specrelay::agent_efficiency::record_completion_gate "$task_dir" executor failed "$finalize_err"
+    return 1
   fi
+  specrelay::timeline::finish "$task_dir" executor_summary_finalization passed
 
-  if [ -n "$gate_reason" ]; then
+  # Phase: executor_completion_validation (spec 0029, sections 10, 19, 24) —
+  # the strict, unweakened Completion Gate plus the no-background-wait rule.
+  # This check, and any resulting card, is printed BEFORE the SUCCESS card —
+  # never after (spec 0021's original guarantee, preserved).
+  local gate_result gate_reason unresolved_wait_policy
+  unresolved_wait_policy="$(specrelay::workflow::effective_execution_efficiency_field "$root" "$task_id" executor unresolved_wait_is_failure)"
+  gate_result="$(specrelay::finalization::completion_validation "$root" "$task_id" "$task_dir" "$unresolved_wait_policy")"
+  if [ -n "$gate_result" ]; then
+    gate_reason="${gate_result#*: }"
+    specrelay::finalization::set_phase "$task_dir" executor_completion_validation failed "${gate_result%%:*}" "{}"
+    specrelay::finalization::set_outcome "$task_dir" "${gate_result%%:*}"
     specrelay::out::card red "Executor Result" "INCOMPLETE" "Duration $duration"
     specrelay::out::err "[executor] task '$task_id': provider exited successfully, but Executor completion contract failed: $gate_reason; not submitted for review"
     specrelay::agent_efficiency::record_completion_gate "$task_dir" executor failed "$gate_reason"
     return 1
   fi
+  specrelay::finalization::set_phase "$task_dir" executor_completion_validation passed "" "{}"
 
   specrelay::agent_efficiency::record_completion_gate "$task_dir" executor passed
   specrelay::out::card green "Executor Result" "SUCCESS" "Duration $duration"
 
-  # Snapshot task-owned working-tree paths BEFORE submitting, so the NEXT
-  # claim's guard allows this round's accumulated diff to persist into the
-  # next iteration (spec sections 31-33 — the rework-loop fix).
-  specrelay::git_guard::snapshot_owned "$root" "$task_dir"
-
+  # Phase: submission_to_review.
   local token rc2
   specrelay::timeline::start "$task_dir" executor_submission executor
   token="$(specrelay::auth::mint "$root" "$task_id")"
@@ -1597,9 +1737,12 @@ specrelay::workflow::executor_iteration() {
   specrelay::auth::cleanup "$root" "$task_id"
   if [ "$rc2" -ne 0 ]; then
     specrelay::timeline::finish "$task_dir" executor_submission failed
+    specrelay::finalization::set_phase "$task_dir" submission_to_review failed "" "{}"
     return 1
   fi
   specrelay::timeline::finish "$task_dir" executor_submission passed
+  specrelay::finalization::set_phase "$task_dir" submission_to_review passed "" "{}"
+  specrelay::finalization::set_outcome "$task_dir" READY_FOR_REVIEW
 
   specrelay::out::log "[executor] task '$task_id': submitted for review (READY_FOR_REVIEW)"
   return 0
@@ -1938,6 +2081,54 @@ specrelay::workflow::drive() {
         if ! specrelay::workflow::executor_iteration "$root" "$task_id"; then
           rc=4
           break
+        fi
+        ;;
+      EXECUTOR_RUNNING)
+        # Natural interrupted-round recovery (spec 0029, section 23.5, AC-14):
+        # the operator needs no separate recovery command. By the time this
+        # branch runs, `resume`/`run` have ALREADY acquired this task's
+        # execution lock (lock.sh's acquire refuses to hand it over while a
+        # same-host live pid — including a foreign host, treated
+        # conservatively as live — still holds it, and only reclaims a
+        # same-host dead-pid/PID-reused lease — section 21.2's stale-dead-pid/
+        # absent/live/foreign-host classification). So reaching this branch
+        # at all already proves the prior owner is gone; a live or
+        # unrecoverable owner was already refused upstream, at acquire time,
+        # with an explicit message — never silently.
+        specrelay::out::log "[specrelay] task '$task_id' is EXECUTOR_RUNNING but this process holds its execution lock (the prior owner is gone); auto-recovering the interrupted round (spec 0029, section 23.5)"
+        if ! specrelay::transitions::recover "$root" "$task_id" READY_FOR_EXECUTOR \
+          "automatic in-loop recovery: this process legitimately acquired the task's execution-owner lock" specrelay-resume; then
+          rc=1
+          break
+        fi
+
+        # Interruption before executor_evidence_capture ever ran (spec 0029,
+        # section 23.4): the round's diff may not be in the owned snapshot
+        # yet. Reconstruct proven ownership from the pre-provider snapshot
+        # BEFORE the next executor_iteration's working-tree guard runs, so a
+        # genuinely-owned diff is never misclassified as an unrelated change.
+        # Ambiguous ownership (HEAD moved, index changed unexpectedly) blocks
+        # with an explicit human-decision message — never guessed.
+        specrelay::git_guard::derive_owned_from_ledger "$root" "$task_dir"
+        local guard_check_output
+        if ! guard_check_output="$(specrelay::git_guard::check "$root" "$task_dir" 2>&1)"; then
+          specrelay::out::log "[specrelay] task '$task_id': working tree not yet covered by the owned snapshot; attempting pre-provider-snapshot reconstruction (spec 0029, section 23.4)"
+          if specrelay::git_guard::reconstruct_round_change_from_snapshot "$root" "$task_dir" "recovery-$$" >/dev/null 2>&1 \
+            && specrelay::git_guard::derive_owned_from_ledger "$root" "$task_dir" \
+            && specrelay::git_guard::check "$root" "$task_dir" >/dev/null 2>&1; then
+            : # reconstruction resolved it — proceed
+          else
+            # Reconstruction either refused (ambiguous: HEAD moved / index
+            # changed) or the tree still fails the guard after it (a
+            # genuinely UNRELATED change, distinct from this round's proven
+            # diff) — surface the ORIGINAL guard message, which names the
+            # exact offending paths, rather than a generic message (spec
+            # 0029, section 23.3, test N: "blocks, listing unrelated paths").
+            specrelay::out::err "[specrelay] task '$task_id': cannot safely auto-recover — an explicit human decision is required (spec 0029, section 23.3/23.4):"
+            printf '%s\n' "$guard_check_output" >&2
+            rc=1
+            break
+          fi
         fi
         ;;
       CHANGES_REQUESTED)

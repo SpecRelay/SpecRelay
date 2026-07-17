@@ -329,7 +329,21 @@ cat "$FAKE_CLAUDE_FIXTURE_C"
 mkdir -p "$(dirname "$FAKE_EXEC_TASK_DIR_C/x")"
 printf 'Fake executor log.\n' > "$FAKE_EXEC_TASK_DIR_C/03-executor-log.md"
 printf 'Fake tests.\n' > "$FAKE_EXEC_TASK_DIR_C/07-tests.txt"
-printf 'Fake executor summary.\n## Input Coverage\nAll bundle inputs treated as inspected and used (fixture).\n' > "$FAKE_EXEC_TASK_DIR_C/08-executor-summary.md"
+cat > "$FAKE_EXEC_TASK_DIR_C/08-executor-summary.md" <<'SUMMARY'
+Fake executor summary.
+## Finalization Pipeline
+x
+## Supervised Verification
+x
+## Evidence Provenance
+x
+## Interrupted-Round Recovery
+x
+## Backward Compatibility
+x
+## Input Coverage
+All bundle inputs treated as inspected and used (fixture).
+SUMMARY
 exit 0
 FAKE
 chmod +x "$FAKE_CLAUDE_C"

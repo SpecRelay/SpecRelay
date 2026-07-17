@@ -639,7 +639,7 @@ if [ "${FAKE_CLAUDE_ROLE:-executor}" = "reviewer" ]; then
 else
   printf 'log\n' > "$FAKE_TASK_DIR/03-executor-log.md"
   printf 'tests ok\n' > "$FAKE_TASK_DIR/07-tests.txt"
-  printf 'summary\n' > "$FAKE_TASK_DIR/08-executor-summary.md"
+  printf 'summary\n## Finalization Pipeline\nx\n## Supervised Verification\nx\n## Evidence Provenance\nx\n## Interrupted-Round Recovery\nx\n## Backward Compatibility\nx\n' > "$FAKE_TASK_DIR/08-executor-summary.md"
   echo "executor done"
 fi
 exit 0

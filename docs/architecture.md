@@ -360,3 +360,34 @@ runtime) is no longer a supported product surface — see docs/migration.md if
 you are migrating a project away from it. The historical incubation and
 dogfooding record is preserved in CHANGELOG.md and the historical reports
 under docs/ (each labelled as historical).
+
+## Engine-owned executor finalization (spec 0029)
+
+Executor finalization and required-verification execution are owned by the
+deterministic engine, not the AI Executor process — closing the "provider
+exited successfully but the round was never finished" failure class (specs
+0027/0028's dirty-tree/requeue and UI-verification-timing limitations
+compound directly into this one). New modules, each with a narrow,
+non-overlapping responsibility (no module reaches across these boundaries
+by directly mutating another's private files):
+
+- `lib/specrelay/finalization.sh` / `py/finalization_lib.py` — phase
+  orchestration, the durable finalization record, digest comparisons, and
+  human-readable artifact rendering (`03-executor-log.md`, `07-tests.txt`,
+  the operator card).
+- `lib/specrelay/py/proc_supervisor.py` — portable process/session-group
+  supervision only (spec 0029, section 22).
+- `lib/specrelay/lock.sh` — extended with the execution-owner lease and
+  heartbeat (section 21); still owns leases/liveness classification only.
+- `lib/specrelay/git_guard.sh` — extended with the round-change ledger and
+  pre-provider snapshot/reconstruction (section 23); still owns provenance/
+  ownership derivation only.
+- `lib/specrelay/workflow.sh` — coordinates lifecycle order only: it calls
+  into `finalization.sh` for each phase rather than implementing artifact
+  rendering, lease parsing, process-group termination, or ledger
+  reconstruction itself.
+
+See `docs/task-lifecycle.md` ("Engine-owned executor finalization"),
+`docs/verification-and-timeline.md` ("Engine-owned verification execution"),
+`docs/operator-recovery.md` ("Execution-owner lease and natural resume"),
+and `docs/providers.md` for the full detail.

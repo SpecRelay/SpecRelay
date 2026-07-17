@@ -191,16 +191,20 @@ specrelay::provider::claude::executor_run() {
         "$task_dir/19-executor-events.jsonl" \
         "$task_dir/12-executor-stdout.txt" \
         "$task_dir/13-executor-stderr.txt" "$root" "$invocation_id" -- \
+        specrelay::provider::_supervised_exec "$task_dir/.provider-pgid" -- \
         "$bin" --print $stream_args $model_args --dangerously-skip-permissions "$prompt"
       return $?
     fi
   fi
 
   # Fallback: generic stdout/stderr streaming (spec 0003). run_streamed returns
-  # claude's REAL exit code.
+  # claude's REAL exit code. Routed through the portable process-group
+  # supervisor (spec 0029, section 22) so a surviving background child the
+  # provider left running can be detected/terminated after this call returns.
   # shellcheck disable=SC2086  # model_args is controlled, word-split on purpose
   specrelay::provider::run_streamed "$label" \
     "$task_dir/12-executor-stdout.txt" "$task_dir/13-executor-stderr.txt" "$root" -- \
+    specrelay::provider::_supervised_exec "$task_dir/.provider-pgid" -- \
     "$bin" --print $model_args --dangerously-skip-permissions "$prompt"
   return $?
 }
@@ -394,6 +398,43 @@ specrelay::provider::claude::coordinator_run() {
   # shellcheck disable=SC2086  # model_args is controlled, word-split on purpose
   specrelay::provider::run_streamed "$label" \
     "$raw_output_file" "$task_dir/25-coordinator-stderr.txt" "$root" -- \
+    "$bin" --print $model_args "$prompt"
+  rc=$?
+  return "$rc"
+}
+
+# specrelay::provider::claude::executor_finalize_summary <sandbox-dir>
+#     <output-file> <label> <model> <agent>
+# The sandboxed executor-summary finalizer (spec 0029, section 17.1): runs
+# WITHOUT --dangerously-skip-permissions (the sandbox has no repo-shaped tool
+# access worth granting) and with its cwd set to <sandbox-dir> — never the
+# repository, and no repo path is ever handed to it. Reads the finalizer's
+# own prompt.md (written by finalization.sh into the sandbox alongside the
+# read-only evidence copies) and writes its candidate summary text to
+# <output-file>, also inside the sandbox.
+specrelay::provider::claude::executor_finalize_summary() {
+  local sandbox_dir="$1" output_file="$2" label="${3:-executor-finalizer:claude}" model="${4:-provider-default}" agent="${5:-none}"
+  local bin prompt rc model_args prompt_file
+  bin="$(specrelay::provider::claude::_bin)"
+  prompt_file="$sandbox_dir/prompt.md"
+
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    specrelay::out::err "'$bin' was not found on PATH"
+    return 1
+  fi
+  if [ ! -s "$prompt_file" ]; then
+    specrelay::out::err "executor-finalizer: sandbox prompt.md is missing or empty"
+    return 1
+  fi
+  if ! model_args="$(specrelay::provider::claude::_resolve_model_args "$label" "$bin" "$model")"; then
+    return 1
+  fi
+
+  prompt="$(cat "$prompt_file")"
+
+  # shellcheck disable=SC2086  # model_args is controlled, word-split on purpose
+  specrelay::provider::run_streamed "$label" \
+    "$output_file" "$sandbox_dir/stderr.txt" "$sandbox_dir" -- \
     "$bin" --print $model_args "$prompt"
   rc=$?
   return "$rc"

@@ -10,6 +10,13 @@
 #   executor plan keys:  exit=<0|N> (default 0), outputs=<0|1> (default 1),
 #                        touch=<0|1> (default 1, appends a line to the
 #                        configured fixture file to produce a real diff)
+#                        survivor=<0|1> (default 0, spec 0029 section 32.1 test
+#                        C / AC-09): routes this round through the REAL
+#                        portable process-group supervisor and backgrounds a
+#                        genuine long-lived OS child that survives the
+#                        provider's own (exit=<N>) exit, so
+#                        `specrelay::provider::reap_survivors` has a real
+#                        process-group survivor to detect and terminate.
 #   reviewer plan keys:  exit=<0|N> (default 0),
 #                        decision=<accept|request_changes|missing_marker> (default
 #                        accept). missing_marker (spec 0019, "Smart Marker
@@ -210,9 +217,34 @@ specrelay::provider::fake::_executor_emit() {
   [ -n "$wait_text" ] && echo "$wait_text"
 }
 
+# specrelay::provider::fake::_write_survivor_script <path> <exit-code>
+# Writes a REAL, standalone shell script (not a bash function — it must
+# survive an `exec` into a fresh process image) that backgrounds a long-lived
+# `sleep` child and then exits with <exit-code>. Used ONLY by the
+# `survivor=1` fixture (spec 0029, section 32.1 test C / AC-09): this is what
+# lets a deterministic fake-provider test exercise a REAL OS-level
+# process-group survivor, exactly like a real provider that illicitly
+# backgrounds a required verification job and exits before it finishes.
+specrelay::provider::fake::_write_survivor_script() {
+  local path="$1" exit_code="$2" sleep_s="${SPECRELAY_FAKE_SURVIVOR_SLEEP:-300}"
+  # The backgrounded child's stdio MUST be redirected away from the inherited
+  # FIFOs (run_streamed's transport) before it is set loose — otherwise it
+  # holds the FIFO write end open and run_streamed's reader blocks forever
+  # waiting for an EOF that only arrives when the child eventually exits,
+  # turning this fixture itself into a hang instead of a fast, deterministic
+  # survivor-detection test.
+  cat > "$path" <<SCRIPT
+#!/bin/sh
+echo "[fake-executor] simulated required-verification child backgrounded (survivor fixture)"
+sleep $sleep_s </dev/null >/dev/null 2>&1 &
+exit $exit_code
+SCRIPT
+  chmod +x "$path"
+}
+
 specrelay::provider::fake::executor_run() {
   local root="$1" task_dir="$2" round="$3" prompt_file="$4" label="${5:-executor:fake}" model="${6:-provider-default}" agent="${7:-none}" context="${8:-none}"
-  local plan_line exit_code outputs touch_flag impl_file missing_artifact wait_text
+  local plan_line exit_code outputs touch_flag impl_file missing_artifact wait_text survivor
 
   # Record the forwarded role/provider/model/agent/context as durable
   # invocation evidence (spec 0012, spec 0015). Written before the streamed
@@ -233,6 +265,14 @@ specrelay::provider::fake::executor_run() {
   # phrase written into 12-executor-stdout.txt (the completion gate's final
   # extracted output).
   wait_text="$(specrelay::provider::fake::_field "$plan_line" wait_text "")"
+  # survivor=1 (spec 0029, section 32.1 test C / AC-09): route this round's
+  # streamed call through the REAL portable process-group supervisor
+  # (specrelay::provider::_supervised_exec), executing a standalone script
+  # (not a bash function — a supervised exec REPLACES the process image, so
+  # only a real executable command line survives it) that backgrounds a
+  # long-lived child and exits 0. This is the one fake-provider fixture that
+  # produces a genuine OS-level survivor for `reap_survivors` to detect.
+  survivor="$(specrelay::provider::fake::_field "$plan_line" survivor "0")"
   specrelay::provider::fake::_record_verify_ops "$plan_line" executor "$task_dir"
 
   # Test-only: widen the race window for concurrency tests (see
@@ -242,9 +282,21 @@ specrelay::provider::fake::executor_run() {
     sleep "$SPECRELAY_FAKE_EXECUTOR_SLEEP"
   fi
 
-  specrelay::provider::run_streamed "$label" \
-    "$task_dir/12-executor-stdout.txt" "$task_dir/13-executor-stderr.txt" "$root" -- \
-    specrelay::provider::fake::_executor_emit "$round" "$prompt_file" "$exit_code" "$outputs" "$touch_flag" "$model" "$agent" "$wait_text"
+  if [ "$survivor" = "1" ] && specrelay::provider::supervision_available; then
+    local survivor_script
+    # NOTE: the mktemp template must END in the X run — BSD/macOS mktemp (unlike
+    # GNU mktemp) does not support a literal suffix after it.
+    survivor_script="$(mktemp "${TMPDIR:-/tmp}/specrelay-fake-survivor.XXXXXX")"
+    specrelay::provider::fake::_write_survivor_script "$survivor_script" "$exit_code"
+    specrelay::provider::run_streamed "$label" \
+      "$task_dir/12-executor-stdout.txt" "$task_dir/13-executor-stderr.txt" "$root" -- \
+      specrelay::provider::_supervised_exec "$task_dir/.provider-pgid" -- sh "$survivor_script"
+    rm -f "$survivor_script"
+  else
+    specrelay::provider::run_streamed "$label" \
+      "$task_dir/12-executor-stdout.txt" "$task_dir/13-executor-stderr.txt" "$root" -- \
+      specrelay::provider::fake::_executor_emit "$round" "$prompt_file" "$exit_code" "$outputs" "$touch_flag" "$model" "$agent" "$wait_text"
+  fi
 
   if [ "$touch_flag" = "1" ]; then
     impl_file="${SPECRELAY_FAKE_IMPL_FILE:-$root/specrelay-fake-impl.txt}"
@@ -254,7 +306,32 @@ specrelay::provider::fake::executor_run() {
   if [ "$outputs" = "1" ]; then
     printf 'Fake executor log for round %s.\n' "$round" > "$task_dir/03-executor-log.md"
     printf 'Fake test output for round %s: 1 example, 0 failures.\n' "$round" > "$task_dir/07-tests.txt"
-    printf 'Fake executor summary for round %s.\n## Input Coverage\nFake coverage: all bundle inputs treated as inspected and used (deterministic test fixture).\n' "$round" > "$task_dir/08-executor-summary.md"
+    # Written with every section spec 0029 (section 35.1) requires, so a
+    # well-behaved fake round models what a real executor is told to do
+    # (templates/prompts/executor-ownership-contract.md) and the engine's
+    # sandboxed finalizer runs only for tests that deliberately omit/corrupt
+    # this file — not for every ordinary fake round.
+    cat > "$task_dir/08-executor-summary.md" <<EOF
+Fake executor summary for round $round.
+
+## Finalization Pipeline
+Deterministic test fixture: no real finalization phases to describe.
+
+## Supervised Verification
+Deterministic test fixture: no real supervised verification to describe.
+
+## Evidence Provenance
+Deterministic test fixture: 03/07/08 written directly by the fake executor.
+
+## Interrupted-Round Recovery
+Deterministic test fixture: this round was not interrupted.
+
+## Backward Compatibility
+Deterministic test fixture: no artifact-layout changes.
+
+## Input Coverage
+Fake coverage: all bundle inputs treated as inspected and used (deterministic test fixture).
+EOF
     [ -n "$missing_artifact" ] && rm -f "$task_dir/$missing_artifact"
   fi
 
@@ -312,7 +389,7 @@ specrelay::provider::fake::reviewer_run() {
     return 2
   fi
 
-  printf 'Fake reviewer notes for round %s.\n## Input Coverage\nFake coverage: Executor input-coverage claim treated as truthful (deterministic test fixture).\n' "$round" > "$task_dir/09-consultant-review.md"
+  printf 'Fake reviewer notes for round %s.\n## Input Coverage\nFake coverage: Executor input-coverage claim treated as truthful (deterministic test fixture).\n## UI Verification Evidence Review\nFake review: engine-owned UI verification evidence inspected and consistent with the reported ui_status (deterministic test fixture).\n' "$round" > "$task_dir/09-consultant-review.md"
   if [ "$decision" = "accept" ]; then
     printf 'Fake business summary for round %s.\n' "$round" > "$task_dir/10-business-summary.md"
     # Simulate a real reviewer agent that enacts its own decision (accept is
@@ -511,4 +588,91 @@ print(json.dumps(d))
       ;;
   esac
   return 0
+}
+
+# --- fake executor-summary finalizer (spec 0029, section 32.2 fixtures) ----
+#
+# SPECRELAY_FAKE_FINALIZER_SCENARIO selects the fixture (default:
+# finalizer_valid_repair):
+#   finalizer_valid_repair  -> writes a structurally valid candidate summary
+#   finalizer_edits_source  -> ALSO writes into SPECRELAY_FAKE_FINALIZER_REPO_ROOT
+#                              (test-only escape hatch simulating a rogue
+#                              finalizer; the REAL claude/fake sandbox
+#                              contract never grants repo access — this
+#                              exists only to exercise the engine's post-call
+#                              diff check, spec section 17.3)
+#   finalizer_fails         -> exits 1, writes nothing
+#   finalizer_timeout       -> sleeps past SPECRELAY_FAKE_FINALIZER_SLEEP
+#                              seconds (default 3) so a caller-enforced
+#                              timeout can be exercised deterministically
+
+specrelay::provider::fake::executor_finalize_summary() {
+  local sandbox_dir="$1" output_file="$2" label="${3:-executor-finalizer:fake}" model="${4:-provider-default}" agent="${5:-none}"
+  local scenario="${SPECRELAY_FAKE_FINALIZER_SCENARIO:-finalizer_valid_repair}"
+
+  {
+    echo "[fake-executor-finalizer] sandbox: $sandbox_dir"
+    echo "[fake-executor-finalizer] resolved: provider=fake model=$model agent=$agent scenario=$scenario"
+  } >> "$sandbox_dir/stderr.txt" 2>&1 || true
+
+  case "$scenario" in
+    finalizer_valid_repair)
+      cat > "$output_file" <<'EOF'
+Fake finalizer candidate summary.
+
+## Finalization Pipeline
+Engine-owned finalization phases completed deterministically (fake fixture).
+
+## Supervised Verification
+Verification was engine-owned and synchronously waited (fake fixture).
+
+## Evidence Provenance
+03/07/08 provenance: engine-generated/finalizer (fake fixture).
+
+## Interrupted-Round Recovery
+No interruption occurred in this fixture round.
+
+## Backward Compatibility
+This fixture does not alter legacy artifact layout.
+
+## Input Coverage
+Fake coverage: all bundle inputs treated as inspected and used (deterministic test fixture).
+EOF
+      return 0
+      ;;
+    finalizer_edits_source)
+      cat > "$output_file" <<'EOF'
+Fake finalizer candidate summary (rogue).
+
+## Finalization Pipeline
+x
+## Supervised Verification
+x
+## Evidence Provenance
+x
+## Interrupted-Round Recovery
+x
+## Backward Compatibility
+x
+## Input Coverage
+x
+EOF
+      if [ -n "${SPECRELAY_FAKE_FINALIZER_REPO_ROOT:-}" ]; then
+        echo "rogue finalizer write" >> "${SPECRELAY_FAKE_FINALIZER_REPO_ROOT}/specrelay-fake-finalizer-rogue.txt"
+      fi
+      return 0
+      ;;
+    finalizer_fails)
+      specrelay::out::err "$label: simulated finalizer failure (finalizer_fails scenario)"
+      return 1
+      ;;
+    finalizer_timeout)
+      sleep "${SPECRELAY_FAKE_FINALIZER_SLEEP:-3}"
+      return 0
+      ;;
+    *)
+      specrelay::out::err "$label: unknown fake finalizer scenario '$scenario'"
+      return 1
+      ;;
+  esac
 }

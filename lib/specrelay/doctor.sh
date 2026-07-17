@@ -449,6 +449,31 @@ print("Publication: %s (destination: %s)" % ("enabled" if d["publication_enabled
   specrelay::doctor::_ok "UI verification: ready (configuration valid; no browser started by doctor)"
 }
 
+# specrelay::doctor::_finalization <root>
+# Read-only (spec 0029, section 26 — "visibly reported"). A degraded-legacy
+# mode is reported with an explicit DEGRADED marker, never silently. Also
+# reports the portable process-group supervision capability (section 22.2 —
+# Windows is honestly reported as unsupported, never approximated).
+specrelay::doctor::_finalization() {
+  local root="$1" mode placement
+  mode="$(specrelay::finalization::mode "$root" 2>/dev/null || echo enabled)"
+  placement="$(specrelay::finalization::verification_placement "$root" 2>/dev/null || echo executor)"
+
+  if [ "$mode" = "degraded-legacy" ]; then
+    specrelay::doctor::_warn "Executor finalization: DEGRADED (degraded-legacy mode) — engine-owned verification/finalization is disabled for tasks with no required verification/UI; refused otherwise"
+  else
+    specrelay::doctor::_ok "Executor finalization: enabled (spec 0029; verification placement: $placement)"
+  fi
+
+  if specrelay::provider::supervision_available; then
+    specrelay::doctor::_ok "Process-group supervision: available (os.setsid/os.killpg — macOS/Linux)"
+  elif [ "$(uname -s 2>/dev/null)" = "" ] || command -v python3 >/dev/null 2>&1; then
+    specrelay::doctor::_warn "Process-group supervision: unavailable on this platform — falling back to synchronous foreground execution (spec 0029, section 22.1); required verification still runs synchronously, but provider-spawned-orphan detection is not_verifiable"
+  else
+    specrelay::doctor::_warn "Process-group supervision: unavailable (python3 not found)"
+  fi
+}
+
 # specrelay::doctor::_phase_budgets <root>
 # Read-only (spec 0019, "Phase Budgets"). A structurally invalid
 # `performance:` section is a mandatory failure for the same reason as the
@@ -856,6 +881,9 @@ specrelay::doctor::run() {
   specrelay::doctor::_phase_budgets "$root"
   specrelay::doctor::_execution_efficiency "$root"
 
+  # --- Engine-owned executor finalization (spec 0029) -----------------------
+  specrelay::doctor::_finalization "$root"
+
   # --- AI Coordinator readiness (spec 0025, section 34) ---------------------
   # Reported independently of Executor/Reviewer readiness above; a
   # coordinator failure never masks (or is masked by) their checks.
@@ -876,7 +904,7 @@ specrelay::doctor::run() {
     for lock_dir in "$locks_dir"/*.lock; do
       [ -d "$lock_dir" ] || continue
       local owner_pid
-      owner_pid="$(grep -m1 '^pid=' "$lock_dir/owner" 2>/dev/null | cut -d= -f2)"
+      owner_pid="$(specrelay::lock::_owner_field "$lock_dir" pid 2>/dev/null)"
       if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
         conflicting=1
       fi

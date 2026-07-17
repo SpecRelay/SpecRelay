@@ -31,6 +31,28 @@
 BIN="$SPECRELAY_ROOT/bin/specrelay"
 THIS_HOST="$(hostname 2>/dev/null || echo unknown-host)"
 
+# _forge_owner <owner-file> <pid> <host>
+# Writes a lease-shaped owner file (spec 0029, section 21) for forging a
+# lock without going through a real specrelay::lock::acquire call.
+_forge_owner() {
+  local owner_file="$1" pid="$2" host="$3"
+  python3 -c '
+import json
+print(json.dumps({
+    "schema_version": 1,
+    "pid": int("'"$pid"'"),
+    "host": "'"$host"'",
+    "acquired_at": "2026-01-01T00:00:00Z",
+    "pid_start_time": None,
+    "invocation_id": None,
+    "owner_token": "test-token",
+    "provider_pgid": None,
+    "heartbeat_at": "2026-01-01T00:00:00Z",
+    "heartbeat_interval_seconds": 15,
+}))
+' > "$owner_file"
+}
+
 # _make_running_task <proj> <task-id>
 # Creates a SpecRelay-owned task stuck in EXECUTOR_RUNNING, with real (non-empty)
 # evidence files that recovery must preserve.
@@ -56,11 +78,7 @@ sleep 300 &
 live_pid=$!
 lock_dir1="$(specrelay::lock::_dir "$proj1" "0500-live-owner")"
 mkdir -p "$lock_dir1"
-{
-  echo "pid=$live_pid"
-  echo "host=$THIS_HOST"
-  echo "acquired_at=2026-01-01T00:00:00Z"
-} > "$lock_dir1/owner"
+_forge_owner "$lock_dir1/owner" "$live_pid" "$THIS_HOST"
 
 out1="$( (cd "$proj1" && "$BIN" task recover 0500-live-owner --reason "test" ) 2>&1 )"
 rc1=$?
@@ -80,11 +98,7 @@ dir2="$(_make_running_task "$proj2" "0501-stale-exec")"
 # Forge a STALE lock (dead pid on this host).
 lock_dir2="$(specrelay::lock::_dir "$proj2" "0501-stale-exec")"
 mkdir -p "$lock_dir2"
-{
-  echo "pid=999999"
-  echo "host=$THIS_HOST"
-  echo "acquired_at=2026-01-01T00:00:00Z"
-} > "$lock_dir2/owner"
+_forge_owner "$lock_dir2/owner" "999999" "$THIS_HOST"
 
 out2="$( (cd "$proj2" && "$BIN" task recover 0501-stale-exec --reason "provider process was orphaned" ) 2>&1 )"
 rc2=$?
@@ -122,11 +136,7 @@ proj4="$(specrelay_test::mktemp_specrelay_project)"
 dir4="$(_make_running_task "$proj4" "0503-foreign-host")"
 lock_dir4="$(specrelay::lock::_dir "$proj4" "0503-foreign-host")"
 mkdir -p "$lock_dir4"
-{
-  echo "pid=999999"
-  echo "host=some-other-host-that-is-not-us"
-  echo "acquired_at=2026-01-01T00:00:00Z"
-} > "$lock_dir4/owner"
+_forge_owner "$lock_dir4/owner" "999999" "some-other-host-that-is-not-us"
 out4="$( (cd "$proj4" && "$BIN" task recover 0503-foreign-host --reason "test" ) 2>&1 )"
 rc4=$?
 specrelay_test::assert_true "8.5: recover REFUSES a lock owned on a foreign host" "$([ "$rc4" -ne 0 ] && echo 0 || echo 1)"

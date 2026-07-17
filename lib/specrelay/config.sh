@@ -538,10 +538,14 @@ specrelay::config::verification_policy() {
     # "services"/"risk_rules" above). Recognized here only to avoid rejecting
     # it as unknown; its actual validation happens in
     # py/ui_verification_lib.py, never here.
-    known_top = ["executor", "reviewer", "version", "defaults", "placement", "services", "risk_rules", "ui"]
+    # "reviewer_independence" belongs to the spec-0029 authoritative-
+    # placement/reuse-dedup schema (section 14.3: reuse_when_fresh |
+    # always_rerun) — read directly via specrelay::config::get, never
+    # validated here; recognized only to avoid rejecting it as unknown.
+    known_top = ["executor", "reviewer", "version", "defaults", "placement", "services", "risk_rules", "ui", "reviewer_independence"]
     unknown_top = verification.keys - known_top
     unless unknown_top.empty?
-      bad "verification configuration has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: executor, reviewer, version, defaults, placement, services, risk_rules, ui"
+      bad "verification configuration has unknown key(s) #{unknown_top.map(&:inspect).join(", ")}; recognized keys: executor, reviewer, version, defaults, placement, services, risk_rules, ui, reviewer_independence"
     end
 
     int_keys = {

@@ -460,10 +460,13 @@ def _validate_new(verification_section):
         raise ConfigError("verification configuration is not a mapping (got %s)" % type(verification_section).__name__)
 
     # "executor"/"reviewer" belong to the UNRELATED spec-0019 bounded-run-
-    # count policy sharing this same `verification:` mapping (see config.sh)
-    # — silently ignored here, never treated as unknown, never validated by
-    # this module.
-    unknown_top = [k for k in verification_section if k not in _ENGINE_TOP_FIELDS and k not in ("executor", "reviewer")]
+    # count policy, "ui" to spec-0028's UI-runtime-verification schema, and
+    # "reviewer_independence" to spec-0029's authoritative-placement/reuse
+    # policy (section 14.3) — all sharing this same `verification:` mapping
+    # (see config.sh) — silently ignored here, never treated as unknown,
+    # never validated by this module.
+    _FOREIGN_TOP_FIELDS = ("executor", "reviewer", "ui", "reviewer_independence")
+    unknown_top = [k for k in verification_section if k not in _ENGINE_TOP_FIELDS and k not in _FOREIGN_TOP_FIELDS]
     if unknown_top:
         raise ConfigError(
             "verification configuration has unknown key(s) %s; recognized keys: %s"

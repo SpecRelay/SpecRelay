@@ -380,3 +380,46 @@ deterministic workflow behavior is completely unaffected either way.
 
 Never edit `state.json` by hand and never `rm` a task directory or its lock to
 recover a task — use the audited commands above so every recovery is recorded.
+
+## Execution-owner lease and natural resume (spec 0029)
+
+The task lock's `owner` file (`.specrelay-runs/tasks/.specrelay-locks/<task-id>.lock/owner`)
+is now a durable lease (schema_version 1, JSON): pid, host, acquisition
+time, `pid_start_time` (defeats PID reuse — a reused pid with a mismatched
+start time classifies `stale-dead-pid`, never `live`), `owner_token`,
+`provider_pgid` once known, and a `heartbeat_at` the owning process
+refreshes every `executor_finalization.supervision.heartbeat_interval_seconds`
+(default 15s) while it holds the task.
+
+`specrelay::lock::lease_classify` reports exactly one of `live` /
+`stale-dead-pid` / `suspect-hung` / `foreign-host` / `absent`. In practice,
+`specrelay::lock::acquire`'s own dead-pid/PID-reuse reclaim check is what
+gates entry: a live (including foreign-host, always conservatively treated
+as live) or hung-but-alive owner refuses acquisition outright, with an
+explicit message naming the pid/host — never silently. `specrelay resume`
+(and `specrelay run`) auto-recover an `EXECUTOR_RUNNING` task automatically,
+in-loop, the moment they have legitimately acquired its lock (proving the
+prior owner is gone): `specrelay task recover` is no longer required for
+ordinary interruption recovery, though it remains available for deliberate
+manual use. A live/suspect-hung/foreign-host owner still requires an
+explicit human decision — the engine never force-removes a live lease.
+
+Ownership of the interrupted round's own diff is adopted from the
+append-only round-change ledger (`32-round-change-ledger.jsonl`) — never
+from the raw dirty tree. An unrelated external change (present in the tree
+but not in `baseline ∪ proven-owned`) still blocks, naming the exact paths.
+A crash before evidence capture ever ran is handled by reconstructing
+ownership from `.git-pre-provider-snapshot.json`; an ambiguous window (HEAD
+moved, or the index changed unexpectedly since that snapshot) blocks and
+requires an explicit human decision rather than guessing.
+
+## Degraded-legacy mode (spec 0029, section 26)
+
+`executor_finalization.mode: degraded-legacy` disables engine-owned
+verification/finalization, restoring the pre-0029 behavior where the
+completion gate relies only on Executor-written evidence. It is always
+visibly reported (`doctor`, `task show`, and `30-executor-finalization.json.mode`
+all show a DEGRADED banner) and is REFUSED outright for any task with
+required multi-service verification or required UI verification — degraded-
+legacy can never be used to silently bypass either. It is intended for
+emergency rollback, not routine use.
