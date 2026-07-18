@@ -28,7 +28,7 @@ development.
 | Path            | Purpose                                                              |
 | --------------- | -------------------------------------------------------------------- |
 | `docs/specs/`   | **Executable implementation/design specs** (this directory).         |
-| `docs/adr/`     | Architecture Decision Records. Reserved; do not put feature specs here. |
+| `architecture/decisions/` | Architecture Decision Records — the versioned architecture layer. Do not put feature specs here. (Supersedes the previously-reserved `docs/adr/`.) |
 | `docs/updates/` | Update / release notes. Reserved; do not put specs here.             |
 
 Deliberately **not** used for design specs:
@@ -40,6 +40,49 @@ Deliberately **not** used for design specs:
   repository (Sprint-reports). It is **not** the standalone SpecRelay public
   convention. Historical documents may still reference `docs/sdd/` where that
   is a truthful record of past work; new standalone specs use `docs/specs/`.
+
+## Architecture version declaration (mandatory for future specs)
+
+SpecRelay maintains a versioned, repository-authoritative **architecture layer**
+under [`architecture/`](../../architecture/) (north star, principles, and
+Architecture Decision Records, anchored by
+[`architecture/architecture-version.yml`](../../architecture/architecture-version.yml)).
+
+Once that architecture layer is **ratified** (its version file moves from
+`status: proposed` to `status: accepted`), every spec authored afterward MUST
+declare the architecture version it was designed against, using a metadata block
+alongside the existing `status` / `release` blocks:
+
+```yaml
+architecture_version: 1
+```
+
+This states which coherent set of {north star, principles, accepted ADRs} the
+spec was written to satisfy, so a reviewer can ask whether that baseline still
+holds.
+
+### Adoption boundary (historical specs are exempt)
+
+- **Specs at or below the adoption boundary are exempt** and are **never
+  rewritten** to add the field. The boundary is the highest spec number existing
+  at ratification and is recorded in
+  [`architecture-version.yml`](../../architecture/architecture-version.yml)
+  (`spec_contract.adoption_boundary`); it is `null` until ratification.
+- **Specs authored after ratification, numbered past the boundary, MUST declare
+  `architecture_version`.**
+- This mirrors the existing **release-metadata** boundary, which requires a
+  `release:` block only for specs past a fixed number and never rewrites older
+  ones.
+
+### Enforcement status
+
+Enforcement is currently **documentation-only**. A machine validator is a
+documented follow-up (see
+[ADR-0001](../../architecture/decisions/ADR-0001-architecture-authority-and-versioning.md),
+"Open questions"): once ratified, `architecture_version` can be validated
+alongside the existing spec-metadata scanner for specs past the adoption
+boundary, with focused tests. Until that validator exists and this note says
+otherwise, do **not** treat the field as machine-enforced.
 
 ## Relationship to the configured spec root
 

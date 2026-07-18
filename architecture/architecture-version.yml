@@ -1,0 +1,80 @@
+# SpecRelay architecture version contract.
+#
+# This file names the current coherent set of normative architecture
+# documents (north star + principles + the included ADRs) under a single
+# integer version. It is the machine-readable anchor a future spec points
+# at via `architecture_version`.
+#
+# NOTE ON STATUS: while `status: proposed`, nothing here is ratified. The ADRs
+# listed below are Proposed, not Accepted. The field is named `decisions`
+# (not `accepted_decisions`) deliberately, so the schema never contradicts the
+# proposed status. See the ratification checklist in decisions/README.md.
+#
+# It is NOT the software version (that is the repository-root VERSION file,
+# which this pass does not touch). The architecture version tracks the
+# INTENDED architecture; VERSION tracks the shipped implementation.
+
+version: 1
+
+# Lifecycle of THIS architecture version.
+#   proposed  — drafted, awaiting maintainer ratification (current).
+#   accepted  — ratified; the spec_contract below becomes mandatory.
+#   superseded — replaced by a higher version.
+status: proposed
+ratified_at: null            # ISO-8601 timestamp, set by a human on ratification.
+
+# All paths below are repository-root-relative.
+documents:
+  north_star: architecture/north-star.md
+  principles: architecture/principles.md
+  decisions_index: architecture/decisions/README.md
+
+# The set of ADRs that constitute THIS architecture version. These are
+# Proposed while status is proposed; they become Accepted only through the
+# ratification checklist (see decisions/README.md). Adding, superseding, or
+# making an incompatible change to one increments `version` per the rules below.
+decisions:
+  - architecture/decisions/ADR-0001-architecture-authority-and-versioning.md
+  - architecture/decisions/ADR-0002-ai-engine-authority-boundary.md
+  - architecture/decisions/ADR-0003-evidence-and-history-preservation.md
+  - architecture/decisions/ADR-0004-runtime-bootstrap-and-engine-boundary.md
+  - architecture/decisions/ADR-0005-extension-seams-and-provider-neutrality.md
+  - architecture/decisions/ADR-0006-human-review-authority.md
+  - architecture/decisions/ADR-0007-task-isolation-and-future-concurrency.md
+
+# How `version` changes. An INTEGER is used deliberately: the architecture
+# version identifies a coherent SET, not a compatibility gradient, so semantic
+# MAJOR.MINOR.PATCH would add ceremony without meaning here.
+#
+#   editorial   — wording/typo/clarification that does NOT change meaning:
+#                 NO increment. Record it in the changed document's own history.
+#   additive    — a new ADR, or a backward-compatible refinement of a principle:
+#                 increment `version` by 1.
+#   superseding — an ADR replaced by a newer one (old marked "superseded by"):
+#                 increment `version` by 1.
+#   incompatible — a north-star or principle change that alters an existing
+#                 guarantee: increment `version` by 1 AND record the break in
+#                 the superseding ADR's "Compatibility / migration impact".
+increment_policy:
+  editorial: none
+  additive_adr: +1
+  superseding_adr: +1
+  incompatible_change: +1
+
+# Contract imposed on FUTURE specs, effective only once `status: accepted`.
+spec_contract:
+  required_field: architecture_version
+  # Specs authored after ratification MUST declare the architecture version
+  # they were designed against. Historical specs are exempt (see
+  # adoption_boundary). Enforcement today is DOCUMENTATION-ONLY; a machine
+  # validator is a documented follow-up (see ADR-0001, Open questions).
+  enforcement: documentation-only
+  adoption_boundary:
+    # Set, as part of the ratification checklist (decisions/README.md), to the
+    # highest spec number that EXISTS at ratification time — do NOT assume 0030
+    # in advance, although it may be the value if no newer spec exists then.
+    # Specs with a number <= this are exempt and are never rewritten; specs
+    # numbered greater than this, authored after ratification, must declare the
+    # field. Null until a human ratifies. (Mirrors the existing release-metadata
+    # boundary pattern, which exempts specs <= 0022.)
+    exempt_specs_up_to_and_including: null

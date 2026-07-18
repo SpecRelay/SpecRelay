@@ -387,6 +387,27 @@ maps to Git tags, who tags, and what must pass before tagging are documented in
 [docs/versioning.md](docs/versioning.md#releases-and-git-tags). No tag or release
 is created automatically.
 
+## Architecture governance
+
+SpecRelay keeps a **normative architecture layer** under
+[`architecture/`](architecture/) — the intended north star, durable principles,
+and Architecture Decision Records that a future spec must respect:
+
+- [architecture/north-star.md](architecture/north-star.md) — what SpecRelay
+  fundamentally is and must never become.
+- [architecture/principles.md](architecture/principles.md) — the durable rules,
+  each with an honest status (enforced / established / target / proposed).
+- [architecture/decisions/](architecture/decisions/README.md) — the ADRs and
+  their index.
+- [architecture/architecture-version.yml](architecture/architecture-version.yml)
+  — the architecture version and the future-spec `architecture_version` contract.
+
+> **Status: proposed, not yet ratified.** This layer describes *intended*
+> architecture and is awaiting maintainer ratification (see the ratification
+> checklist in [architecture/decisions/](architecture/decisions/README.md#ratification-checklist)).
+> The **as-built / operational** architecture — how the engine works today —
+> remains documented under [docs/](docs/architecture.md).
+
 ## Current project status
 
 - **Standalone repository.** SpecRelay now lives in its own GitHub repository
