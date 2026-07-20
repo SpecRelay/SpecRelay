@@ -1,6 +1,6 @@
 # SpecRelay — Architecture North Star
 
-**Architecture version:** 1 · **Status:** proposed (see
+**Architecture version:** 1 · **Status:** accepted (ratified 2026-07-19; see
 [`architecture-version.yml`](architecture-version.yml))
 
 > This is a **normative** document: it states the intended architecture, not a

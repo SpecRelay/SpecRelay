@@ -5,10 +5,11 @@
 # integer version. It is the machine-readable anchor a future spec points
 # at via `architecture_version`.
 #
-# NOTE ON STATUS: while `status: proposed`, nothing here is ratified. The ADRs
-# listed below are Proposed, not Accepted. The field is named `decisions`
-# (not `accepted_decisions`) deliberately, so the schema never contradicts the
-# proposed status. See the ratification checklist in decisions/README.md.
+# NOTE ON STATUS: this architecture version is `status: accepted` — ratified by
+# an explicit maintainer decision (spec 0031). The ADRs listed below are
+# Accepted. The field is named `decisions` (not `accepted_decisions`) so the
+# same schema also expresses a future PROPOSED version honestly. See the
+# completed ratification record and the reusable checklist in decisions/README.md.
 #
 # It is NOT the software version (that is the repository-root VERSION file,
 # which this pass does not touch). The architecture version tracks the
@@ -17,11 +18,11 @@
 version: 1
 
 # Lifecycle of THIS architecture version.
-#   proposed  — drafted, awaiting maintainer ratification (current).
-#   accepted  — ratified; the spec_contract below becomes mandatory.
+#   proposed  — drafted, awaiting maintainer ratification.
+#   accepted  — ratified; the spec_contract below is mandatory (current).
 #   superseded — replaced by a higher version.
-status: proposed
-ratified_at: null            # ISO-8601 timestamp, set by a human on ratification.
+status: accepted
+ratified_at: "2026-07-19T08:50:41Z"   # Quoted full ISO-8601 UTC (explicit timezone); set on explicit maintainer ratification (spec 0031).
 
 # All paths below are repository-root-relative.
 documents:
@@ -29,10 +30,11 @@ documents:
   principles: architecture/principles.md
   decisions_index: architecture/decisions/README.md
 
-# The set of ADRs that constitute THIS architecture version. These are
-# Proposed while status is proposed; they become Accepted only through the
-# ratification checklist (see decisions/README.md). Adding, superseding, or
-# making an incompatible change to one increments `version` per the rules below.
+# The set of ADRs that constitute THIS architecture version. They are Accepted
+# (ratified together with this file; see decisions/README.md). Adding,
+# superseding, or making an incompatible change to one increments `version` per
+# the rules below. (Their ADR lifecycle status is independent of each ADR's
+# implementation-maturity label — ENFORCED / ESTABLISHED / TARGET / PROPOSED.)
 decisions:
   - architecture/decisions/ADR-0001-architecture-authority-and-versioning.md
   - architecture/decisions/ADR-0002-ai-engine-authority-boundary.md
@@ -61,20 +63,20 @@ increment_policy:
   superseding_adr: +1
   incompatible_change: +1
 
-# Contract imposed on FUTURE specs, effective only once `status: accepted`.
+# Contract imposed on FUTURE specs, now that `status: accepted`.
 spec_contract:
   required_field: architecture_version
   # Specs authored after ratification MUST declare the architecture version
   # they were designed against. Historical specs are exempt (see
-  # adoption_boundary). Enforcement today is DOCUMENTATION-ONLY; a machine
-  # validator is a documented follow-up (see ADR-0001, Open questions).
-  enforcement: documentation-only
+  # adoption_boundary). Enforcement is MACHINE-VALIDATED: the canonical
+  # validator (`specrelay architecture validate`, also a release preflight;
+  # spec 0031) checks every spec numbered past the boundary and fails otherwise.
+  enforcement: machine-validated
   adoption_boundary:
-    # Set, as part of the ratification checklist (decisions/README.md), to the
-    # highest spec number that EXISTS at ratification time — do NOT assume 0030
-    # in advance, although it may be the value if no newer spec exists then.
-    # Specs with a number <= this are exempt and are never rewritten; specs
-    # numbered greater than this, authored after ratification, must declare the
-    # field. Null until a human ratifies. (Mirrors the existing release-metadata
+    # Computed at ratification (spec 0031) as the highest spec number that
+    # EXISTED then — the bootstrap spec 0031 itself, since no higher-numbered
+    # spec existed at ratification time. Specs with a number <= this are exempt
+    # and are never rewritten; specs numbered greater than this (the first is
+    # 0032) must declare the field. (Mirrors the existing release-metadata
     # boundary pattern, which exempts specs <= 0022.)
-    exempt_specs_up_to_and_including: null
+    exempt_specs_up_to_and_including: 31

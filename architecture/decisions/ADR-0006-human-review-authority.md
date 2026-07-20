@@ -1,7 +1,7 @@
 # ADR-0006 — Human Review Authority Boundary
 
 ## Status
-Proposed. Implementation: **ENFORCED** (the automated run halts at the
+Accepted. Implementation: **ENFORCED** (the automated run halts at the
 human-review handoff).
 
 ## Architecture version

@@ -41,6 +41,19 @@ While `VERSION` is below `1.0.0`:
 - when multiple pending specs declare different impacts, the **highest**
   ranked impact (`major` > `minor` > `patch`) determines the bump.
 
+## Architecture-contract preflight (spec 0031)
+
+Before any of the four commands below plans, prepares, verifies, or tags a
+release, it runs the canonical architecture-contract validator (`specrelay
+architecture validate`) and **refuses to proceed if it fails**. This is the
+enforcement point that stops a spec numbered past the adoption boundary (`0031`)
+from entering the release path without a valid `architecture_version`
+declaration. The preflight is read-only: no release command ever mutates an
+architecture file or auto-fixes spec metadata. Fix the reported problem (run
+`specrelay architecture validate` for the diagnostics) and re-run the release
+command; when the contract is valid the preflight is silent and release behavior
+is exactly as before.
+
 ## Commands
 
 All four operate on **this SpecRelay checkout's own** `VERSION`,

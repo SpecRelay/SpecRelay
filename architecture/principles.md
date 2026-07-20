@@ -1,6 +1,6 @@
 # SpecRelay — Architectural Principles
 
-**Architecture version:** 1 · **Status:** proposed (see
+**Architecture version:** 1 · **Status:** accepted (ratified 2026-07-19; see
 [`architecture-version.yml`](architecture-version.yml))
 
 > **Normative document.** These are the intended durable rules. Each carries an

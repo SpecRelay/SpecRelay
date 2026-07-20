@@ -1,7 +1,7 @@
 # ADR-0005 — Extension Seams and Provider Neutrality
 
 ## Status
-Proposed. Implementation: **ESTABLISHED** (the seams exist and are exercised by
+Accepted. Implementation: **ESTABLISHED** (the seams exist and are exercised by
 a deterministic substitute) / neutrality **unexercised by a second real
 provider**.
 

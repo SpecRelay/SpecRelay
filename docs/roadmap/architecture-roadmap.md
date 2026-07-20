@@ -4,17 +4,19 @@
 
 **Last reconciled with the repository:** 2026-07-19
 
-**Architecture baseline:** version 1, **PROPOSED**
+**Architecture baseline:** version 1, **ACCEPTED** (ratified 2026-07-19, spec
+0031; adoption boundary `0031`)
 
 **Scope:** SpecRelay Core and its future integration boundary with a separate
 SpecRelay Platform product
 
-This roadmap is not a normative architecture document. The proposed
+This roadmap is not a normative architecture document. The ratified
 architecture layer under [`architecture/`](../../architecture/) defines the
 intended architectural baseline, and
 [`architecture-version.yml`](../../architecture/architecture-version.yml) is
-its machine-readable anchor. Until that file is ratified, neither Architecture
-Version 1 nor its ADRs are accepted.
+its machine-readable anchor. Architecture Version 1 and its ADRs (0001–0007) are
+**Accepted**; accepting them ratified the *intended* architecture including its
+documented Target gaps — it did not claim those Targets are already implemented.
 
 The roadmap distinguishes three kinds of statements:
 
@@ -57,7 +59,7 @@ task state.
 
 ## 2. Repository-verified Core baseline
 
-The repository contains numbered specifications `0001` through `0030`. Git
+The repository contains numbered specifications `0001` through `0031`. Git
 history and the implementation show that the engine has moved beyond a simple
 Executor/Reviewer prototype. Its established surface includes:
 
@@ -82,9 +84,10 @@ the proposed architecture has been ratified.
 The next Core work is architecture stabilization and Platform-readiness, not a
 new autonomous agent layer.
 
-1. **Architecture governance is proposed, not ratified.** Architecture Version
-   1, its ADRs, the adoption boundary, and machine validation for
-   `architecture_version` are not active requirements.
+1. **Architecture governance is ratified and active (was the 0031 gap; now
+   closed).** Architecture Version 1, its ADRs, the adoption boundary (`0031`),
+   and machine validation for `architecture_version` are active requirements,
+   enforced by `specrelay architecture validate` and the release preflight.
 2. **Reviewer authority does not yet meet the target boundary.** The engine
    validates state transitions, but the automated Reviewer can directly invoke
    accept/request-changes transitions. The Target is Reviewer output as
@@ -106,14 +109,14 @@ new autonomous agent layer.
 
 ## 4. Core roadmap
 
-Spec 0031 now has an implementation spec. Numbers 0032–0040 reserve roadmap
+Spec 0031 is ratified and implemented. Numbers 0032–0040 reserve roadmap
 order and do not claim those spec files or implementations already exist. A
 capability becomes Current only after its repository implementation and
 verification are present.
 
 | Spec | Target | Required outcome |
 |---|---|---|
-| **0031** | Ratify Architecture Version 1 | Explicit maintainer ratification; architecture and ADR status updates; adoption boundary; `architecture_version` validator and focused tests. Ratification must not be inferred from implementation work. |
+| **0031** | Ratify Architecture Version 1 | **Done (2026-07-19):** explicit maintainer ratification; architecture and ADR status updates; adoption boundary `0031`; `architecture_version` validator, release preflight, and focused tests. |
 | **0032** | Reviewer Decision as Data | Reviewer emits a structured decision; runner validates it and alone invokes the canonical transition; historical-task compatibility is preserved. |
 | **0033** | Baseline Integrity and Documentation Drift | Define baseline-health evidence, record pre-existing failures honestly, and reconcile lifecycle documentation with code and tests. |
 | **0034** | Consumer Version Pin Contract | Declare expected Core version; detect mismatch in `doctor`; define run/resume behavior consistently for installed and source-local modes; preserve historical projects without a pin. |
@@ -252,9 +255,10 @@ end-to-end proof and must not dilute it.
 
 1. Every future Core spec declares whether it changes **Current behavior**, a
    **Target**, or a **Proposed** decision.
-2. Once Architecture Version 1 is ratified, specs beyond the recorded adoption
-   boundary declare `architecture_version: 1`; before ratification, this remains
-   documentation-only and is not silently enforced.
+2. Architecture Version 1 is ratified: specs numbered beyond the recorded
+   adoption boundary (`0031`) declare `architecture_version: 1`, and this is
+   machine-validated (`specrelay architecture validate`, also a release
+   preflight), not merely documentation-only.
 3. A roadmap number is a planning reservation, not evidence of a spec or
    implementation.
 4. Core never gains Jira, queue, PR-publication, or Platform persistence logic.

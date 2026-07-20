@@ -1,7 +1,7 @@
 # ADR-0007 — Isolation Before Parallel Task Execution
 
 ## Status
-Proposed. Implementation: **TARGET** (workspace isolation and concurrency are
+Accepted. Implementation: **TARGET** (workspace isolation and concurrency are
 future direction, not current behavior).
 
 ## Architecture version

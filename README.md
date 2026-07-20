@@ -402,11 +402,15 @@ and Architecture Decision Records that a future spec must respect:
 - [architecture/architecture-version.yml](architecture/architecture-version.yml)
   — the architecture version and the future-spec `architecture_version` contract.
 
-> **Status: proposed, not yet ratified.** This layer describes *intended*
-> architecture and is awaiting maintainer ratification (see the ratification
-> checklist in [architecture/decisions/](architecture/decisions/README.md#ratification-checklist)).
-> The **as-built / operational** architecture — how the engine works today —
-> remains documented under [docs/](docs/architecture.md).
+> **Status: accepted (Architecture Version 1, ratified 2026-07-19).** This layer
+> describes the *intended* architecture; it was ratified by an explicit
+> maintainer decision (spec 0031). The future-spec `architecture_version`
+> contract is machine-enforced past the `0031` adoption boundary — run
+> `specrelay architecture validate` (also a release preflight). Accepting the
+> ADRs did **not** claim their documented Targets (e.g. the reviewer transition
+> boundary) are already implemented; those remain honest Target gaps. The
+> **as-built / operational** architecture — how the engine works today — remains
+> documented under [docs/](docs/architecture.md).
 
 ## Current project status
 

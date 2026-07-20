@@ -152,6 +152,19 @@ Release (source-local only; spec 0022):
                          working tree. Refuses a dirty tree or an existing
                          tag. Never pushes.
 
+Architecture governance (source-local only; spec 0031):
+  architecture validate [--json]
+                         Read-only: validate this checkout's architecture
+                         contract — architecture-version.yml schema, the
+                         document/ADR set, accepted-vs-proposed coherence, the
+                         recorded adoption boundary, and the architecture_version
+                         metadata of every spec numbered after the boundary.
+                         Prints one actionable diagnostic per failure and exits
+                         non-zero if the contract is invalid; --json emits a
+                         stable object (ok, architecture_version, status,
+                         adoption_boundary, checked_specs, errors). Every release
+                         command runs this same check first.
+
 Workflow engine:
   run <input-path> [--task-id <id>] [--allow-dirty-baseline] [--verbose]
                          <input-path> is a single spec file OR a
@@ -2064,6 +2077,19 @@ specrelay::cli::main() {
           ;;
         *)
           specrelay::out::err "unknown 'release' subcommand: $1"
+          return 2
+          ;;
+      esac
+      ;;
+    architecture)
+      case "${1:-}" in
+        validate) shift; specrelay::architecture::validate "$home" "$@" ;;
+        "")
+          specrelay::out::err "usage: specrelay architecture validate [--json]"
+          return 2
+          ;;
+        *)
+          specrelay::out::err "unknown 'architecture' subcommand: $1"
           return 2
           ;;
       esac

@@ -48,41 +48,52 @@ under [`architecture/`](../../architecture/) (north star, principles, and
 Architecture Decision Records, anchored by
 [`architecture/architecture-version.yml`](../../architecture/architecture-version.yml)).
 
-Once that architecture layer is **ratified** (its version file moves from
-`status: proposed` to `status: accepted`), every spec authored afterward MUST
-declare the architecture version it was designed against, using a metadata block
-alongside the existing `status` / `release` blocks:
+That architecture layer is **ratified** — Architecture Version 1 is **Accepted**
+(ratified 2026-07-19, spec 0031). Every spec authored afterward, numbered past
+the adoption boundary, MUST declare the architecture version it was designed
+against in a dedicated second-level **`Architecture metadata`** section (an
+optional numeric section prefix is allowed) whose first fenced YAML block is
+exactly:
 
 ```yaml
 architecture_version: 1
 ```
 
-This states which coherent set of {north star, principles, accepted ADRs} the
-spec was written to satisfy, so a reviewer can ask whether that baseline still
-holds.
+The value is a **bare integer** equal to the currently accepted architecture
+version; a quoted string, float, list, or boolean fails validation, and a mere
+prose mention elsewhere does not satisfy the contract. This states which
+coherent set of {north star, principles, accepted ADRs} the spec was written to
+satisfy, so a reviewer can ask whether that baseline still holds.
 
 ### Adoption boundary (historical specs are exempt)
 
-- **Specs at or below the adoption boundary are exempt** and are **never
-  rewritten** to add the field. The boundary is the highest spec number existing
-  at ratification and is recorded in
+- The adoption boundary is **`0031`** — the highest spec number that existed at
+  ratification (the bootstrap spec 0031 itself), recorded in
   [`architecture-version.yml`](../../architecture/architecture-version.yml)
-  (`spec_contract.adoption_boundary`); it is `null` until ratification.
-- **Specs authored after ratification, numbered past the boundary, MUST declare
-  `architecture_version`.**
+  (`spec_contract.adoption_boundary`).
+- **Specs at or below `0031` are exempt** and are **never rewritten** to add the
+  field.
+- **Specs numbered after `0031` (the first is `0032`) MUST declare
+  `architecture_version`** in the dedicated section above.
 - This mirrors the existing **release-metadata** boundary, which requires a
   `release:` block only for specs past a fixed number and never rewrites older
   ones.
 
 ### Enforcement status
 
-Enforcement is currently **documentation-only**. A machine validator is a
-documented follow-up (see
-[ADR-0001](../../architecture/decisions/ADR-0001-architecture-authority-and-versioning.md),
-"Open questions"): once ratified, `architecture_version` can be validated
-alongside the existing spec-metadata scanner for specs past the adoption
-boundary, with focused tests. Until that validator exists and this note says
-otherwise, do **not** treat the field as machine-enforced.
+Enforcement is **machine-validated**. Run:
+
+```sh
+specrelay architecture validate        # human-readable; --json for a stable object
+```
+
+It validates the architecture-version schema, the document/ADR set, accepted
+status coherence, the adoption boundary, and the `architecture_version` metadata
+of every spec numbered past the boundary, exiting non-zero with one actionable
+diagnostic per problem. The **same canonical validator runs as a preflight on
+every source-local `release` command**, so a non-compliant spec cannot enter the
+release path. See
+[ADR-0001](../../architecture/decisions/ADR-0001-architecture-authority-and-versioning.md).
 
 ## Relationship to the configured spec root
 

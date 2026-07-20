@@ -1,7 +1,7 @@
 # Architecture Decision Records
 
-**Architecture version:** 1 · **Status:** proposed (see
-[`../architecture-version.yml`](../architecture-version.yml))
+**Architecture version:** 1 · **Status:** accepted (ratified
+2026-07-19; see [`../architecture-version.yml`](../architecture-version.yml))
 
 This directory holds SpecRelay's **Architecture Decision Records (ADRs)** — the
 consequential, hard-to-reverse decisions and their trade-offs. The north star
@@ -32,29 +32,46 @@ ADR's intended state and the current code differ, the ADR marks that explicitly
 
 | ADR | Title | Status | Implementation |
 |---|---|---|---|
-| [0001](ADR-0001-architecture-authority-and-versioning.md) | Architecture authority and versioning | Proposed | PROPOSED (docs layer) / TARGET (validator) |
-| [0002](ADR-0002-ai-engine-authority-boundary.md) | AI recommendation vs. deterministic engine authority | Proposed | ENFORCED (state authorship) / TARGET (reviewer trigger) |
-| [0003](ADR-0003-evidence-and-history-preservation.md) | Evidence and non-destructive history preservation | Proposed | ESTABLISHED / TARGET (migration path) |
-| [0004](ADR-0004-runtime-bootstrap-and-engine-boundary.md) | Runtime bootstrap and mutable-engine boundary | Proposed | TARGET (bootstrap split; active-run update exclusion) / ESTABLISHED (atomic update) |
-| [0005](ADR-0005-extension-seams-and-provider-neutrality.md) | Extension seams and provider neutrality | Proposed | ESTABLISHED (seams) / unexercised (2nd provider) |
-| [0006](ADR-0006-human-review-authority.md) | Human review authority boundary | Proposed | ENFORCED (halt) |
-| [0007](ADR-0007-task-isolation-and-future-concurrency.md) | Isolation before parallel task execution | Proposed | TARGET |
+| [0001](ADR-0001-architecture-authority-and-versioning.md) | Architecture authority and versioning | Accepted | ESTABLISHED (docs layer) / ENFORCED (validator) |
+| [0002](ADR-0002-ai-engine-authority-boundary.md) | AI recommendation vs. deterministic engine authority | Accepted | ENFORCED (state authorship) / TARGET (reviewer trigger) |
+| [0003](ADR-0003-evidence-and-history-preservation.md) | Evidence and non-destructive history preservation | Accepted | ESTABLISHED / TARGET (migration path) |
+| [0004](ADR-0004-runtime-bootstrap-and-engine-boundary.md) | Runtime bootstrap and mutable-engine boundary | Accepted | TARGET (bootstrap split; active-run update exclusion) / ESTABLISHED (atomic update) |
+| [0005](ADR-0005-extension-seams-and-provider-neutrality.md) | Extension seams and provider neutrality | Accepted | ESTABLISHED (seams) / unexercised (2nd provider) |
+| [0006](ADR-0006-human-review-authority.md) | Human review authority boundary | Accepted | ENFORCED (halt) |
+| [0007](ADR-0007-task-isolation-and-future-concurrency.md) | Isolation before parallel task execution | Accepted | TARGET |
 
-## Ratification checklist
+## Ratification record — Architecture Version 1
 
-This architecture layer is currently **proposed** and **not ratified**. Nothing
-in this pass ratifies it. Ratification is a single, coherent human-approved
+Architecture Version 1 was **ratified on 2026-07-19** by an explicit maintainer
+decision (spec 0031), as one coherent change:
+
+- **`architecture/architecture-version.yml`:** `status: accepted`, `ratified_at`
+  set to the ratification timestamp, `spec_contract.enforcement:
+  machine-validated`, and `spec_contract.adoption_boundary.exempt_specs_up_to_and_including:
+  31` (the highest spec number — the bootstrap spec `0031` — that existed at
+  ratification time).
+- **Every ADR (0001–0007):** `## Status` is `Accepted`; each ADR's *implementation*
+  maturity label is unchanged by ratification (except ADR-0001, whose own
+  deliverables — the docs layer and the validator — became ESTABLISHED/ENFORCED).
+- **`docs/specs/README.md`:** records the concrete boundary `0031` and that specs
+  numbered after it must declare `architecture_version`.
+- **Machine enforcement:** `specrelay architecture validate` (and the release
+  preflight) now checks the contract; it is no longer documentation-only.
+
+## Ratification checklist (reusable for a future architecture version)
+
+Ratifying a *new* architecture version is a single, coherent human-approved
 change that does **all** of the following together — it is not complete if any
 step is missing:
 
 1. **`architecture/architecture-version.yml`:**
    - `status` becomes `accepted`;
-   - `ratified_at` receives an ISO-8601 timestamp;
+   - `ratified_at` receives an ISO-8601 UTC timestamp;
+   - `spec_contract.enforcement` names machine enforcement (`machine-validated`);
    - `spec_contract.adoption_boundary.exempt_specs_up_to_and_including` is set to
      the **highest historical spec number that exists at the ratification
-     boundary**. Do not assume `0030` in advance — use whatever the highest spec
-     number actually is at ratification time (it may be `0030` if no newer spec
-     exists then, or higher if one does).
+     boundary** — computed by scanning `docs/specs/NNNN-*/spec.md`, never assumed
+     in advance.
 
 2. **Every ADR in the architecture-version decision set** (the `decisions:` list
    in `architecture-version.yml`):
@@ -63,17 +80,18 @@ step is missing:
      is independent and does not change merely because the decision is accepted.)
 
 3. **`docs/specs/README.md`:**
-   - records the **concrete** adoption boundary number (no longer "null");
+   - records the **concrete** adoption boundary number;
    - states that specs numbered after that boundary must declare
      `architecture_version`.
 
-4. **The full coherent architecture set is committed together** — the version
-   file, all ADR status changes, and the specs-README boundary in one change, so
-   the layer is never half-ratified.
+4. **The full coherent architecture set changes together** — the version file,
+   all ADR status changes, and the specs-README boundary in one change, so the
+   layer is never half-ratified. Run `specrelay architecture validate` to confirm
+   coherence before considering ratification complete.
 
-Until every step above is done by a human, treat the layer as proposed: the ADRs
-are Proposed, the version file is `status: proposed`, and `architecture_version`
-is documentation-only, not mandatory.
+Until every step above is done by a human, treat the new version as proposed: its
+ADRs are Proposed, the version file is `status: proposed`, and
+`architecture_version` enforcement for it is inactive.
 
 ## Relationship to `docs/specs/` and `docs/adr/`
 

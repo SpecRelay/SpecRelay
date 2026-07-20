@@ -1,7 +1,7 @@
 # ADR-0002 — AI Recommendation vs. Deterministic Engine Authority
 
 ## Status
-Proposed. Implementation: **ENFORCED** (engine is sole author of state;
+Accepted. Implementation: **ENFORCED** (engine is sole author of state;
 executor self-approval gap closed) / **TARGET** (reviewer-triggered transitions
 brought fully under the boundary).
 

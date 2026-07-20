@@ -30,6 +30,7 @@ specrelay::release::_discover_json() {
 specrelay::release::plan() {
   local home="$1" current blob pending_count errors_count highest proposed
   specrelay::release::_require_source_local "$home" || return 1
+  specrelay::architecture::_release_preflight "$home" || return 1
   current="$(tr -d '[:space:]' < "$home/VERSION")"
   blob="$(specrelay::release::_discover_json "$home")"
   [ -n "$blob" ] || blob='{"pending": [], "errors": []}'
@@ -78,6 +79,7 @@ print(max((p["impact"] for p in pending), key=lambda i: rank[i]) if pending else
 specrelay::release::prepare() {
   local home="$1" current blob pending_count highest proposed changelog
   specrelay::release::_require_source_local "$home" || return 1
+  specrelay::architecture::_release_preflight "$home" || return 1
   current="$(tr -d '[:space:]' < "$home/VERSION")"
   blob="$(specrelay::release::_discover_json "$home")"
   [ -n "$blob" ] || blob='{"pending": [], "errors": []}'
@@ -131,6 +133,7 @@ for p in d.get("pending", []):
 specrelay::release::verify() {
   local home="$1" version ok=1
   specrelay::release::_require_source_local "$home" || return 1
+  specrelay::architecture::_release_preflight "$home" || return 1
   version="$(tr -d '[:space:]' < "$home/VERSION")"
 
   if specrelay::semver::valid "$version"; then
@@ -180,6 +183,7 @@ specrelay::release::verify() {
 specrelay::release::tag() {
   local home="$1" version tag_name
   specrelay::release::_require_source_local "$home" || return 1
+  specrelay::architecture::_release_preflight "$home" || return 1
   command -v git >/dev/null 2>&1 && git -C "$home" rev-parse --git-dir >/dev/null 2>&1 || {
     specrelay::out::err "release tag: $home is not a Git repository"
     return 1

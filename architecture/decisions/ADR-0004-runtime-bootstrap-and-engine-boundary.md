@@ -1,7 +1,7 @@
 # ADR-0004 — Runtime Bootstrap and Mutable-Engine Boundary
 
 ## Status
-Proposed. Implementation:
+Accepted. Implementation:
 - **TARGET** — a real immutable-bootstrap split.
 - **TARGET** — cross-operation exclusion between an update and an active task
   runtime (an update must not begin while a run/resume owns a task runtime).
@@ -84,6 +84,7 @@ boundary. Overstating this hides a real, currently-unmet safety goal.
   already exists.
 - Not superseded.
 
+## Verification or evidence
 - Current self-update performs a stage → verify → activate → re-verify →
   rollback sequence and refuses to run in a source checkout (re-confirmed in this
   pass) — supporting the **ESTABLISHED** atomic-update classification.

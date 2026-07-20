@@ -1,7 +1,7 @@
 # ADR-0003 — Evidence and Non-Destructive History Preservation
 
 ## Status
-Proposed. Implementation: **ESTABLISHED** (immutable records + regenerated
+Accepted. Implementation: **ESTABLISHED** (immutable records + regenerated
 views) / **TARGET** (a general versioned migration path).
 
 ## Architecture version

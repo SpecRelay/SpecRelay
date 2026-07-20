@@ -455,6 +455,43 @@ annotated tag from a clean, committed tree; it refuses a dirty tree or an
 existing tag and never pushes. See [release-process.md](release-process.md)
 for the release-impact metadata contract and the pre-1.0 versioning policy.
 
+Every release command first runs the architecture-contract validator described
+below and refuses to proceed if it fails, so a non-compliant spec cannot enter
+the release path.
+
+## Architecture governance (source-local only; spec 0031)
+
+```
+bin/specrelay architecture validate
+bin/specrelay architecture validate --json
+```
+
+Read-only. Validates **this SpecRelay checkout's own** architecture contract and
+exits non-zero if it is invalid — never a consumer project's configuration, so
+it refuses installed mode. It checks:
+
+- the [`architecture/architecture-version.yml`](../architecture/architecture-version.yml)
+  schema (version, status, `ratified_at`, enforcement, adoption boundary,
+  `required_field`), read with Ruby Psych `YAML.safe_load` — no new dependency;
+- the document/ADR set: every listed document and ADR exists inside the
+  repository (absolute paths, `..` escapes, and out-of-root symlinks are
+  rejected), no duplicate decision paths, each ADR declares the architecture
+  version and carries every required heading, and the decisions index agrees
+  with the version-set;
+- accepted-vs-proposed coherence (an accepted version needs a real timestamp,
+  an integer boundary, and machine-enforcement; a proposed version is valid but
+  reports that enforcement is inactive); and
+- the future-spec contract: every spec numbered **after the adoption boundary
+  (`0031`)** must contain exactly one dedicated `## Architecture metadata`
+  section whose first fenced YAML block is `architecture_version: <accepted
+  integer>`. Specs at or below the boundary are exempt and untouched.
+
+Each failure prints one actionable diagnostic (`<file>: <rule>`) and the command
+exits non-zero. `--json` emits a stable object with `ok`, `architecture_version`,
+`status`, `adoption_boundary`, `checked_specs`, and `errors`. The **same
+canonical validator** backs `specrelay architecture validate`, the release-command
+preflight, and the tests — there is one parser with one set of rules.
+
 ## Archiving completed tasks
 
 `specrelay task archive` moves completed tasks out of the active runs root

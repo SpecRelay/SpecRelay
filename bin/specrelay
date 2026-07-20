@@ -142,6 +142,8 @@ LIB_DIR="$SPECRELAY_HOME/lib/specrelay"
 . "$LIB_DIR/summary.sh"
 # shellcheck source=lib/specrelay/release.sh
 . "$LIB_DIR/release.sh"
+# shellcheck source=lib/specrelay/architecture.sh
+. "$LIB_DIR/architecture.sh"
 # shellcheck source=lib/specrelay/cli.sh
 . "$LIB_DIR/cli.sh"
 
